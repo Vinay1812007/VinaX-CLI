@@ -94,7 +94,7 @@ interface Job {
 }
 
 const MAX_BUFFER = 20 * 1024 * 1024;
-const KILL_GRACE_MS = 3000;
+const KILL_GRACE_MS = 1000;
 const IS_WINDOWS = process.platform === 'win32';
 
 /**
