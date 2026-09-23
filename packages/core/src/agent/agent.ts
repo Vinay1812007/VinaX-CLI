@@ -7,12 +7,15 @@ import {
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
+import { estimateTokens } from '../context/tokens.js';
 import { AbortError } from '../router/backoff.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
 import type { AnyTool, ToolContext, ToolDisplay, ToolKind, ToolOutput } from '../tools/types.js';
+import type { LoadedSession, SessionRecorder, TurnMark } from '../session/store.js';
 import type { CheckpointStore } from './checkpoints.js';
+import { applySummary, elideToolOutputs, summarize } from './compact.js';
 import {
   TextCallParser,
   textProtocolInstructions,
@@ -73,7 +76,9 @@ export type AgentEvent =
       content: string;
       display?: ToolDisplay;
     }
-  | { type: 'notice'; level: 'info' | 'warning'; text: string };
+  | { type: 'notice'; level: 'info' | 'warning'; text: string }
+  /** The conversation was shrunk: `elide` drops old tool output, `summary` condenses history. */
+  | { type: 'compact'; kind: 'elide' | 'summary'; before: number; after: number };
 
 export interface AgentOutcome {
   status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined';
@@ -98,7 +103,16 @@ export interface AgentDeps {
   maxTurns?: number;
   /** Head of the fallback chain (e.g. `--model`). */
   model?: string;
+  /** Persists the conversation (session transcript). */
+  recorder?: SessionRecorder;
+  /** Token budget for the conversation; auto-compaction starts at 85% of it. */
+  contextLimit?: () => number;
+  /** Instructions discovered when a tool first touches a folder (nested VINAX.md). */
+  onPathTouched?: (file: string) => string | undefined;
 }
+
+/** Auto-compaction starts when the request reaches this share of the context budget. */
+const COMPACT_AT = 0.85;
 
 interface Prepared {
   call: ToolCall;
@@ -107,17 +121,15 @@ interface Prepared {
   error: string | undefined;
 }
 
-interface TurnMark {
-  turn: number;
-  messageIndex: number;
-  prompt: string;
-}
-
 /** Everything the loop needs to run one user turn. */
 interface RunOptions {
   signal: AbortSignal;
   host: AgentHost;
   onEvent: (ev: AgentEvent) => void;
+  /** Extra allow rules for this turn only (custom command `allowed-tools`). */
+  allowRules?: readonly string[];
+  /** Model for this turn only (custom command `model`). */
+  model?: string;
 }
 
 /**
@@ -132,6 +144,112 @@ export class Agent {
   private turnCounter = 0;
 
   constructor(private readonly deps: AgentDeps) {}
+
+  private push(...messages: ChatMessage[]): void {
+    for (const m of messages) {
+      this.messages.push(m);
+      this.deps.recorder?.record({ type: 'message', message: m });
+    }
+  }
+
+  private truncate(messageCount: number, turnsKept: number): void {
+    this.messages.length = Math.min(this.messages.length, messageCount);
+    this.marks.length = Math.min(this.marks.length, turnsKept);
+    this.deps.recorder?.record({ type: 'truncate', messageCount, turnsKept });
+  }
+
+  /** Replaces the whole conversation (after compaction); earlier turns can no longer be rewound. */
+  private reset(messages: ChatMessage[]): void {
+    this.messages.length = 0;
+    this.messages.push(...messages);
+    this.marks.length = 0;
+    this.deps.recorder?.record({ type: 'reset', messages, keepMarks: false });
+  }
+
+  /** Continues a saved session. */
+  restore(session: Pick<LoadedSession, 'messages' | 'marks'>): void {
+    this.messages.length = 0;
+    this.messages.push(...session.messages);
+    this.marks.length = 0;
+    this.marks.push(...session.marks);
+    this.turnCounter = Math.max(0, ...session.marks.map((m) => m.turn));
+  }
+
+  private modelOverride: string | undefined;
+
+  /** Head of the fallback chain for later turns (`/model`); `undefined` returns to the default. */
+  setModel(model: string | undefined): void {
+    this.modelOverride = model;
+  }
+
+  get model(): string | undefined {
+    return this.modelOverride ?? this.deps.model;
+  }
+
+  /** Estimated tokens of the next request in `mode`. */
+  requestTokens(mode: PermissionMode): number {
+    const specs = this.deps.tools
+      .filter((t) => (mode === 'plan' ? t.readOnly : t.name !== 'ExitPlanMode'))
+      .map(toolSpec);
+    return estimateTokens(
+      [{ role: 'system', content: this.deps.systemPrompt(mode) }, ...this.messages],
+      specs,
+    );
+  }
+
+  /**
+   * Shrinks the conversation. Old tool outputs are elided first (free); if that is not enough —
+   * or when `force` is set (/compact) — history before the current turn is summarized by the
+   * small model. Returns undefined when there was nothing to do.
+   */
+  async compact(opts: {
+    mode: PermissionMode;
+    signal: AbortSignal;
+    force?: boolean;
+    instructions?: string;
+    inTurn?: boolean;
+    onEvent?: (ev: AgentEvent) => void;
+  }): Promise<{ before: number; after: number } | undefined> {
+    const limit = this.deps.contextLimit?.() ?? Number.POSITIVE_INFINITY;
+    const target = limit * COMPACT_AT;
+    const before = this.requestTokens(opts.mode);
+    if (opts.force !== true && before <= target) return undefined;
+    if (opts.force !== true) {
+      const elided = elideToolOutputs(this.messages);
+      if (elided.elided > 0) {
+        this.rewrite(elided.messages);
+        const after = this.requestTokens(opts.mode);
+        opts.onEvent?.({ type: 'compact', kind: 'elide', before, after });
+        if (after <= target) return { before, after };
+      }
+    }
+    const mark = opts.inTurn === true ? this.marks.at(-1) : undefined;
+    let tailStart = mark?.messageIndex ?? this.messages.length;
+    if (estimateTokens(this.messages.slice(tailStart)) > limit * 0.5)
+      tailStart = this.messages.length;
+    const head = this.messages.slice(0, tailStart);
+    if (head.length === 0) return undefined;
+    const summary = await summarize(this.deps.router, head, {
+      signal: opts.signal,
+      ...(opts.instructions === undefined ? {} : { instructions: opts.instructions }),
+    });
+    this.reset(applySummary(summary, this.messages.slice(tailStart)));
+    const after = this.requestTokens(opts.mode);
+    opts.onEvent?.({ type: 'compact', kind: 'summary', before, after });
+    return { before, after };
+  }
+
+  /** Replaces message contents without changing their number (tool-output elision). */
+  private rewrite(messages: ChatMessage[]): void {
+    this.messages.length = 0;
+    this.messages.push(...messages);
+    this.deps.recorder?.record({ type: 'reset', messages, keepMarks: true });
+  }
+
+  /** Adds context the user produced outside a turn (e.g. `!` shell output). */
+  addContext(text: string): void {
+    this.push({ role: 'user', content: text });
+  }
 
   /** User turns that can be rewound to, oldest first. */
   get turns(): readonly TurnMark[] {
@@ -162,16 +280,17 @@ export class Agent {
     const idx = this.marks.findIndex((m) => m.turn === turn);
     const mark = this.marks[idx];
     if (!mark) return undefined;
-    this.messages.length = mark.messageIndex;
-    this.marks.length = idx;
+    this.truncate(mark.messageIndex, idx);
     return mark.prompt;
   }
 
   async run(prompt: string, opts: RunOptions): Promise<AgentOutcome> {
     const turn = ++this.turnCounter;
-    this.marks.push({ turn, messageIndex: this.messages.length, prompt });
+    const mark = { turn, messageIndex: this.messages.length, prompt };
+    this.marks.push(mark);
+    this.deps.recorder?.record({ type: 'turn', ...mark });
     this.deps.checkpoints.beginTurn(turn);
-    this.messages.push({ role: 'user', content: prompt });
+    this.push({ role: 'user', content: prompt });
     const usage: Usage = { promptTokens: 0, completionTokens: 0 };
     const models = new Set<string>();
     let steps = 0;
@@ -185,14 +304,36 @@ export class Agent {
       ...(error === undefined ? {} : { error }),
     });
 
-    for (;;) {
-      if (this.deps.maxTurns !== undefined && steps >= this.deps.maxTurns) {
-        return outcome('max_turns', `Stopped after ${String(steps)} model calls (--max-turns).`);
+    const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
+    try {
+      for (;;) {
+        if (this.deps.maxTurns !== undefined && steps >= this.deps.maxTurns) {
+          return outcome('max_turns', `Stopped after ${String(steps)} model calls (--max-turns).`);
+        }
+        steps++;
+        if (this.deps.contextLimit) {
+          try {
+            await this.compact({
+              mode: opts.host.mode(),
+              signal: opts.signal,
+              inTurn: true,
+              onEvent: opts.onEvent,
+            });
+          } catch (err) {
+            if (opts.signal.aborted) return outcome('interrupted');
+            opts.onEvent({
+              type: 'notice',
+              level: 'warning',
+              text: `Could not compact the conversation: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
+        }
+        const step = await this.step(turn, steps, opts, usage, models);
+        lastText = step.text;
+        if (step.status !== 'continue') return outcome(step.status, step.error);
       }
-      steps++;
-      const step = await this.step(turn, steps, opts, usage, models);
-      lastText = step.text;
-      if (step.status !== 'continue') return outcome(step.status, step.error);
+    } finally {
+      removeRules();
     }
   }
 
@@ -242,7 +383,7 @@ export class Agent {
         prepare,
         onToolFormatError: (ref) =>
           this.useTextProtocol(ref, onEvent, 'sent a tool call the provider rejected'),
-        ...(this.deps.model === undefined ? {} : { model: this.deps.model }),
+        ...((opts.model ?? this.model) === undefined ? {} : { model: opts.model ?? this.model }),
       });
       for await (const ev of events) {
         switch (ev.type) {
@@ -287,16 +428,16 @@ export class Agent {
       }
     } catch (err) {
       if (err instanceof AbortError) {
-        this.messages.push({
+        this.push({
           role: 'assistant',
           content: text === '' ? INTERRUPTED_MARKER : `${text}\n\n${INTERRUPTED_MARKER}`,
         });
         return { status: 'interrupted', text };
       }
-      if (text !== '') this.messages.push({ role: 'assistant', content: text });
-      else if (stepNo === 1)
-        this.messages.pop(); // unanswered prompt: let the user simply ask again
-      else this.messages.push({ role: 'assistant', content: '[the model could not be reached]' });
+      if (text !== '') this.push({ role: 'assistant', content: text });
+      // an unanswered prompt is dropped entirely so the user can simply ask again
+      else if (stepNo === 1) this.truncate(this.messages.length - 1, this.marks.length - 1);
+      else this.push({ role: 'assistant', content: '[the model could not be reached]' });
       return { status: 'failed', text, error: err instanceof Error ? err.message : String(err) };
     }
 
@@ -324,7 +465,7 @@ export class Agent {
               arguments: c.args,
             }));
 
-    this.messages.push({
+    this.push({
       role: 'assistant',
       content: text,
       ...(calls.length === 0 ? {} : { toolCalls: calls }),
@@ -335,7 +476,7 @@ export class Agent {
     if (result.interrupted) return { status: 'interrupted', text };
     if (result.declined !== undefined) {
       if (result.declined === '') return { status: 'declined', text };
-      this.messages.push({
+      this.push({
         role: 'user',
         content: `I declined that action. Instead: ${result.declined}`,
       });
@@ -528,7 +669,14 @@ export class Agent {
         };
         try {
           await this.deps.checkpoints.capture(tool.affectedPaths?.(p.input, ctx) ?? []);
-          finish(p.call.id, tool.name, await tool.run(p.input, ctx));
+          const output = await tool.run(p.input, ctx);
+          const touched = tool.target(p.input, ctx).path;
+          const found = touched === undefined ? undefined : this.deps.onPathTouched?.(touched);
+          finish(
+            p.call.id,
+            tool.name,
+            found === undefined ? output : { ...output, content: `${output.content}\n\n${found}` },
+          );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           finish(p.call.id, tool.name, fail(message, message.split('\n')[0] ?? message));
@@ -540,7 +688,7 @@ export class Agent {
     }
 
     for (const c of calls) {
-      this.messages.push({
+      this.push({
         role: 'tool',
         toolCallId: c.id,
         name: c.name,

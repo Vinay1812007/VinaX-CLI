@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   AppStateStore,
-  type AgentSetup,
   type KeyCheck,
   type ModelInfo,
   type ProviderName,
@@ -68,13 +67,16 @@ function fakeOnboarding(overrides: Partial<OnboardingDeps> = {}) {
 
 function mountApp(onboarding: OnboardingDeps) {
   const state = new AppStateStore({ VINAX_HOME: home });
-  const createSession = vi.fn((): Promise<{ runtime: Runtime; setup: AgentSetup }> =>
+  const createSession = vi.fn((): Promise<Runtime> =>
     Promise.reject(new Error('chat is not under test here')),
   );
   const deps: AppDeps = {
     state,
     loadTheme: () => Promise.resolve('dark'),
-    createSession,
+    createRuntime: createSession,
+    openSession: () => Promise.reject(new Error('not under test')),
+    listSessions: () => [],
+    loadCommands: () => Promise.resolve({ commands: [], warnings: [] }),
     onboarding,
   };
   const onExit = vi.fn();
@@ -85,6 +87,7 @@ function mountApp(onboarding: OnboardingDeps) {
       cwd={path.join(home, 'proj')}
       env={{ NO_COLOR: '1' }}
       tips={[]}
+      start={{ kind: 'new' }}
       onExit={onExit}
     />,
   );

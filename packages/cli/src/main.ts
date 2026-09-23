@@ -1,6 +1,7 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { modelRefSchema, PERMISSION_MODES, SettingsError, type PermissionMode } from '@vinax/core';
 import { configCommand } from './config-command.js';
+import { doctorCommand } from './doctor-command.js';
 import { EXIT } from './exit-codes.js';
 import { runInteractive } from './interactive.js';
 import { paint, processIO, type CliIO } from './io.js';
@@ -18,6 +19,8 @@ interface RootOptions {
   disallowedTools?: string[];
   addDir?: string[];
   maxTurns?: number;
+  continue?: boolean;
+  resume?: boolean | string;
 }
 
 function parsePositiveInt(value: string): number {
@@ -58,6 +61,8 @@ function sessionOptions(prompt: string | undefined, o: RootOptions): SessionOpti
     disallowedTools: o.disallowedTools ?? [],
     addDirs: o.addDir ?? [],
     maxTurns: o.maxTurns,
+    continueLast: o.continue === true,
+    resume: o.resume,
   };
 }
 
@@ -110,6 +115,8 @@ export async function main(
     )
     .option('--add-dir <path>', 'also let tools work in this folder (repeatable)', collect)
     .option('--max-turns <n>', 'stop after this many model calls per prompt', parsePositiveInt)
+    .option('-c, --continue', 'continue the most recent conversation in this folder')
+    .option('-r, --resume [session-id]', 'resume a conversation (shows a picker without an id)')
     .option('--verbose', 'write a debug log of every request (API keys redacted)')
     .configureOutput({
       writeOut: (s) => io.stdout.write(s),
@@ -129,6 +136,7 @@ export async function main(
     });
 
   program.addCommand(configCommand(io, setExit).exitOverride());
+  program.addCommand(doctorCommand(io, setExit).exitOverride());
 
   try {
     await program.parseAsync(argv, { from: 'user' });

@@ -3,6 +3,7 @@ import { estimateTokens } from '../context/tokens.js';
 import { noopLogger, type Logger } from '../log/logger.js';
 import { ProviderError, providerLabel, toProviderError } from '../providers/errors.js';
 import type { RateLimitLedger } from '../providers/ratelimit.js';
+import type { UsageTracker } from '../state/usage.js';
 import {
   formatModelRef,
   parseModelRef,
@@ -75,6 +76,8 @@ export interface RouteRequest {
   purpose?: 'main' | 'small';
   /** Overrides the head of the chain (e.g. `--model`). */
   model?: string;
+  /** Try only the head of the chain (for cheap extras like titles that must not spend fallbacks). */
+  noFallback?: boolean;
   /** Builds the request per model; defaults to `messages` with no tools. */
   prepare?: (ref: ModelRef) => PreparedRequest;
   /**
@@ -91,6 +94,8 @@ export interface RouterDeps {
   logger?: Logger;
   /** Model refs to leave out, e.g. ones missing from the provider catalog. */
   skip?: ReadonlySet<string>;
+  /** Counts requests and tokens for `/usage`. */
+  usage?: UsageTracker;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
   now?: () => number;
@@ -146,7 +151,8 @@ export class Router {
     const failures: LinkFailure[] = [];
     let pendingFallback: LinkFailure | undefined;
 
-    for (const ref of this.chain(req.purpose, req.model)) {
+    const chain = this.chain(req.purpose, req.model);
+    for (const ref of req.noFallback === true ? chain.slice(0, 1) : chain) {
       const provider = providers.get(ref.provider);
       if (!provider) {
         failures.push({ ref, reason: `no ${providerLabel(ref.provider)} API key configured` });
@@ -183,6 +189,7 @@ export class Router {
         if (req.signal.aborted) throw new AbortError();
         yield { type: 'attempt', ref };
         ledger.recordRequest(ref.provider, ref.model);
+        this.deps.usage?.recordRequest(ref);
         let emitted = false;
         let usage: Usage | undefined;
         try {
@@ -202,6 +209,7 @@ export class Router {
             emitted = true;
             yield d;
           }
+          if (usage) this.deps.usage?.recordTokens(ref, usage);
           yield { type: 'done', ref, usage };
           return;
         } catch (raw) {

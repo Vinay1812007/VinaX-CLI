@@ -10,6 +10,10 @@ export interface SessionOptions {
   disallowedTools: string[];
   addDirs: string[];
   maxTurns: number | undefined;
+  /** `-c`: continue the most recent session in this folder. */
+  continueLast: boolean;
+  /** `-r`: `true` shows a picker; a string resumes that session id. */
+  resume: boolean | string | undefined;
 }
 
 /** The highest-precedence settings layer, built from command-line flags. */

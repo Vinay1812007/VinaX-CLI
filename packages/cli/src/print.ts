@@ -1,5 +1,5 @@
 import {
-  createAgentSetup,
+  attachMentions,
   createRuntime,
   providerLabel,
   formatModelRef,
@@ -12,6 +12,7 @@ import {
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
 import { paint, readAll, type CliIO } from './io.js';
+import { openSession } from './session.js';
 import { cliSettings, type SessionOptions } from './session-options.js';
 import { VERSION } from './version.js';
 
@@ -48,6 +49,7 @@ class Output {
   private text = '';
   private readonly fallbacks: FallbackRecord[] = [];
   private toolCalls = 0;
+  sessionId: string | undefined;
 
   constructor(
     private readonly format: OutputFormat,
@@ -173,6 +175,7 @@ class Output {
               output_tokens: outcome.usage.completionTokens,
             }
           : null,
+        session_id: this.sessionId ?? null,
         num_turns: outcome?.steps ?? 0,
         tool_calls: this.toolCalls,
         fallbacks: this.fallbacks,
@@ -251,10 +254,35 @@ export async function runPrint(
     return EXIT.error;
   }
 
-  const setup = await createAgentSetup(runtime, {
-    ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
-    ...(opts.model === undefined ? {} : { model: opts.model }),
-  });
+  if (opts.resume === true) {
+    out.finish(
+      undefined,
+      Date.now() - started,
+      'In print mode, pass the session id: vinax -p -r <session-id> "…" (or use -c for the latest).',
+    );
+    return EXIT.usage;
+  }
+  let opened;
+  try {
+    opened = await openSession(
+      runtime,
+      typeof opts.resume === 'string'
+        ? { kind: 'resume', id: opts.resume }
+        : opts.continueLast
+          ? { kind: 'continue' }
+          : { kind: 'new' },
+      { maxTurns: opts.maxTurns, model: opts.model },
+    );
+  } catch (err) {
+    out.finish(
+      undefined,
+      Date.now() - started,
+      `Could not open the session: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return EXIT.error;
+  }
+  const { setup } = opened;
+  if (opened.note !== undefined) out.notice(opened.note);
   for (const bad of setup.permissions.invalidRules)
     out.notice(`⚠ Ignoring malformed permission rule: ${bad}`);
 
@@ -264,9 +292,15 @@ export async function runPrint(
   };
   signal?.addEventListener('abort', onAbort, { once: true });
   const mode = runtime.settings.resolved.permissions.defaultMode;
+  out.sessionId = opened.writer.id;
   out.init(runtime.router.chain('main', opts.model).map(formatModelRef), io.cwd, mode);
   try {
-    const outcome = await setup.agent.run(prompt, {
+    const withFiles = await attachMentions(prompt, {
+      cwd: io.cwd,
+      workspace: setup.workspace,
+      reads: setup.reads,
+    });
+    const outcome = await setup.agent.run(withFiles.prompt, {
       signal: ac.signal,
       host: headlessHost(runtime),
       onEvent: (ev) => {

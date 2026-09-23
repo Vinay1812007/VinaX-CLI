@@ -1,9 +1,10 @@
-import { Box, Static, Text, useInput, usePaste, useWindowSize } from 'ink';
+import { Box, Static, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  effectiveContextWindow,
-  estimateTokens,
+  attachMentions,
+  FileIndex,
   formatModelRef,
+  generateTitle,
   parseModelRef,
   projectDataDir,
   PromptHistory,
@@ -12,14 +13,19 @@ import {
   type AgentEvent,
   type AgentHost,
   type AgentSetup,
+  type EditorMode,
   type PermissionAnswer,
   type PermissionMode,
   type PermissionRequest,
   type PlanDecision,
   type Runtime,
+  type SessionWriter,
+  type ThemeName,
   type TodoItem,
 } from '@vinax/core';
-import { truncate } from '../format.js';
+import { findCommand } from '../commands/registry.js';
+import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
+import { formatTokens, truncate } from '../format.js';
 import { useTheme } from '../theme.js';
 import {
   splitStable,
@@ -29,14 +35,18 @@ import {
 } from '../transcript.js';
 import { usePromptEditor, type Submission } from '../use-prompt-editor.js';
 import { useRefState } from '../use-ref-state.js';
+import { useSuggestions } from '../use-suggestions.js';
 import { ActivityIndicator } from './ActivityIndicator.js';
-import { AssistantMarkdown, Notice, UserMessage } from './Messages.js';
+import { AssistantMarkdown, Notice, Panel, ShellEntry, UserMessage } from './Messages.js';
+import { AskOverlay, PickerOverlay } from './Overlays.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { PlanPrompt } from './PlanPrompt.js';
 import { PromptBox } from './PromptBox.js';
 import { RewindPicker, type RewindChoice } from './RewindPicker.js';
+import type { SelectItem } from './Select.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
 import { StatusLine, type StatusNotice } from './StatusLine.js';
+import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
 import { RunningTool, ToolEntry } from './ToolEntry.js';
 import { TurnDetails } from './TurnDetails.js';
@@ -46,6 +56,7 @@ const MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
 const EXIT_WINDOW_MS = 2000;
 const DOUBLE_ESC_MS = 600;
 const RUNNING_OUTPUT_CHARS = 4000;
+const SHELL_CONTEXT_CHARS = 6000;
 
 type NewItem = TranscriptItem extends infer T
   ? T extends { id: number }
@@ -59,6 +70,8 @@ interface Streaming {
   chars: number;
   committed: boolean;
   waiting: string | undefined;
+  /** Replaces the rotating verb, e.g. "Compacting the conversation". */
+  label?: string;
 }
 
 interface Running {
@@ -72,68 +85,109 @@ type Pending =
   | { kind: 'permission'; req: PermissionRequest; resolve: (a: PermissionAnswer) => void }
   | { kind: 'plan'; plan: string; resolve: (d: PlanDecision) => void };
 
+type Overlay =
+  | { kind: 'shortcuts' }
+  | { kind: 'details' }
+  | { kind: 'rewind' }
+  | {
+      kind: 'picker';
+      title: string;
+      items: readonly SelectItem<unknown>[];
+      resolve: (v: unknown) => void;
+    }
+  | {
+      kind: 'ask';
+      title: string;
+      placeholder: string;
+      mask: boolean;
+      resolve: (v: string | undefined) => void;
+    };
+
+interface Queued extends Submission {
+  allowRules?: readonly string[] | undefined;
+  model?: string | undefined;
+}
+
 export interface ChatScreenProps {
   runtime: Runtime;
   setup: AgentSetup;
+  session: SessionWriter;
+  commands: readonly SlashCommand[];
   version: string;
   tips: readonly string[];
+  /** Transcript of a resumed session. */
+  restored?: readonly TranscriptItem[];
+  title?: string | undefined;
+  startupNotices?: readonly string[];
   initialPrompt?: string | undefined;
+  editorMode: EditorMode;
   onExit: (code: number) => void;
+  onClear: () => void;
+  onResume: (id: string) => void;
+  onTheme: (theme: ThemeName) => void;
   now?: () => number;
 }
 
-function initialItems(runtime: Runtime, setup: AgentSetup): TranscriptItem[] {
+function initialItems(p: ChatScreenProps): TranscriptItem[] {
   const items: TranscriptItem[] = [{ id: 0, kind: 'welcome' }];
-  const warn = (text: string, level: 'warning' | 'error' = 'warning') => {
+  const warn = (text: string, level: 'warning' | 'error' | 'info' = 'warning') => {
     items.push({ id: items.length, kind: 'notice', level, text });
   };
-  for (const w of runtime.warnings) warn(w);
-  for (const r of setup.permissions.invalidRules) warn(`Ignoring malformed permission rule: ${r}`);
-  if (runtime.providers.size === 0) {
-    warn(
-      'No API key is configured. Exit and run `vinax config set-key groq` (or set GROQ_API_KEY).',
-      'error',
-    );
+  for (const r of p.restored ?? []) items.push({ ...r, id: items.length });
+  if ((p.restored ?? []).length > 0) warn(`Resumed “${p.title ?? 'untitled session'}”.`, 'info');
+  for (const w of p.runtime.warnings) warn(w);
+  for (const w of p.startupNotices ?? []) warn(w);
+  for (const r of p.setup.permissions.invalidRules)
+    warn(`Ignoring malformed permission rule: ${r}`);
+  if (p.runtime.providers.size === 0) {
+    warn('No API key is configured. Use /login to add one.', 'error');
   }
   return items;
 }
 
-export function ChatScreen({
-  runtime,
-  setup,
-  version,
-  tips,
-  initialPrompt,
-  onExit,
-  now = Date.now,
-}: ChatScreenProps) {
+export function ChatScreen(props: ChatScreenProps) {
+  const {
+    runtime,
+    setup,
+    session,
+    commands,
+    version,
+    tips,
+    initialPrompt,
+    onExit,
+    now = Date.now,
+  } = props;
   const theme = useTheme();
+  const { suspendTerminal } = useApp();
   const { columns, rows } = useWindowSize();
   const width = Math.max(20, columns);
   const { agent, checkpoints } = setup;
 
-  const [items, setItems] = useState<TranscriptItem[]>(() => initialItems(runtime, setup));
+  const [items, setItems] = useState<TranscriptItem[]>(() => initialItems(props));
   const nextId = useRef(items.length);
   const push = (item: NewItem): void => {
     const id = nextId.current++;
+    session.record({ type: 'view', data: item });
     setItems((prev) => [...prev, { ...item, id }]);
   };
 
   const [streaming, setStreaming] = useState<Streaming | undefined>(undefined);
   const [running, setRunning] = useState<Running[]>([]);
   const [pending, setPending, pendingRef] = useRefState<Pending | undefined>(undefined);
-  const [queued, setQueued, queuedRef] = useRefState<Submission[]>([]);
-  const [overlay, setOverlay] = useState<'shortcuts' | 'details' | 'rewind' | undefined>(undefined);
+  const [queued, setQueued, queuedRef] = useRefState<Queued[]>([]);
+  const [overlay, setOverlay, overlayRef] = useRefState<Overlay | undefined>(undefined);
   const [detailsOffset, setDetailsOffset] = useState(0);
   const [mode, setMode, modeRef] = useRefState<PermissionMode>(
     runtime.settings.resolved.permissions.defaultMode,
   );
+  const [, setEditorMode, editorModeRef] = useRefState<EditorMode>(props.editorMode);
   const [notice, setNotice] = useState<StatusNotice | undefined>(undefined);
   const [hint, setHint] = useState<string | undefined>(undefined);
   const [turns, setTurns] = useState<TurnRecord[]>([]);
-  const [activeModel, setActiveModel] = useState(runtime.settings.resolved.model);
+  const [activeModel, setActiveModel] = useState(agent.model ?? runtime.settings.resolved.model);
   const [contextPct, setContextPct] = useState<number | undefined>(undefined);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [, setTitle, titleRef] = useRefState<string | undefined>(props.title);
 
   const abortRef = useRef<AbortController | undefined>(undefined);
   const tailRef = useRef('');
@@ -146,6 +200,7 @@ export function ChatScreen({
     () => PromptHistory.forProject(projectDataDir(runtime.cwd, runtime.env)),
     [runtime],
   );
+  const files = useMemo(() => new FileIndex(runtime.cwd), [runtime]);
 
   useEffect(() => setup.todos.subscribe(setTodos), [setup]);
 
@@ -195,20 +250,18 @@ export function ChatScreen({
         push({ kind: 'notice', level: 'info', text: `Saved ${rule} to ${file}` });
       },
     }),
-    // modeRef/setPending/setMode are stable
     [runtime],
   );
 
-  const refreshContext = async (ref: string): Promise<void> => {
-    try {
-      const window = await effectiveContextWindow(parseModelRef(ref), runtime);
-      setContextPct(Math.min(100, Math.round((estimateTokens(agent.messages) / window) * 100)));
-    } catch {
-      setContextPct(undefined);
-    }
+  const refreshContext = (): void => {
+    const limit = setup.contextLimit();
+    setContextPct(
+      Number.isFinite(limit)
+        ? Math.min(100, Math.round((agent.requestTokens(modeRef.current) / limit) * 100))
+        : undefined,
+    );
   };
 
-  /** Moves the streamed text not yet printed into the permanent transcript. */
   const commitTail = (): void => {
     const rest = tailRef.current.trim();
     if (rest !== '') {
@@ -219,7 +272,24 @@ export function ChatScreen({
     setStreaming((s) => s && { ...s, tail: '' });
   };
 
-  const runTurn = async (q: Submission): Promise<void> => {
+  const flashHint = (text: string): void => {
+    setHint(text);
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    hintTimer.current = setTimeout(() => {
+      setHint(undefined);
+    }, EXIT_WINDOW_MS);
+  };
+
+  // read through a function: TypeScript would otherwise narrow the ref across awaits
+  const isBusy = (): boolean => abortRef.current !== undefined;
+
+  const drainQueue = (): void => {
+    const [next, ...remaining] = queuedRef.current;
+    setQueued(remaining);
+    if (next !== undefined) void handleSubmitRef.current(next);
+  };
+
+  const runTurn = async (q: Queued): Promise<void> => {
     push({ kind: 'user', text: q.display });
     const ac = new AbortController();
     abortRef.current = ac;
@@ -253,7 +323,7 @@ export function ChatScreen({
         }
         case 'tool_call':
           commitTail();
-          committedRef.current = false; // text after the tools is a new message
+          committedRef.current = false;
           labels.set(ev.id, ev.label);
           setRunning((r) => [...r, { id: ev.id, name: ev.name, label: ev.label, output: '' }]);
           return;
@@ -283,6 +353,16 @@ export function ChatScreen({
         case 'notice':
           push({ kind: 'notice', level: ev.level, text: ev.text });
           return;
+        case 'compact':
+          push({
+            kind: 'notice',
+            level: 'info',
+            text:
+              ev.kind === 'summary'
+                ? `Compacted the conversation to stay within the context budget (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`
+                : `Trimmed old tool output to save context (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`,
+          });
+          return;
         case 'attempt':
           model = formatModelRef(ev.ref);
           setActiveModel(model);
@@ -311,7 +391,13 @@ export function ChatScreen({
       }
     };
 
-    const outcome = await agent.run(q.prompt, { signal: ac.signal, host, onEvent });
+    const outcome = await agent.run(q.prompt, {
+      signal: ac.signal,
+      host,
+      onEvent,
+      ...(q.allowRules === undefined ? {} : { allowRules: q.allowRules }),
+      ...(q.model === undefined ? {} : { model: q.model }),
+    });
     abortRef.current = undefined;
     commitTail();
     setRunning([]);
@@ -351,31 +437,225 @@ export function ChatScreen({
         status: outcome.status,
       },
     ]);
-    await refreshContext(model ?? activeModel);
-
-    // Esc and Ctrl+C clear the queue, so anything left here was typed during this turn.
-    const [next, ...remaining] = queuedRef.current;
-    setQueued(remaining);
-    if (next !== undefined) void runTurnRef.current(next);
+    refreshContext();
+    if (titleRef.current === undefined && outcome.status === 'done') {
+      void generateTitle(runtime.router, q.display, AbortSignal.timeout(20_000)).then((t) => {
+        if (t === undefined || titleRef.current !== undefined) return;
+        session.record({ type: 'title', title: t });
+        setTitle(t);
+      });
+    }
+    drainQueue();
   };
-  const runTurnRef = useRef(runTurn);
-  runTurnRef.current = runTurn;
+
+  /** `!command`: run it directly and give the output to the model as context. */
+  const runShell = async (command: string): Promise<void> => {
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setStreaming({
+      startedAt: now(),
+      tail: '',
+      chars: 0,
+      committed: false,
+      waiting: undefined,
+      label: `Running ${truncate(command, 40)}`,
+    });
+    const r = await setup.shell.run(command, { timeoutMs: 600_000, signal: ac.signal });
+    abortRef.current = undefined;
+    setStreaming(undefined);
+    push({ kind: 'shell', command, output: r.output, exitCode: r.exitCode });
+    const out =
+      r.output.length > SHELL_CONTEXT_CHARS
+        ? `${r.output.slice(-SHELL_CONTEXT_CHARS)}\n[earlier output omitted]`
+        : r.output;
+    agent.addContext(
+      `I ran a shell command myself:\n<shell-command>${command}</shell-command>\n<shell-output exit-code="${String(r.exitCode ?? '?')}">\n${out}\n</shell-output>`,
+    );
+    refreshContext();
+    drainQueue();
+  };
+
+  const pick = <T,>(
+    pickTitle: string,
+    pickItems: readonly SelectItem<T>[],
+  ): Promise<T | undefined> =>
+    new Promise((resolve) => {
+      setOverlay({
+        kind: 'picker',
+        title: pickTitle,
+        items: pickItems,
+        resolve: (v) => {
+          setOverlay(undefined);
+          resolve(v as T | undefined);
+        },
+      });
+    });
+
+  const ask = (
+    askTitle: string,
+    placeholder: string,
+    opts: { mask?: boolean } = {},
+  ): Promise<string | undefined> =>
+    new Promise((resolve) => {
+      setOverlay({
+        kind: 'ask',
+        title: askTitle,
+        placeholder,
+        mask: opts.mask === true,
+        resolve: (v) => {
+          setOverlay(undefined);
+          resolve(v);
+        },
+      });
+    });
+
+  /** `#note`: save to a memory file. */
+  const saveNote = async (note: string): Promise<void> => {
+    if (note.trim() === '') return;
+    const scope = await pick('Save this note to which memory?', [
+      { label: 'Project memory (VINAX.md in this folder)', value: 'project' as const },
+      { label: 'Your personal memory (~/.vinax/VINAX.md, all projects)', value: 'user' as const },
+    ]);
+    if (scope === undefined) return;
+    const file = await setup.memory.addNote(scope, note);
+    push({ kind: 'notice', level: 'info', text: `Noted in ${file}` });
+  };
+
+  const commandContext = (args: string): CommandContext => ({
+    runtime,
+    setup,
+    session,
+    args,
+    panel: (panelTitle, markdown) => {
+      push({ kind: 'panel', title: panelTitle, markdown });
+    },
+    notice: (level, text) => {
+      push({ kind: 'notice', level, text });
+    },
+    send: (prompt, opts = {}) => {
+      void handleSubmitRef.current({
+        prompt,
+        display: opts.display ?? prompt,
+        raw: true,
+        ...(opts.allowRules === undefined ? {} : { allowRules: opts.allowRules }),
+        ...(opts.model === undefined ? {} : { model: opts.model }),
+      });
+    },
+    pick,
+    ask,
+    busy: async (label, task) => {
+      const ac = new AbortController();
+      abortRef.current = ac;
+      setStreaming({
+        startedAt: now(),
+        tail: '',
+        chars: 0,
+        committed: false,
+        waiting: undefined,
+        label,
+      });
+      try {
+        return await task(ac.signal);
+      } catch (err) {
+        if (!ac.signal.aborted)
+          push({
+            kind: 'notice',
+            level: 'error',
+            text: err instanceof Error ? err.message : String(err),
+          });
+        return undefined;
+      } finally {
+        abortRef.current = undefined;
+        setStreaming(undefined);
+        refreshContext();
+      }
+    },
+    mode: () => modeRef.current,
+    setMode,
+    setTheme: props.onTheme,
+    setEditorMode,
+    editorMode: () => editorModeRef.current,
+    clear: props.onClear,
+    resume: props.onResume,
+    openRewind: () => {
+      if (agent.turns.length === 0)
+        push({ kind: 'notice', level: 'info', text: 'Nothing to rewind yet.' });
+      else setOverlay({ kind: 'rewind' });
+    },
+    suspend: (fn) => suspendTerminal(fn),
+    contextPct: () => contextPct,
+    exit: () => {
+      onExit(0);
+    },
+    commands: () => commands,
+    sessionTitle: () => titleRef.current,
+  });
+
+  const handleSubmit = async (s: Queued & { raw?: boolean }): Promise<void> => {
+    if (abortRef.current || pendingRef.current) {
+      setQueued((list) => [...list, s]);
+      return;
+    }
+    const text = s.prompt.trim();
+    if (s.raw !== true) {
+      const slash = text.startsWith('/') ? parseSlash(text) : undefined;
+      if (slash) {
+        const cmd = findCommand(commands, slash.name);
+        if (!cmd) {
+          push({
+            kind: 'notice',
+            level: 'warning',
+            text: `Unknown command /${slash.name}. Type / to see the commands.`,
+          });
+          return;
+        }
+        try {
+          await cmd.run(commandContext(slash.args));
+        } catch (err) {
+          push({
+            kind: 'notice',
+            level: 'error',
+            text: `/${cmd.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        refreshContext();
+        if (!isBusy()) drainQueue();
+        return;
+      }
+      if (text.startsWith('!')) {
+        await runShell(text.slice(1).trim());
+        return;
+      }
+      if (text.startsWith('#')) {
+        await saveNote(text.slice(1));
+        return;
+      }
+    }
+    const { prompt, attached } = await attachMentions(s.prompt, {
+      cwd: runtime.cwd,
+      workspace: setup.workspace,
+      reads: setup.reads,
+    });
+    await runTurn({ ...s, prompt });
+    if (attached.length > 0) refreshContext();
+  };
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
 
   const prompt = usePromptEditor({
     history,
-    onSubmit: (s) => {
-      if (abortRef.current) setQueued((list) => [...list, s]);
-      else void runTurnRef.current(s);
-    },
+    editorMode: () => editorModeRef.current,
+    onSubmit: (s) => void handleSubmitRef.current(s),
     onShortcuts: () => {
-      setOverlay('shortcuts');
+      setOverlay({ kind: 'shortcuts' });
     },
   });
+  const suggestions = useSuggestions(prompt.editor, commands, files);
 
   useEffect(() => {
-    void refreshContext(activeModel);
+    refreshContext();
     if (initialPrompt !== undefined && initialPrompt.trim() !== '') {
-      void runTurnRef.current({ prompt: initialPrompt, display: initialPrompt });
+      void handleSubmitRef.current({ prompt: initialPrompt, display: initialPrompt });
     }
     return () => {
       abortRef.current?.abort();
@@ -383,14 +663,6 @@ export function ChatScreen({
       if (hintTimer.current) clearTimeout(hintTimer.current);
     };
   }, []); // mount only
-
-  const flashHint = (text: string): void => {
-    setHint(text);
-    if (hintTimer.current) clearTimeout(hintTimer.current);
-    hintTimer.current = setTimeout(() => {
-      setHint(undefined);
-    }, EXIT_WINDOW_MS);
-  };
 
   const rewind = async (choice: RewindChoice | undefined): Promise<void> => {
     setOverlay(undefined);
@@ -412,7 +684,7 @@ export function ChatScreen({
       level: 'info',
       text: `Rewound ${parts.join(' and ')} to before “${truncate(target?.prompt ?? '', 60)}”. Earlier output above stays on screen.`,
     });
-    await refreshContext(activeModel);
+    refreshContext();
   };
 
   useInput((input, key) => {
@@ -432,8 +704,15 @@ export function ChatScreen({
       flashHint('Press Ctrl+C again to exit');
       return;
     }
-    // prompts and the rewind picker handle their own keys
-    if (pendingRef.current !== undefined || overlay === 'rewind') return;
+    const ov = overlayRef.current;
+    // prompts, pickers and questions handle their own keys
+    if (
+      pendingRef.current !== undefined ||
+      ov?.kind === 'rewind' ||
+      ov?.kind === 'picker' ||
+      ov?.kind === 'ask'
+    )
+      return;
     if (key.ctrl && input === 'd') {
       if (prompt.editorRef.current.value === '') {
         abortRef.current?.abort();
@@ -441,20 +720,40 @@ export function ChatScreen({
       }
       return;
     }
-    if (overlay === 'details') {
+    if (ov?.kind === 'details') {
       if (key.escape || (key.ctrl && input === 'o')) setOverlay(undefined);
       else if (key.upArrow) setDetailsOffset((o) => Math.min(o + 1, Math.max(0, turns.length - 1)));
       else if (key.downArrow) setDetailsOffset((o) => Math.max(0, o - 1));
       return;
     }
-    if (overlay === 'shortcuts') {
+    if (ov?.kind === 'shortcuts') {
       setOverlay(undefined);
       if (key.escape || input === '?') return;
     }
     if (key.ctrl && input === 'o') {
       setDetailsOffset(0);
-      setOverlay('details');
+      setOverlay({ kind: 'details' });
       return;
+    }
+    if (suggestions.items.length > 0 && !abortRef.current) {
+      const chosen = suggestions.items[suggestions.index];
+      if (key.upArrow || key.downArrow) {
+        suggestions.move(key.upArrow ? -1 : 1);
+        return;
+      }
+      if (key.escape) {
+        suggestions.dismiss();
+        return;
+      }
+      if ((key.tab || key.return) && chosen && !key.shift) {
+        prompt.replaceRange(chosen.start, chosen.end, chosen.text);
+        if (key.return && chosen.runOnEnter) {
+          setTimeout(() => {
+            prompt.submit();
+          }, 0);
+        }
+        return;
+      }
     }
     if (key.escape) {
       const double = now() - lastEscAt.current < DOUBLE_ESC_MS;
@@ -464,10 +763,12 @@ export function ChatScreen({
         abortRef.current.abort();
       } else if (prompt.isSearching()) {
         prompt.handleKey(input, key);
+      } else if (prompt.escapeToNormal()) {
+        // vim: INSERT → NORMAL
       } else if (double && prompt.editorRef.current.value !== '') {
         prompt.clear();
       } else if (double && agent.turns.length > 0) {
-        setOverlay('rewind');
+        setOverlay({ kind: 'rewind' });
       }
       return;
     }
@@ -479,7 +780,8 @@ export function ChatScreen({
   });
 
   usePaste((text) => {
-    if (overlay === 'details' || pendingRef.current !== undefined) return;
+    const ov = overlayRef.current;
+    if (ov !== undefined || pendingRef.current !== undefined) return;
     prompt.handlePaste(text);
   });
 
@@ -511,6 +813,17 @@ export function ChatScreen({
         );
       case 'notice':
         return <Notice key={item.id} level={item.level} text={item.text} />;
+      case 'panel':
+        return <Panel key={item.id} title={item.title} markdown={item.markdown} width={width} />;
+      case 'shell':
+        return (
+          <ShellEntry
+            key={item.id}
+            command={item.command}
+            output={item.output}
+            exitCode={item.exitCode}
+          />
+        );
       case 'tool':
         return (
           <ToolEntry
@@ -528,6 +841,23 @@ export function ChatScreen({
 
   const openTodos = todos.some((t) => t.status !== 'completed');
   const busy = streaming !== undefined;
+  const value = prompt.editor.value;
+  const tone = value.startsWith('!') ? 'shell' : value.startsWith('#') ? 'memory' : undefined;
+  const label =
+    tone === 'shell'
+      ? '! shell command — runs directly, output goes to VinaX'
+      : tone === 'memory'
+        ? '# memory note — Enter to choose where to save it'
+        : prompt.vimMode === 'normal'
+          ? '-- NORMAL --'
+          : prompt.vimMode === 'insert'
+            ? '-- INSERT --'
+            : undefined;
+  const promptVisible =
+    pending === undefined &&
+    overlay?.kind !== 'rewind' &&
+    overlay?.kind !== 'picker' &&
+    overlay?.kind !== 'ask';
   return (
     <Box flexDirection="column">
       <Static items={items}>{renderItem}</Static>
@@ -556,7 +886,10 @@ export function ChatScreen({
             startedAt={streaming.startedAt}
             outputChars={streaming.chars}
             waiting={streaming.waiting}
-            activity={running[0] === undefined ? undefined : `Running ${running[0].name}`}
+            activity={
+              streaming.label ??
+              (running[0] === undefined ? undefined : `Running ${running[0].name}`)
+            }
             now={now}
           />
         </Box>
@@ -572,8 +905,8 @@ export function ChatScreen({
           <TodoList todos={todos} />
         </Box>
       ) : null}
-      {overlay === 'shortcuts' ? <ShortcutsHelp /> : null}
-      {overlay === 'details' ? (
+      {overlay?.kind === 'shortcuts' ? <ShortcutsHelp /> : null}
+      {overlay?.kind === 'details' ? (
         <TurnDetails
           turns={turns}
           limits={runtime.ledger.entries()}
@@ -582,7 +915,7 @@ export function ChatScreen({
           width={width}
         />
       ) : null}
-      {overlay === 'rewind' ? (
+      {overlay?.kind === 'rewind' ? (
         <RewindPicker
           targets={agent.turns.map((t) => ({
             turn: t.turn,
@@ -593,18 +926,34 @@ export function ChatScreen({
           onDone={(c) => void rewind(c)}
         />
       ) : null}
-      {pending === undefined && overlay !== 'rewind' ? (
+      {overlay?.kind === 'picker' ? (
+        <PickerOverlay title={overlay.title} items={overlay.items} onDone={overlay.resolve} />
+      ) : null}
+      {overlay?.kind === 'ask' ? (
+        <AskOverlay
+          title={overlay.title}
+          placeholder={overlay.placeholder}
+          mask={overlay.mask}
+          onDone={overlay.resolve}
+        />
+      ) : null}
+      {promptVisible ? (
         <Box marginTop={1} flexDirection="column">
           <PromptBox
             editor={prompt.editor}
             placeholder={
               busy
                 ? 'Type to queue a follow-up · esc to interrupt'
-                : 'Ask VinaX anything · ? for shortcuts'
+                : 'Ask VinaX anything · / commands · @ files · ! shell · # memory'
             }
             search={prompt.searchView}
             dimmed={busy}
+            label={label}
+            tone={tone}
           />
+          {suggestions.items.length > 0 && !busy ? (
+            <Suggestions items={suggestions.items} index={suggestions.index} width={width} />
+          ) : null}
         </Box>
       ) : null}
       <StatusLine

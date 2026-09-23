@@ -3,10 +3,11 @@
 VinaX (`vinax`) is an open-source agentic coding assistant for the terminal, powered by free-tier
 models from **Groq** and **OpenRouter**.
 
-> **Status: milestone M3 (agent).** VinaX reads, searches and edits your code, runs commands, and
-> asks before anything risky. It works in the interactive UI and in headless `-p` mode, on Groq
-> and OpenRouter free tiers with automatic fallback. Slash commands, `@` files, project memory
-> and saved sessions arrive in M4. See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+> **Status: v0.1 feature set (milestones M1–M4).** VinaX reads, searches and edits your code, runs
+> commands and asks before anything risky. It has slash and custom commands, `@` file mentions,
+> project memory, saved sessions and automatic compaction. It runs on Groq and OpenRouter free
+> tiers with automatic fallback. Hooks, MCP and sub-agents arrive in M5. See
+> [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 
 ## Requirements
 
@@ -163,6 +164,87 @@ Commands containing `$(…)` or backticks always ask.
 - the conversation, the files, or both
 - only the files changed through VinaX's file tools, not files changed by shell commands
 
+## Commands, prefixes and memory
+
+Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run).
+
+| Command                           | What it does                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| `/help`                           | Commands and shortcuts                                                         |
+| `/clear`                          | Start a new conversation (the old one stays available in `/resume`)            |
+| `/compact [focus]`                | Summarize the conversation to free up context                                  |
+| `/model [provider:model]`         | Switch the model for this session (with a picker)                              |
+| `/resume`, `/rewind`              | Continue an earlier conversation; go back to an earlier prompt                 |
+| `/init`, `/memory`                | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                     |
+| `/status`, `/usage`               | Session, remaining rate limits, OpenRouter quota; requests and tokens today    |
+| `/doctor`                         | Checks Node, settings, keys (live), ripgrep, shell, git, keychain and terminal |
+| `/login`, `/logout`               | Add, replace or remove a provider key without leaving the session              |
+| `/config`, `/permissions`         | Show the effective settings and permission rules                               |
+| `/theme`, `/vim`                  | Change the colour theme; toggle vim key bindings (saved)                       |
+| `/export [file]`, `/bug`, `/exit` | Save the conversation as Markdown; open a pre-filled GitHub issue; quit        |
+
+**Prefixes:**
+
+- `@path` attaches a file or folder. The file's contents go to the model, and the file counts
+  as read, so it can be edited straight away. Type `@` for fuzzy file completion (`.gitignore`
+  is respected).
+- `!command` runs a shell command immediately, with no model call. Its output joins the
+  conversation, so you can ask about it next.
+- `#note` appends a note to project or personal memory.
+
+**Custom commands** are Markdown files in `.vinax/commands/` (project) or `~/.vinax/commands/`
+(personal). Subfolders become namespaces, so `git/review.md` becomes `/git:review`.
+
+```markdown
+---
+description: Review the current diff
+argument-hint: <focus>
+allowed-tools: Bash(git diff:*), Read
+model: groq:openai/gpt-oss-120b
+---
+
+Review this diff with a focus on $ARGUMENTS:
+!`git diff --stat`
+
+Our conventions: @docs/CONVENTIONS.md
+```
+
+The template supports:
+
+- `$ARGUMENTS`, and `$1`…`$9` for individual arguments (quotes group words)
+- `` !`cmd` `` to insert a command's output. This only runs if the command's `allowed-tools`
+  permits it.
+- `@file` to insert a file's contents
+- `allowed-tools`, which also pre-approves those tools for that one turn
+
+**Memory.** VinaX reads instructions from these files and sends them with every request, so keep
+them short:
+
+- `~/.vinax/VINAX.md` (personal)
+- `VINAX.md` and `AGENTS.md` in each folder from the repository root down to the working folder
+- `VINAX.md` and `AGENTS.md` in subfolders, when VinaX first works in them
+- `@path/to/file.md` inside a memory file, which imports that file (up to four levels deep)
+
+## Sessions and context
+
+Every conversation is saved as JSON lines in `~/.vinax/projects/<folder>/sessions/`, with
+checkpointed file contents stored once each. A short title is generated with the small model
+after the first answer.
+
+| Flag                | Meaning                                              |
+| ------------------- | ---------------------------------------------------- |
+| `-c, --continue`    | Continue the most recent conversation in this folder |
+| `-r, --resume [id]` | Pick a conversation to resume (or pass its id)       |
+
+Both work with `-p` too, and `--output-format json` reports the `session_id`.
+
+**Compaction.** VinaX works within a conversation budget: `context.maxTokens`, 24K tokens by
+default, capped by the model's own window. The status line shows how much is used. At 85%,
+VinaX first removes old, long tool outputs, which costs nothing. If that isn't enough, it has the
+small model summarize the conversation into Goal, Decisions, Files, Commands, Current state and
+Next steps sections. `/compact [focus]` does this on demand; `context.autoCompact: false` turns
+off the automatic version.
+
 ## Print mode
 
 ```sh
@@ -261,7 +343,9 @@ Example `~/.vinax/settings.json`:
 }
 ```
 
-`theme` (`dark`, `light` or `colorblind`) is a setting too. `VINAX_HOME` relocates `~/.vinax`.
+`theme` (`dark`, `light` or `colorblind`), `editorMode` (`normal` or `vim`) and `context`
+(`maxTokens`, `autoCompact`) are settings too. `vinax doctor` runs the `/doctor` checks from your
+shell. `VINAX_HOME` relocates `~/.vinax`.
 `VINAX_SECRETS_BACKEND=file` skips the OS keychain. `NO_COLOR` turns off all colour, whatever the
 theme.
 

@@ -52,3 +52,69 @@ export function Notice({ level, text }: { level: 'info' | 'warning' | 'error'; t
     </Box>
   );
 }
+
+/** Output of a slash command: a titled, bordered Markdown panel. */
+export function Panel({
+  title,
+  markdown,
+  width,
+}: {
+  title: string;
+  markdown: string;
+  width: number;
+}) {
+  const theme = useTheme();
+  const rendered = useMemo(
+    () => renderMarkdown(markdown, { width: width - 4, theme }),
+    [markdown, width, theme],
+  );
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.muted}
+      paddingX={1}
+      marginTop={1}
+    >
+      <Text bold color={theme.accent}>
+        {title}
+      </Text>
+      <Text>{rendered}</Text>
+    </Box>
+  );
+}
+
+const SHELL_PREVIEW_LINES = 20;
+
+/** A command the user ran with `!`, and its output (also given to the model as context). */
+export function ShellEntry({
+  command,
+  output,
+  exitCode,
+}: {
+  command: string;
+  output: string;
+  exitCode: number | undefined;
+}) {
+  const theme = useTheme();
+  const lines = output.replace(/\s+$/, '').split('\n');
+  const hidden = Math.max(0, lines.length - SHELL_PREVIEW_LINES);
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={theme.warning}>! </Text>
+        {command}
+      </Text>
+      {hidden > 0 ? <Text color={theme.muted}> … {hidden} earlier lines</Text> : null}
+      {lines.slice(-SHELL_PREVIEW_LINES).map((l, i) => (
+        <Text key={i} color={theme.muted} wrap="truncate-end">
+          {'  '}
+          {l}
+        </Text>
+      ))}
+      {exitCode !== undefined && exitCode !== 0 ? (
+        <Text color={theme.error}> exit code {exitCode}</Text>
+      ) : null}
+    </Box>
+  );
+}

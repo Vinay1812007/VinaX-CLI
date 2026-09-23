@@ -7,6 +7,8 @@ export type TranscriptItem =
   /** `first` marks the opening chunk of an answer (it gets the answer marker). */
   | { id: number; kind: 'assistant'; markdown: string; first: boolean }
   | { id: number; kind: 'notice'; level: StatusNotice['level']; text: string }
+  | { id: number; kind: 'panel'; title: string; markdown: string }
+  | { id: number; kind: 'shell'; command: string; output: string; exitCode: number | undefined }
   | {
       id: number;
       kind: 'tool';
@@ -23,6 +25,19 @@ export interface ToolRecord {
   ok: boolean;
   summary: string;
   output: string;
+}
+
+const KINDS = new Set(['user', 'assistant', 'notice', 'panel', 'shell', 'tool']);
+
+/** Transcript items saved in a session (view entries), validated loosely for replay. */
+export function restoreItems(views: readonly unknown[]): TranscriptItem[] {
+  const out: TranscriptItem[] = [];
+  for (const v of views) {
+    if (typeof v === 'object' && v !== null && KINDS.has(String((v as { kind?: unknown }).kind))) {
+      out.push({ ...(v as TranscriptItem), id: 0 });
+    }
+  }
+  return out;
 }
 
 /** Per-turn details for the Ctrl+O view. */

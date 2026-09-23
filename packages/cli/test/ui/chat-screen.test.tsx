@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createAgentSetup, createRuntime, type AgentSetup, type Runtime } from '@vinax/core';
+import { createRuntime, type AgentSetup, type Runtime } from '@vinax/core';
+import { openSession } from '../../src/session.js';
+import { loadCommands } from '../../src/ui/commands/registry.js';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatScreen } from '../../src/ui/components/ChatScreen.js';
@@ -55,13 +57,23 @@ async function mount(
     cwd: h.cwd,
     env: { ...h.env, PATH: process.env.PATH },
   });
-  setup = await createAgentSetup(runtime);
+  const opened = await openSession(runtime, { kind: 'new' }, {});
+  setup = opened.setup;
+  const { commands } = await loadCommands(runtime);
   const onExit = vi.fn();
+  const onClear = vi.fn();
+  const onResume = vi.fn();
   app = render(
     <ThemeContext.Provider value={mono}>
       <ChatScreen
         runtime={runtime}
         setup={setup}
+        session={opened.writer}
+        commands={commands}
+        editorMode="normal"
+        onClear={onClear}
+        onResume={onResume}
+        onTheme={() => undefined}
         version="9.9.9"
         tips={['a tip']}
         onExit={onExit}
@@ -81,7 +93,18 @@ async function mount(
   await waitFor(() => frame().includes('Ask VinaX anything'), 'prompt box');
   const cwd = h.cwd;
   const read = (rel: string) => fs.readFile(path.join(cwd, rel), 'utf8');
-  return { frame, type, onExit, harness: h, read };
+  return {
+    frame,
+    type,
+    onExit,
+    onClear,
+    onResume,
+    harness: h,
+    read,
+    runtime,
+    setup: opened.setup,
+    writer: opened.writer,
+  };
 }
 
 const lastChatBody = (hh: Harness) => {
@@ -430,5 +453,156 @@ describe('ChatScreen agent', () => {
     await waitFor(() => frame().includes('Rewound the conversation and 1 file'), 'rewound');
     expect(await read('a.txt')).toBe('original\n');
     expect(frame()).toContain('› rewrite a.txt');
+  });
+});
+
+describe('ChatScreen workflow (M4)', () => {
+  const TAB = '\t';
+  const lastRequest = (hh: Harness) =>
+    hh.groq.requests.filter((r) => r.path === '/v1/chat/completions').at(-1)?.body as
+      { model: string; messages: { role: string; content: string }[] } | undefined;
+
+  it('offers / completions and runs /help', async () => {
+    const { frame, type } = await mount();
+    await type('/he');
+    await waitFor(() => frame().includes('/help'), 'menu');
+    expect(frame()).toContain('Show commands and keyboard shortcuts');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('VinaX help'), 'help panel');
+    expect(frame()).toContain('/compact [focus]');
+    await type('/nope', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Unknown command /nope'), 'unknown notice');
+  });
+
+  it('runs custom commands with arguments and allowed tools', async () => {
+    const { frame, type, harness } = await mount({
+      files: {
+        '.vinax/commands/review.md':
+          '---\ndescription: Review a file\nargument-hint: <file>\n---\nReview $1 carefully.',
+      },
+      groq: { script: { 'main-model': [{ text: 'Reviewed.' }] } },
+    });
+    await type('/rev');
+    await waitFor(() => frame().includes('Review a file (project)'), 'custom command in menu');
+    await type(TAB, 'src/a.ts', KEYS.enter);
+    await waitFor(() => frame().includes('Reviewed.'), 'answer');
+    expect(frame()).toContain('› /review src/a.ts');
+    expect(lastRequest(harness)?.messages.at(-1)?.content).toBe('Review src/a.ts carefully.');
+  });
+
+  it('attaches @files chosen from the completion menu', async () => {
+    const { frame, type, harness } = await mount({
+      files: { 'src/app.ts': 'export const answer = 42;\n' },
+      groq: { script: { 'main-model': [{ text: 'It exports answer.' }] } },
+    });
+    await type('what is in @ap');
+    await waitFor(() => frame().includes('@src/app.ts'), 'file suggestion');
+    await type(TAB);
+    expect(frame()).toContain('› what is in @src/app.ts');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('It exports answer.'), 'answer');
+    const sent = lastRequest(harness)?.messages.at(-1)?.content ?? '';
+    expect(sent).toContain('<file path="src/app.ts">\n     1\texport const answer = 42;');
+  });
+
+  it('runs ! commands directly and shares their output with the model', async () => {
+    const { frame, type, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'I see hello.' }] } },
+    });
+    await type('!echo hello-from-shell');
+    expect(frame()).toContain('! shell command');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('! echo hello-from-shell'), 'shell entry');
+    expect(frame()).toContain('hello-from-shell');
+    await type('what did it print?', KEYS.enter);
+    await waitFor(() => frame().includes('I see hello.'), 'answer');
+    const msgs = lastRequest(harness)?.messages ?? [];
+    expect(msgs.at(-2)?.content).toContain('<shell-output exit-code="0">\nhello-from-shell');
+  });
+
+  it('saves # notes to project memory and uses them', async () => {
+    const { frame, type, harness, read } = await mount({
+      groq: { script: { 'main-model': [{ text: 'Noted.' }] } },
+    });
+    await type('#always use tabs', KEYS.enter);
+    await waitFor(() => frame().includes('Save this note to which memory?'), 'memory picker');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('Noted in'), 'saved notice');
+    expect(await read('VINAX.md')).toContain('- always use tabs');
+    await type('hi', KEYS.enter);
+    await waitFor(() => frame().includes('Noted.'), 'answer');
+    expect(lastRequest(harness)?.messages[0]?.content).toContain('- always use tabs');
+  });
+
+  it('switches models with /model and compacts with /compact', async () => {
+    const { frame, type, harness } = await mount({
+      groq: {
+        script: {
+          'main-model': [{ text: 'first' }],
+          'other-model': [{ text: 'from other' }],
+          'small-model': [{ text: 'Greeting session' }, { text: '## Goal\nSay hi.' }],
+        },
+      },
+    });
+    await type('hello', KEYS.enter);
+    await waitFor(() => frame().includes('◆ first'), 'first');
+    await type('/model groq:other-model', KEYS.enter);
+    await waitFor(
+      () => frame().includes('Using groq:other-model for this session'),
+      'model notice',
+    );
+    await type('again', KEYS.enter);
+    await waitFor(() => frame().includes('from other'), 'second');
+    expect(lastRequest(harness)?.model).toBe('other-model');
+    await type('/compact', KEYS.enter);
+    await waitFor(() => frame().includes('Compacted the conversation'), 'compacted');
+    const summaryReq = harness.groq.requests.filter(
+      (r) => (r.body as { model?: string } | undefined)?.model === 'small-model',
+    );
+    expect(summaryReq.length).toBeGreaterThan(0);
+  });
+
+  it('shows /status, /usage and /doctor panels', async () => {
+    const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
+    await type('hi', KEYS.enter);
+    await waitFor(() => frame().includes('◆ ok'), 'answer');
+    await type('/status', KEYS.enter);
+    await waitFor(() => frame().includes('Status'), 'status');
+    expect(frame()).toContain('model: groq:main-model');
+    await type('/usage', KEYS.enter);
+    await waitFor(() => /Groq — \d+ requests? ·/.test(frame()), 'usage');
+    await type('/doctor', KEYS.enter);
+    await waitFor(() => frame().includes('✔ Node.js'), 'doctor');
+  });
+
+  it('records the session for resuming and asks the app to clear', async () => {
+    const { frame, type, onClear, writer, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'saved answer' }] } },
+    });
+    await type('remember me', KEYS.enter);
+    await waitFor(() => frame().includes('saved answer'), 'answer');
+    const { SessionStore, projectDataDir } = await import('@vinax/core');
+    const loaded = new SessionStore(projectDataDir(harness.cwd, harness.env), harness.cwd).load(
+      writer.id,
+    );
+    expect(loaded.messages.map((m) => m.content)).toEqual(['remember me', 'saved answer']);
+    expect(loaded.views.map((v) => (v as { kind: string }).kind)).toEqual(['user', 'assistant']);
+    await type('/clear', KEYS.enter);
+    await waitFor(() => onClear.mock.calls.length === 1, 'clear');
+  });
+
+  it('supports vim bindings after /vim', async () => {
+    const { frame, type } = await mount();
+    await type('/vim', KEYS.enter);
+    await waitFor(() => frame().includes('Vim mode on'), 'vim notice');
+    expect(frame()).toContain('-- INSERT --');
+    await type('hello world', KEYS.esc);
+    expect(frame()).toContain('-- NORMAL --');
+    await type('b', 'd', 'w');
+    expect(frame()).toContain('› hello ');
+    await type('u');
+    expect(frame()).toContain('› hello world');
+    await type('d', 'd');
+    expect(frame()).toContain('Ask VinaX anything');
   });
 });

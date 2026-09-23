@@ -17,6 +17,9 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export const THEME_NAMES = ['dark', 'light', 'colorblind'] as const;
 export type ThemeName = (typeof THEME_NAMES)[number];
 
+export const EDITOR_MODES = ['normal', 'vim'] as const;
+export type EditorMode = (typeof EDITOR_MODES)[number];
+
 const providerSettingsSchema = z.strictObject({
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
@@ -58,6 +61,15 @@ export const settingsSchema = z.strictObject({
   router: routerSettingsSchema.optional(),
   permissions: permissionSettingsSchema.optional(),
   theme: z.enum(THEME_NAMES).optional(),
+  /** Input box key bindings. */
+  editorMode: z.enum(EDITOR_MODES).optional(),
+  context: z
+    .strictObject({
+      /** Conversation size (tokens) VinaX works within; auto-compaction starts at 85% of it. */
+      maxTokens: z.number().int().min(4000).optional(),
+      autoCompact: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -90,6 +102,8 @@ export interface ResolvedSettings {
     additionalDirectories: string[];
   };
   theme: ThemeName;
+  editorMode: EditorMode;
+  context: { maxTokens: number; autoCompact: boolean };
 }
 
 /**
@@ -117,6 +131,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   },
   permissions: { allow: [], ask: [], deny: [], defaultMode: 'default', additionalDirectories: [] },
   theme: 'dark',
+  editorMode: 'normal',
+  context: { maxTokens: 24_000, autoCompact: true },
 };
 
 export function resolveSettings(s: Settings): ResolvedSettings {
@@ -132,5 +148,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     router: { ...d.router, ...s.router },
     permissions: { ...d.permissions, ...s.permissions },
     theme: s.theme ?? d.theme,
+    editorMode: s.editorMode ?? d.editorMode,
+    context: { ...d.context, ...s.context },
   };
 }

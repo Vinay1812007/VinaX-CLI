@@ -30,6 +30,34 @@ export {
   type ToolMode,
 } from './agent/agent.js';
 export { CheckpointStore } from './agent/checkpoints.js';
+export { applySummary, elideToolOutputs, renderTranscript } from './agent/compact.js';
+export {
+  expandCommand,
+  loadCustomCommands,
+  parseFrontmatter,
+  splitArgs,
+  type CustomCommand,
+} from './commands/custom.js';
+export { runDoctor, type DoctorCheck } from './doctor.js';
+export { conversationMarkdown } from './export.js';
+export { attachMentions, FileIndex, fuzzyScore } from './files/index.js';
+export {
+  expandImports,
+  MEMORY_FILE_NAMES,
+  ProjectMemory,
+  type MemoryFile,
+} from './memory/memory.js';
+export {
+  SessionStore,
+  SessionWriter,
+  type LoadedSession,
+  type SessionEntry,
+  type SessionRecorder,
+  type SessionSummary,
+  type TurnMark,
+} from './session/store.js';
+export { generateTitle } from './session/title.js';
+export { UsageTracker, type DayUsage, type UsageCounts } from './state/usage.js';
 export { createAgentSetup, type AgentSetup, type AgentSetupOptions } from './agent/setup.js';
 export { buildSystemPrompt, readGitInfo, type GitInfo } from './agent/system-prompt.js';
 export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
@@ -63,11 +91,13 @@ export { AppStateStore, type AppState } from './state/app-state.js';
 export { PromptHistory, searchHistory } from './state/history.js';
 export {
   DEFAULT_SETTINGS,
+  EDITOR_MODES,
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
   settingsSchema,
   THEME_NAMES,
+  type EditorMode,
   type PermissionMode,
   type ResolvedSettings,
   type Settings,

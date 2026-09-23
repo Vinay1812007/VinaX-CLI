@@ -1,7 +1,6 @@
 import { render } from 'ink';
 import {
   AppStateStore,
-  createAgentSetup,
   createProvider,
   createRuntime,
   loadSettings,
@@ -13,7 +12,9 @@ import {
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
 import type { CliIO } from './io.js';
-import { App, type AppDeps } from './ui/App.js';
+import { openSession, sessionStore } from './session.js';
+import { App, type AppDeps, type StartChoice } from './ui/App.js';
+import { loadCommands } from './ui/commands/registry.js';
 import { cliSettings, type SessionOptions } from './session-options.js';
 import { pickTips } from './ui/tips.js';
 import { VERSION } from './version.js';
@@ -31,21 +32,20 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
   return {
     state: new AppStateStore(env),
     loadTheme: async () => (await scratchSettings()).theme,
-    createSession: async () => {
+    createRuntime: () => {
       const cli = cliSettings(opts);
-      const runtime = await createRuntime({
+      return createRuntime({
         cwd,
         env,
         verbose: opts.verbose,
         ...(cli === undefined ? {} : { cli }),
         ...(opts.model === undefined ? {} : { modelOverride: opts.model }),
       });
-      const setup = await createAgentSetup(runtime, {
-        ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
-        ...(opts.model === undefined ? {} : { model: opts.model }),
-      });
-      return { runtime, setup };
     },
+    openSession: (runtime, choice) =>
+      openSession(runtime, choice, { maxTurns: opts.maxTurns, model: opts.model }),
+    listSessions: (runtime) => sessionStore(runtime).list(),
+    loadCommands,
     onboarding: {
       envKey: (p) => {
         const v = env[SECRET_ENV_VARS[p]];
@@ -66,6 +66,12 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
   };
 }
 
+function startChoice(opts: SessionOptions): StartChoice {
+  if (opts.resume === true) return { kind: 'pick' };
+  if (typeof opts.resume === 'string') return { kind: 'resume', id: opts.resume };
+  return opts.continueLast ? { kind: 'continue' } : { kind: 'new' };
+}
+
 /** Runs the Ink UI until the user exits. Returns the process exit code. */
 export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<number> {
   if (io.stdin.isTTY !== true || io.stdout.isTTY !== true) {
@@ -82,6 +88,7 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
       cwd={io.cwd}
       env={io.env}
       tips={pickTips(3)}
+      start={startChoice(opts)}
       initialPrompt={opts.prompt}
       onExit={(c) => {
         code = c;

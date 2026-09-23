@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { SessionRecorder } from '../session/store.js';
 
 /** File contents before a turn first changed them; `null` means the file did not exist. */
 interface TurnSnapshot {
@@ -14,6 +15,16 @@ interface TurnSnapshot {
 export class CheckpointStore {
   private readonly turns: TurnSnapshot[] = [];
 
+  constructor(private readonly recorder?: SessionRecorder) {}
+
+  /** Restores snapshots from a saved session. */
+  load(saved: ReadonlyMap<number, ReadonlyMap<string, string | null>>): void {
+    this.turns.length = 0;
+    for (const [turn, files] of [...saved.entries()].sort(([a], [b]) => a - b)) {
+      this.turns.push({ turn, files: new Map(files) });
+    }
+  }
+
   beginTurn(turn: number): void {
     this.turns.push({ turn, files: new Map() });
   }
@@ -23,11 +34,19 @@ export class CheckpointStore {
     if (!current) return;
     for (const file of paths) {
       if (current.files.has(file)) continue;
+      let content: string | null;
       try {
-        current.files.set(file, await fs.readFile(file, 'utf8'));
+        content = await fs.readFile(file, 'utf8');
       } catch {
-        current.files.set(file, null);
+        content = null;
       }
+      current.files.set(file, content);
+      this.recorder?.record({
+        type: 'checkpoint',
+        turn: current.turn,
+        file,
+        blob: content === null ? null : this.recorder.storeBlob(content),
+      });
     }
   }
 
@@ -57,6 +76,7 @@ export class CheckpointStore {
   }
 
   dropFrom(turn: number): void {
+    this.recorder?.record({ type: 'checkpoint_drop', fromTurn: turn });
     const keep = this.turns.filter((t) => t.turn < turn);
     this.turns.length = 0;
     this.turns.push(...keep);

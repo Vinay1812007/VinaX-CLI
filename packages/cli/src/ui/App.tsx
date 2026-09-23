@@ -1,19 +1,29 @@
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useStdout } from 'ink';
 import { useEffect, useState } from 'react';
-import type { AgentSetup, AppStateStore, Env, Runtime, ThemeName } from '@vinax/core';
+import type { AppStateStore, Env, Runtime, SessionSummary, ThemeName } from '@vinax/core';
+import type { OpenedSession, SessionChoice } from '../session.js';
+import type { SlashCommand } from './commands/types.js';
 import { ChatScreen } from './components/ChatScreen.js';
 import { Onboarding, type OnboardingDeps } from './components/Onboarding.js';
+import { PickerOverlay } from './components/Overlays.js';
 import { TrustPrompt } from './components/TrustPrompt.js';
 import { colorDisabled, resolveTheme, ThemeContext } from './theme.js';
+import { restoreItems, type TranscriptItem } from './transcript.js';
 
 export interface AppDeps {
   state: AppStateStore;
   /** Reads the configured theme; throws on invalid settings. */
   loadTheme: () => Promise<ThemeName>;
-  /** Loads settings, keys and providers, then wires the agent. */
-  createSession: () => Promise<{ runtime: Runtime; setup: AgentSetup }>;
+  /** Loads settings, keys and providers. */
+  createRuntime: () => Promise<Runtime>;
+  openSession: (runtime: Runtime, choice: SessionChoice) => Promise<OpenedSession>;
+  listSessions: (runtime: Runtime) => SessionSummary[];
+  loadCommands: (runtime: Runtime) => Promise<{ commands: SlashCommand[]; warnings: string[] }>;
   onboarding: OnboardingDeps;
 }
+
+/** `pick` shows the resume picker first (`vinax -r` without an id). */
+export type StartChoice = SessionChoice | { kind: 'pick' };
 
 export interface AppProps {
   deps: AppDeps;
@@ -22,8 +32,19 @@ export interface AppProps {
   env: Env;
   /** Chosen once per process so every render of the welcome panel agrees. */
   tips: readonly string[];
+  start: StartChoice;
   initialPrompt?: string | undefined;
   onExit: (code: number) => void;
+}
+
+interface ChatState {
+  runtime: Runtime;
+  opened: OpenedSession;
+  commands: SlashCommand[];
+  notices: string[];
+  restored: TranscriptItem[];
+  /** Changing it remounts the chat (new transcript) after /clear or /resume. */
+  key: number;
 }
 
 type Phase =
@@ -31,11 +52,13 @@ type Phase =
   | { name: 'onboarding'; theme: ThemeName }
   | { name: 'trust' }
   | { name: 'starting' }
-  | { name: 'chat'; runtime: Runtime; setup: AgentSetup }
+  | { name: 'pick'; runtime: Runtime; sessions: SessionSummary[] }
+  | { name: 'chat'; chat: ChatState }
   | { name: 'error'; message: string };
 
-export function App({ deps, version, cwd, env, tips, initialPrompt, onExit }: AppProps) {
-  const { exit } = useApp();
+export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExit }: AppProps) {
+  const { exit, suspendTerminal } = useApp();
+  const { stdout } = useStdout();
   const [phase, setPhase] = useState<Phase>({ name: 'loading' });
   const [themeName, setThemeName] = useState<ThemeName>('dark');
   const theme = resolveTheme(themeName, env);
@@ -49,10 +72,46 @@ export function App({ deps, version, cwd, env, tips, initialPrompt, onExit }: Ap
     setPhase({ name: 'error', message: err instanceof Error ? err.message : String(err) });
   };
 
+  const enterChat = async (runtime: Runtime, choice: SessionChoice, key: number): Promise<void> => {
+    const opened = await deps.openSession(runtime, choice);
+    const { commands, warnings } = await deps.loadCommands(runtime);
+    setPhase({
+      name: 'chat',
+      chat: {
+        runtime,
+        opened,
+        commands,
+        notices: [...(opened.note === undefined ? [] : [opened.note]), ...warnings],
+        restored: opened.loaded ? restoreItems(opened.loaded.views) : [],
+        key,
+      },
+    });
+  };
+
   const startChat = async (): Promise<void> => {
     setPhase({ name: 'starting' });
-    const { runtime, setup } = await deps.createSession();
-    setPhase({ name: 'chat', runtime, setup });
+    const runtime = await deps.createRuntime();
+    if (start.kind === 'pick') {
+      const sessions = deps.listSessions(runtime);
+      if (sessions.length > 0) {
+        setPhase({ name: 'pick', runtime, sessions });
+        return;
+      }
+      await enterChat(runtime, { kind: 'new' }, 0);
+      return;
+    }
+    await enterChat(runtime, start, 0);
+  };
+
+  /** /clear and /resume: wipe the screen and remount the chat on another session. */
+  const switchSession = (chat: ChatState, choice: SessionChoice): void => {
+    void (async () => {
+      chat.opened.setup.shell.killAll();
+      await suspendTerminal(() => {
+        stdout.write('\x1b[2J\x1b[3J\x1b[H');
+      });
+      await enterChat(chat.runtime, choice, chat.key + 1);
+    })().catch(fail);
   };
 
   const afterOnboarding = async (): Promise<void> => {
@@ -110,18 +169,55 @@ export function App({ deps, version, cwd, env, tips, initialPrompt, onExit }: Ap
         />
       );
       break;
-    case 'chat':
+    case 'pick': {
+      const { runtime } = phase;
       body = (
-        <ChatScreen
-          runtime={phase.runtime}
-          setup={phase.setup}
-          version={version}
-          tips={tips}
-          initialPrompt={initialPrompt}
-          onExit={quit}
+        <PickerOverlay
+          title="Resume which conversation? (Esc starts a new one)"
+          items={phase.sessions.map((s) => ({
+            label: s.title ?? (s.firstPrompt ?? '(untitled)').slice(0, 60),
+            value: s.id,
+            hint: `${s.updatedAt.toISOString().slice(0, 16).replace('T', ' ')} · ${String(s.turns)} prompt${s.turns === 1 ? '' : 's'}`,
+          }))}
+          onDone={(id) => {
+            void enterChat(
+              runtime,
+              id === undefined ? { kind: 'new' } : { kind: 'resume', id },
+              0,
+            ).catch(fail);
+          }}
         />
       );
       break;
+    }
+    case 'chat': {
+      const { chat } = phase;
+      body = (
+        <ChatScreen
+          key={chat.key}
+          runtime={chat.runtime}
+          setup={chat.opened.setup}
+          session={chat.opened.writer}
+          commands={chat.commands}
+          version={version}
+          tips={tips}
+          restored={chat.restored}
+          title={chat.opened.loaded?.title}
+          startupNotices={chat.notices}
+          initialPrompt={chat.key === 0 ? initialPrompt : undefined}
+          editorMode={chat.runtime.settings.resolved.editorMode}
+          onExit={quit}
+          onClear={() => {
+            switchSession(chat, { kind: 'new' });
+          }}
+          onResume={(id) => {
+            switchSession(chat, { kind: 'resume', id });
+          }}
+          onTheme={setThemeName}
+        />
+      );
+      break;
+    }
     case 'error':
       body = <Text color={theme.error}>✖ {phase.message}</Text>;
       break;

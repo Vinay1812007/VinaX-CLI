@@ -117,6 +117,24 @@ export class OpenAICompatibleProvider implements Provider {
     return parsed.data.map(toModelInfo).filter((m): m is ModelInfo => m !== undefined);
   }
 
+  async accountInfo(signal?: AbortSignal): Promise<Record<string, string> | undefined> {
+    if (this.opts.keyCheckPath !== '/key') return undefined;
+    try {
+      const { status, body } = await this.getJson('/key', signal);
+      if (status !== 200 || typeof body !== 'object' || body === null) return undefined;
+      const data = (body as { data?: Record<string, unknown> }).data ?? {};
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+          out[k] = String(v);
+        else if (typeof v === 'object' && v !== null) out[k] = JSON.stringify(v);
+      }
+      return out;
+    } catch {
+      return undefined;
+    }
+  }
+
   async validateKey(signal?: AbortSignal): Promise<KeyCheck> {
     try {
       const { status } = await this.getJson(this.opts.keyCheckPath, signal);

@@ -298,3 +298,31 @@ describe('vinax -p with tools', () => {
     expect((await h.run(['-p', 'x', '--max-turns', '0'])).code).toBe(2);
   });
 });
+
+describe('vinax -p sessions and doctor', () => {
+  it('continues the latest session with -c and reports the session id', async () => {
+    h = await createHarness({
+      groq: { script: { 'main-model': [{ text: 'one' }, { text: 'two' }] } },
+    });
+    const first = await h.run(['-p', 'first question', '--output-format', 'json']);
+    const id = (JSON.parse(first.stdout) as { session_id: string }).session_id;
+    expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{6}$/);
+    const second = await h.run(['-p', 'follow up', '-c', '--output-format', 'json']);
+    expect((JSON.parse(second.stdout) as { session_id: string }).session_id).toBe(id);
+    const body = h.groq.requests.at(-1)?.body as { messages: { content: string }[] };
+    expect(body.messages.slice(1).map((m) => m.content)).toEqual([
+      'first question',
+      'one',
+      'follow up',
+    ]);
+    expect((await h.run(['-p', 'x', '-r'])).code).toBe(2);
+  });
+
+  it('runs vinax doctor', async () => {
+    h = await createHarness({ keys: false });
+    const r = await h.run(['doctor']);
+    expect(r.stdout).toContain('✔ Node.js');
+    expect(r.stdout).toContain('✖ API keys');
+    expect(r.code).toBe(1);
+  });
+});

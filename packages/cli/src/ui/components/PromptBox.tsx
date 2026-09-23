@@ -12,6 +12,10 @@ interface Props {
   placeholder: string;
   search: SearchView | undefined;
   dimmed: boolean;
+  /** Shown above the text, e.g. "shell command" or "-- NORMAL --". */
+  label?: string | undefined;
+  /** Border colour override for special input modes. */
+  tone?: 'shell' | 'memory' | undefined;
 }
 
 /** Renders the text with the cursor cell shown in inverse video. */
@@ -47,15 +51,19 @@ function Lines({ editor }: { editor: EditorState }) {
   );
 }
 
-export function PromptBox({ editor, placeholder, search, dimmed }: Props) {
+export function PromptBox({ editor, placeholder, search, dimmed, label, tone }: Props) {
   const theme = useTheme();
+  const border =
+    tone === 'shell'
+      ? theme.warning
+      : tone === 'memory'
+        ? theme.success
+        : dimmed
+          ? theme.muted
+          : theme.accent;
   return (
-    <Box
-      borderStyle="round"
-      borderColor={dimmed ? theme.muted : theme.accent}
-      paddingX={1}
-      flexDirection="column"
-    >
+    <Box borderStyle="round" borderColor={border} paddingX={1} flexDirection="column">
+      {label === undefined ? null : <Text color={border}>{label}</Text>}
       {search !== undefined ? (
         <Text>
           <Text color={theme.accent}>search history: </Text>

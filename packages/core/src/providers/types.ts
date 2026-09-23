@@ -81,4 +81,6 @@ export interface Provider {
   listModels(signal?: AbortSignal): Promise<ModelInfo[]>;
   validateKey(signal?: AbortSignal): Promise<KeyCheck>;
   stream(req: ChatRequest): AsyncIterable<StreamDelta>;
+  /** Account and quota details, where the provider exposes them (OpenRouter's /key). */
+  accountInfo?(signal?: AbortSignal): Promise<Record<string, string> | undefined>;
 }

@@ -14,6 +14,9 @@ import {
   type ProviderName,
 } from './providers/types.js';
 import { Router } from './router/router.js';
+import { UsageTracker } from './state/usage.js';
+import { createProvider } from './providers/registry.js';
+import type { SecretName } from './config/secrets.js';
 
 export interface Runtime {
   cwd: string;
@@ -28,6 +31,11 @@ export interface Runtime {
   /** Model lists fetched at startup (cached 24h); empty for unreachable providers. */
   models: ReadonlyMap<ProviderName, readonly ModelInfo[]>;
   router: Router;
+  usage: UsageTracker;
+  /** Uses a new key for a provider right away (after /login). */
+  setProviderKey(name: ProviderName, key: string): void;
+  /** Stops using a provider (after /logout). */
+  removeProvider(name: SecretName): void;
   /** Non-fatal problems to show the user once (unknown settings, unavailable models, ...). */
   warnings: string[];
 }
@@ -118,9 +126,21 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     settingsWarnings: settings.warnings,
   });
 
+  const usage = new UsageTracker(env);
+  process.once('exit', () => {
+    usage.flush();
+  });
+  const liveProviders = providers;
   return {
     cwd: opts.cwd,
     env,
+    usage,
+    setProviderKey(name, key) {
+      liveProviders.set(name, createProvider(name, key, { settings: resolved, ledger, logger }));
+    },
+    removeProvider(name) {
+      liveProviders.delete(name);
+    },
     settings,
     logger,
     secrets,
@@ -129,7 +149,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     missingKeys,
     catalog,
     models,
-    router: new Router({ providers, ledger, settings: resolved, logger, skip }),
+    router: new Router({ providers, ledger, settings: resolved, logger, skip, usage }),
     warnings: [...settings.warnings, ...warnings],
   };
 }

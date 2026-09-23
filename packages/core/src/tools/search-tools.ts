@@ -92,6 +92,12 @@ type GrepInput = z.infer<typeof grepInput>;
 
 let rgBinary: Promise<string | undefined> | undefined;
 
+/** Which search engine Grep uses on this machine (for /doctor). */
+export async function ripgrepStatus(): Promise<'bundled' | 'system' | 'javascript'> {
+  const bin = await findRipgrep();
+  return bin === undefined ? 'javascript' : bin === 'rg' ? 'system' : 'bundled';
+}
+
 /** Bundled @vscode/ripgrep, then `rg` on PATH; `undefined` means use the JS fallback. */
 function findRipgrep(): Promise<string | undefined> {
   rgBinary ??= (async () => {

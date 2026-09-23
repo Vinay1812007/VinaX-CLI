@@ -102,6 +102,25 @@ export class PermissionEngine {
     this.add(raw, effect, 'session');
   }
 
+  /** Allow rules for one turn; call the returned function to remove them again. */
+  addTemporaryRules(raws: readonly string[]): () => void {
+    const added = raws
+      .map((raw) => parseRule(raw, 'allow', 'command'))
+      .filter((r): r is PermissionRule => r !== undefined);
+    this.rules.push(...added);
+    return () => {
+      for (const r of added) {
+        const i = this.rules.indexOf(r);
+        if (i !== -1) this.rules.splice(i, 1);
+      }
+    };
+  }
+
+  /** Every rule in force, for /permissions. */
+  listRules(): readonly PermissionRule[] {
+    return this.rules;
+  }
+
   private ctx() {
     return {
       cwd: this.opts.cwd,

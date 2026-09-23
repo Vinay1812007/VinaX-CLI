@@ -102,3 +102,36 @@ export function killToLineStart(s: EditorState): EditorState {
   const start = lineStartIndex(s.value, s.cursor);
   return { value: s.value.slice(0, start) + s.value.slice(s.cursor), cursor: start };
 }
+
+/** Vim `e`: to the last character of the current or next word. */
+export function wordEnd(s: EditorState): EditorState {
+  let i = Math.min(s.cursor + 1, s.value.length);
+  while (i < s.value.length && /\s/.test(s.value[i] ?? '')) i++;
+  while (i + 1 < s.value.length && !/\s/.test(s.value[i + 1] ?? '')) i++;
+  return { ...s, cursor: Math.min(i, Math.max(0, s.value.length - 1)) };
+}
+
+/** Vim `dw`: delete from the cursor to the start of the next word. */
+export function deleteWordForward(s: EditorState): EditorState {
+  const to = wordRight(s).cursor;
+  let end = to;
+  while (end < s.value.length && s.value[end] === ' ') end++;
+  return { value: s.value.slice(0, s.cursor) + s.value.slice(end), cursor: s.cursor };
+}
+
+/** Vim `dd`: delete the current line. */
+export function deleteLine(s: EditorState): EditorState {
+  const start = lineStart(s).cursor;
+  const end = lineEnd(s).cursor;
+  const removeFrom = end < s.value.length ? start : Math.max(0, start - 1);
+  const removeTo = end < s.value.length ? end + 1 : end;
+  const value = s.value.slice(0, removeFrom) + s.value.slice(removeTo);
+  return { value, cursor: Math.min(removeFrom, value.length) };
+}
+
+/** Vim `^`: first non-blank character of the line. */
+export function firstNonBlank(s: EditorState): EditorState {
+  let i = lineStart(s).cursor;
+  while (i < s.value.length && (s.value[i] === ' ' || s.value[i] === '\t')) i++;
+  return { ...s, cursor: i };
+}
