@@ -270,6 +270,8 @@ export async function startMockMcpHttpServer(): Promise<{
 export function systemEnv(): Record<string, string> {
   const keys = [
     'PATH',
+    // Homebrew's tool shims on macOS refuse to run without HOME
+    'HOME',
     'SystemRoot',
     'windir',
     'ComSpec',

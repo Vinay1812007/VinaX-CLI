@@ -90,7 +90,7 @@ async function mount(
   const frame = () => app?.lastFrame() ?? '';
   const type = async (...chunks: string[]) => {
     // Ink subscribes to input after drawing a new screen; give it a moment like a real user would.
-    await sleep(60);
+    await sleep(process.platform === 'win32' ? 200 : 60);
     for (const c of chunks) {
       app?.stdin.write(c);
       await sleep(20);
@@ -440,10 +440,8 @@ describe('ChatScreen agent', () => {
       },
     });
     await type('rewrite a.txt', KEYS.enter);
-    await waitFor(
-      () => frame().includes('Write a.txt') || frame().includes('Edit a.txt?'),
-      'prompt',
-    );
+    // wait for the approval prompt itself; the tool line appears before it is ready for input
+    await waitFor(() => frame().includes('Edit a.txt?'), 'prompt');
     await type('1');
     await waitFor(() => frame().includes('Rewrote it.'), 'answer');
     expect(await read('a.txt')).toBe('rewritten\n');
