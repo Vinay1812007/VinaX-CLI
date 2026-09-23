@@ -12,6 +12,8 @@ export interface MockTurn {
   usage?: { prompt_tokens: number; completion_tokens: number };
   /** Delay before any bytes are sent. */
   delayMs?: number;
+  /** Delay between streamed content chunks. */
+  chunkDelayMs?: number;
   /** Destroy the socket after this many content chunks (simulates a dropped stream). */
   breakAfterChunks?: number;
 }
@@ -92,6 +94,9 @@ async function reply(res: http.ServerResponse, model: string, turn: MockTurn): P
       res.socket?.destroy();
       return;
     }
+    if (turn.chunkDelayMs !== undefined && i > 0)
+      await new Promise((r) => setTimeout(r, turn.chunkDelayMs));
+    if (res.destroyed) return;
     sse(res, chunk(model, { content: part }));
   }
   sse(res, chunk(model, {}, 'stop'));

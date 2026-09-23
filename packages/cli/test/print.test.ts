@@ -161,6 +161,13 @@ describe('vinax -p', () => {
     expect(r.stderr).toContain('✖ Interrupted');
   });
 
+  it('refuses interactive mode without a terminal and points to -p', async () => {
+    h = await createHarness();
+    const r = await h.run(['hello']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('Interactive mode needs a terminal');
+  });
+
   it('uses --model ahead of the configured chain', async () => {
     h = await createHarness({ openrouter: { script: { 'other:free': [{ text: 'picked' }] } } });
     const r = await h.run(['-p', 'hi', '--model', 'openrouter:other:free']);

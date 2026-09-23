@@ -26,6 +26,16 @@ export function settingsPaths(cwd: string, env: Env = process.env): SettingsPath
   };
 }
 
+/** Filesystem-safe folder name for a project path, e.g. `/a/b` → `-a-b`. */
+export function encodeProjectPath(cwd: string): string {
+  return path.resolve(cwd).replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/** Per-project state (history, and later sessions) under `~/.vinax/projects/<encoded-cwd>/`. */
+export function projectDataDir(cwd: string, env: Env = process.env): string {
+  return path.join(vinaxHome(env), 'projects', encodeProjectPath(cwd));
+}
+
 export function cacheDir(env: Env = process.env): string {
   return path.join(vinaxHome(env), 'cache');
 }

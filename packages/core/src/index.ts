@@ -10,15 +10,34 @@ export {
   type SettingsSource,
   type WritableScope,
 } from './config/load.js';
-export { cacheDir, logDir, settingsPaths, vinaxHome, type Env } from './config/paths.js';
+export {
+  cacheDir,
+  encodeProjectPath,
+  logDir,
+  projectDataDir,
+  settingsPaths,
+  vinaxHome,
+  type Env,
+} from './config/paths.js';
+export {
+  ChatSession,
+  effectiveContextWindow,
+  INTERRUPTED_MARKER,
+  type TurnOutcome,
+} from './chat/session.js';
+export { AppStateStore, type AppState } from './state/app-state.js';
+export { PromptHistory, searchHistory } from './state/history.js';
 export {
   DEFAULT_SETTINGS,
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
   settingsSchema,
+  THEME_NAMES,
+  type PermissionMode,
   type ResolvedSettings,
   type Settings,
+  type ThemeName,
 } from './config/schema.js';
 export {
   FileSecretBackend,

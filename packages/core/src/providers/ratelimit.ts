@@ -163,19 +163,26 @@ export class RateLimitLedger {
     const rpm = this.rpmFor(provider);
     const oldest = window[0];
     if (window.length >= rpm && oldest !== undefined) {
-      waits.push({ waitMs: oldest + 60_000 - now, reason: `${rpm} requests/min limit` });
+      waits.push({
+        waitMs: oldest + 60_000 - now,
+        reason: `is at its ${String(rpm)} requests/min limit`,
+      });
     }
 
     const snap = this.snapshots.get(key);
     if (snap) {
       if (snap.blockedUntil !== undefined && snap.blockedUntil > now) {
-        waits.push({ waitMs: snap.blockedUntil - now, reason: 'rate limited (retry-after)' });
+        const secs = Math.ceil((snap.blockedUntil - now) / 1000);
+        waits.push({
+          waitMs: snap.blockedUntil - now,
+          reason: `is rate-limited for another ${String(secs)}s`,
+        });
       }
       const { tokens, requests } = snap;
       if (tokens.limit !== undefined && estTokens > tokens.limit) {
         waits.push({
           waitMs: Number.POSITIVE_INFINITY,
-          reason: `request (~${compact(estTokens)} tokens) exceeds the ${compact(tokens.limit)} tokens/min limit`,
+          reason: `can't take this request (~${compact(estTokens)} tokens exceeds its ${compact(tokens.limit)} tokens/min limit)`,
         });
       } else if (
         tokens.remaining !== undefined &&
@@ -183,10 +190,10 @@ export class RateLimitLedger {
         tokens.resetAt > now &&
         tokens.remaining < estTokens
       ) {
-        waits.push({ waitMs: tokens.resetAt - now, reason: 'tokens/min budget used up' });
+        waits.push({ waitMs: tokens.resetAt - now, reason: 'tokens/min budget is used up' });
       }
       if (requests.remaining === 0 && requests.resetAt !== undefined && requests.resetAt > now) {
-        waits.push({ waitMs: requests.resetAt - now, reason: 'request quota used up' });
+        waits.push({ waitMs: requests.resetAt - now, reason: 'request quota is used up' });
       }
     }
 

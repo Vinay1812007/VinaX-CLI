@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
-import { providerLabel, toProviderError } from './errors.js';
+import { ProviderError, providerLabel, toProviderError } from './errors.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import type {
   ChatRequest,
@@ -155,6 +155,9 @@ export class OpenAICompatibleProvider implements Provider {
           };
         }
       }
+      // The SDK ends the iteration quietly when aborted; surface it so a cut-off answer is not
+      // mistaken for a finished one.
+      if (req.signal.aborted) throw new ProviderError('aborted', 'Request aborted', this.name);
       logger.debug('complete', {
         provider: this.name,
         model: req.model,

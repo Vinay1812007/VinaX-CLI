@@ -12,6 +12,10 @@ export const modelRefSchema = z
   );
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+export const THEME_NAMES = ['dark', 'light', 'colorblind'] as const;
+export type ThemeName = (typeof THEME_NAMES)[number];
 
 const providerSettingsSchema = z.strictObject({
   enabled: z.boolean().optional(),
@@ -53,6 +57,7 @@ export const settingsSchema = z.strictObject({
     .optional(),
   router: routerSettingsSchema.optional(),
   permissions: permissionSettingsSchema.optional(),
+  theme: z.enum(THEME_NAMES).optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -81,9 +86,10 @@ export interface ResolvedSettings {
     allow: string[];
     ask: string[];
     deny: string[];
-    defaultMode: (typeof PERMISSION_MODES)[number];
+    defaultMode: PermissionMode;
     additionalDirectories: string[];
   };
+  theme: ThemeName;
 }
 
 /**
@@ -110,6 +116,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     requestTimeoutMs: 90_000,
   },
   permissions: { allow: [], ask: [], deny: [], defaultMode: 'default', additionalDirectories: [] },
+  theme: 'dark',
 };
 
 export function resolveSettings(s: Settings): ResolvedSettings {
@@ -124,5 +131,6 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     },
     router: { ...d.router, ...s.router },
     permissions: { ...d.permissions, ...s.permissions },
+    theme: s.theme ?? d.theme,
   };
 }

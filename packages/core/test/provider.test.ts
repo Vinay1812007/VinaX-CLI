@@ -102,6 +102,26 @@ describe('OpenAICompatibleProvider', () => {
     expect((err as Error).message).toBe('Groq 429: Rate limit reached');
   });
 
+  it('reports an abort mid-stream as aborted, not as a finished answer', async () => {
+    server = await startMockServer({
+      script: { m: [{ text: ['first ', 'second ', 'third'], chunkDelayMs: 200 }] },
+    });
+    const ac = new AbortController();
+    const seen: string[] = [];
+    const err = await (async () => {
+      for await (const d of makeProvider(server.url).stream({
+        model: 'm',
+        messages: [],
+        signal: ac.signal,
+      })) {
+        if (d.type === 'text') seen.push(d.text);
+        ac.abort();
+      }
+    })().catch((e: unknown) => e);
+    expect(seen).toEqual(['first ']);
+    expect(err).toMatchObject({ kind: 'aborted' });
+  });
+
   it('maps 413 (request larger than the TPM budget) to too_large', async () => {
     server = await startMockServer({
       script: { m: [{ status: 413, error: { message: 'Request too large' } }] },

@@ -2,6 +2,7 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { modelRefSchema, SettingsError } from '@vinax/core';
 import { configCommand } from './config-command.js';
 import { EXIT } from './exit-codes.js';
+import { runInteractive } from './interactive.js';
 import { paint, processIO, type CliIO } from './io.js';
 import { OUTPUT_FORMATS, runPrint, type OutputFormat } from './print.js';
 import { VERSION } from './version.js';
@@ -58,10 +59,9 @@ export async function main(
     .exitOverride()
     .action(async (prompt: string | undefined, opts: RootOptions) => {
       if (opts.print !== true) {
-        io.stderr.write(
-          'The interactive UI is not built yet (milestone M2). For now use print mode:\n  vinax -p "<prompt>"\n',
+        setExit(
+          await runInteractive({ prompt, model: opts.model, verbose: opts.verbose === true }, io),
         );
-        setExit(EXIT.usage);
         return;
       }
       setExit(

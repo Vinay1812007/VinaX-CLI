@@ -3,9 +3,10 @@
 VinaX (`vinax`) is an open-source agentic coding assistant for the terminal, powered by free-tier
 models from **Groq** and **OpenRouter**.
 
-> **Status: milestone M1 (core).** Headless print mode, provider routing with fallback, settings
-> and key storage work today. The interactive terminal UI arrives in M2, and tools/agent loop in
-> M3. See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+> **Status: milestone M2 (terminal UI).** The interactive chat UI, headless print mode, provider
+> routing with fallback, settings and key storage work today. VinaX can't read or edit your files
+> or run commands yet; tools and the agent loop arrive in M3. See [docs/PLAN.md](docs/PLAN.md)
+> for the roadmap.
 
 ## Requirements
 
@@ -42,6 +43,41 @@ echo "$KEY" | vinax config set-key openrouter
 vinax config keys                  # shows masked keys and where each one comes from
 vinax config remove-key groq
 ```
+
+## Interactive mode
+
+```sh
+vinax                      # start in the current folder
+vinax "explain this repo"  # start with a first prompt
+```
+
+On first run VinaX asks for a colour theme (dark, light or colour-blind friendly), your provider,
+your API keys (each is checked live before it's saved) and a default model. The first time you
+use a folder, VinaX asks whether you trust the files in it. The answer covers that folder and
+every folder inside it.
+
+Answers stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
+While a reply is streaming, the activity line shows elapsed time, an approximate token count and
+`esc to interrupt`. The footer shows the current mode, the model that answered, how much of the
+context budget is used, and any fallback or rate-limit notice.
+
+| Key                                                 | Action                                                         |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| `Enter`                                             | Send (typing while a reply streams queues the next prompt)     |
+| `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line (`Shift+Enter` needs a terminal that reports it)      |
+| `↑` / `↓`                                           | Move between lines, then walk this project's history           |
+| `Ctrl+R`                                            | Search prompt history (press again for older matches)          |
+| `Esc`                                               | Stop the current reply; what was written is kept               |
+| `Esc Esc`                                           | Clear the prompt                                               |
+| `Shift+Tab`                                         | Cycle default → auto-accept edits → plan mode                  |
+| `Ctrl+O`                                            | Turn details: model, tokens, time, fallbacks, live rate limits |
+| `?` (empty prompt)                                  | Show all shortcuts                                             |
+| `Ctrl+A` `Ctrl+E` `Ctrl+W` `Ctrl+U` `Ctrl+K`        | Line start/end, delete word/to start/to end                    |
+| `Ctrl+C`                                            | Clear the prompt; press again within 2s to exit                |
+| `Ctrl+D`                                            | Exit (on an empty prompt)                                      |
+
+Pastes of 8 or more lines (or 800+ characters) collapse into `[Pasted text #1 +42 lines]`, and the
+full text is sent. Prompt history is stored per project in `~/.vinax/projects/<folder>/`.
 
 ## Print mode
 
@@ -127,14 +163,15 @@ Example `~/.vinax/settings.json`:
 }
 ```
 
-`VINAX_HOME` relocates `~/.vinax`. `VINAX_SECRETS_BACKEND=file` skips the OS keychain.
-`NO_COLOR` disables colour.
+`theme` (`dark`, `light` or `colorblind`) is a setting too. `VINAX_HOME` relocates `~/.vinax`.
+`VINAX_SECRETS_BACKEND=file` skips the OS keychain. `NO_COLOR` turns off all colour, whatever the
+theme.
 
 ## Development
 
 ```sh
 pnpm install
-pnpm test          # vitest: unit tests + CLI integration tests against a mock OpenAI server
+pnpm test          # vitest: unit, Ink component and CLI integration tests (mock OpenAI server)
 pnpm typecheck
 pnpm lint
 pnpm build         # bundles packages/cli/dist/vinax.js with tsup

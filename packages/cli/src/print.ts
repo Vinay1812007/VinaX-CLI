@@ -97,9 +97,7 @@ class Output {
             reason: ev.reason,
           });
         }
-        this.notice(
-          `… waiting ${seconds(ev.ms)} for ${providerLabel(ev.ref.provider)} (${ev.reason})`,
-        );
+        this.notice(`… waiting ${seconds(ev.ms)}: ${providerLabel(ev.ref.provider)} ${ev.reason}`);
         return;
       case 'retry':
         if (this.format === 'stream-json') {

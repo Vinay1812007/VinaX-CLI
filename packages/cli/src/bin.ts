@@ -9,4 +9,9 @@ process.on('SIGINT', () => {
   controller.abort();
 });
 
-process.exitCode = await main(process.argv.slice(2), undefined, controller.signal);
+const code = await main(process.argv.slice(2), undefined, controller.signal);
+// Idle HTTP keep-alive sockets would otherwise hold the process open for several seconds.
+// Exit once stdout and stderr have flushed so piped output is never cut short.
+process.stdout.write('', () => {
+  process.stderr.write('', () => process.exit(code));
+});
