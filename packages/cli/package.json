@@ -1,0 +1,31 @@
+{
+  "name": "vinax",
+  "version": "0.0.0",
+  "description": "VinaX: an agentic coding assistant for your terminal, powered by free-tier LLMs.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "vinax": "dist/vinax.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^2.1.0",
+    "commander": "^15.0.0",
+    "openai": "^7.21.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@vinax/core": "workspace:*",
+    "@vinax/testkit": "workspace:*",
+    "tsup": "^8.5.1"
+  }
+}

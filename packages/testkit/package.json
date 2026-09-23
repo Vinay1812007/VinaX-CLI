@@ -1,0 +1,13 @@
+{
+  "name": "@vinax/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test helpers for VinaX: a scriptable mock OpenAI-compatible server.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
