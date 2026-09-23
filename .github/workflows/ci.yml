@@ -30,9 +30,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
-      - name: Lint and formatting
+      - name: Lint, formatting and docs build
         if: runner.os == 'Linux'
-        run: pnpm lint && pnpm format:check
+        run: pnpm lint && pnpm format:check && pnpm docs:build
       - run: pnpm test
       - name: Smoke test the CLI bundle
         run: node packages/cli/dist/vinax.js --version

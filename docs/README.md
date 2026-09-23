@@ -1,15 +1,14 @@
 # VinaX documentation
 
-- **[README](../README.md)**: install, first run, and the full feature tour. It covers
-  interactive mode, tools, permissions, commands, memory, sessions, hooks, MCP, sub-agents, print
-  mode, models and settings.
-- **[Gateway](gateway.md)**: the optional shared gateway. How to deploy it to Render, create
-  tokens, set limits, and what its API does.
-- **[Troubleshooting](troubleshooting.md)**: rate limits, the sleeping gateway, keys, terminals,
-  Windows and updates.
-- **[Architecture](architecture.md)**: how the packages fit together, one agent turn step by step,
-  and where state lives.
-- **[Releasing](releasing.md)**: for maintainers. Changesets, npm, binaries, GitHub Releases and
-  the gateway deploy.
-- **[PLAN.md](PLAN.md)**: the original design plan, with its interfaces, risks and milestones.
-- **[Security policy](../SECURITY.md)**.
+These pages are the source of the documentation site:
+**https://vinay1812007.github.io/VinaX-CLI/**
+
+It's built with [VitePress](https://vitepress.dev). Run it locally:
+
+```sh
+pnpm install
+pnpm docs:dev       # live preview at http://localhost:5173/VinaX-CLI/
+pnpm docs:build     # static site in docs/.vitepress/dist
+```
+
+The sidebar and navigation are set in `.vitepress/config.mts`, and the brand styles in `.vitepress/theme/custom.css`. Pushes to `main` that touch `docs/` deploy the site through `.github/workflows/docs.yml`. `PLAN.md` (the original design plan) and this file are not part of the site.

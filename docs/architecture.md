@@ -54,4 +54,4 @@ drift apart.
 
 `VINAX_HOME` moves `~/.vinax` elsewhere.
 
-The design notes and trade-offs behind all this are in [PLAN.md](PLAN.md).
+The design notes and trade-offs behind all this are in [PLAN.md](https://github.com/Vinay1812007/VinaX-CLI/blob/main/docs/PLAN.md).

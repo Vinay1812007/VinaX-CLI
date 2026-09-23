@@ -7,8 +7,9 @@ models from **Groq** and **OpenRouter**.
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
 > mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
 > sub-agents and WebFetch. It runs on Groq and OpenRouter free tiers with automatic fallback, or
-> through an optional shared [gateway](docs/gateway.md). See [docs/](docs/README.md) for the
-> documentation.
+> through an optional shared [gateway](docs/gateway.md).
+>
+> 📖 **Documentation: https://vinay1812007.github.io/VinaX-CLI/**
 
 ## Install
 
