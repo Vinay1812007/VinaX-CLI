@@ -211,6 +211,8 @@ export class PermissionEngine {
         return mode === 'acceptEdits' && inside
           ? { kind: 'allow', reason: 'Auto-accepting edits' }
           : { kind: 'ask', reason: 'File changes need your approval.', ...withSuggestion };
+      case 'network':
+        return { kind: 'ask', reason: 'Network access needs your approval.', ...withSuggestion };
       default:
         return { kind: 'ask', reason: 'Running commands needs your approval.', ...withSuggestion };
     }

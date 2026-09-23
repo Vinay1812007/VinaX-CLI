@@ -1,4 +1,8 @@
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createDemoMcpServer } from './mcp-tools.js';
 import type { AddressInfo } from 'node:net';
 
 /** One scripted reply to a `POST /v1/chat/completions`. */
@@ -207,6 +211,44 @@ export async function startMockServer(opts: MockServerOptions = {}): Promise<Moc
         server.close((err) => {
           if (err) reject(err);
           else resolve();
+        });
+      }),
+  };
+}
+
+/** Path of the stdio MCP demo server script (run it with `node --import tsx <path>`). */
+export const MCP_STDIO_SERVER = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'mcp-stdio-server.ts',
+);
+
+/** A stateless streamable-HTTP MCP server with the demo tools, at `<url>/mcp`. */
+export async function startMockMcpHttpServer(): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer((req, res) => {
+    void (async () => {
+      const raw = await readBody(req);
+      const mcp = createDemoMcpServer('remote');
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on('close', () => {
+        void transport.close();
+        void mcp.close();
+      });
+      await mcp.connect(transport);
+      await transport.handleRequest(req, res, raw === '' ? undefined : JSON.parse(raw));
+    })();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${String(port)}/mcp`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => {
+          resolve();
         });
       }),
   };

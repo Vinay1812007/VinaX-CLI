@@ -26,7 +26,11 @@ afterEach(async () => {
 describe('AppStateStore', () => {
   it('remembers onboarding and trusts folders and their children', async () => {
     const store = new AppStateStore({ VINAX_HOME: home });
-    expect(await store.read()).toEqual({ onboardingComplete: false, trustedDirs: [] });
+    expect(await store.read()).toEqual({
+      onboardingComplete: false,
+      trustedDirs: [],
+      approvedMcp: {},
+    });
     await store.update((s) => ({ ...s, onboardingComplete: true }));
     const project = path.join(home, 'work', 'app');
     expect(await store.isTrusted(project)).toBe(false);

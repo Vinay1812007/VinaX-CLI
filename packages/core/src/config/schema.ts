@@ -20,6 +20,28 @@ export type ThemeName = (typeof THEME_NAMES)[number];
 export const EDITOR_MODES = ['normal', 'vim'] as const;
 export type EditorMode = (typeof EDITOR_MODES)[number];
 
+export const HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'Stop',
+  'SessionStart',
+] as const;
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+const hookCommandSchema = z.strictObject({
+  type: z.literal('command'),
+  command: z.string().min(1),
+  /** Seconds before the hook is stopped (default 60). */
+  timeout: z.number().int().positive().max(600).optional(),
+});
+const hookMatcherSchema = z.strictObject({
+  /** Tool name, `A|B` list, or a regular expression (tool events only). */
+  matcher: z.string().optional(),
+  hooks: z.array(hookCommandSchema).min(1),
+});
+export type HookMatcher = z.infer<typeof hookMatcherSchema>;
+
 const providerSettingsSchema = z.strictObject({
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
@@ -63,6 +85,14 @@ export const settingsSchema = z.strictObject({
   theme: z.enum(THEME_NAMES).optional(),
   /** Input box key bindings. */
   editorMode: z.enum(EDITOR_MODES).optional(),
+  hooks: z
+    .strictObject(
+      Object.fromEntries(
+        HOOK_EVENTS.map((e) => [e, z.array(hookMatcherSchema).optional()]),
+      ) as Record<HookEvent, z.ZodOptional<z.ZodArray<typeof hookMatcherSchema>>>,
+    )
+    .optional(),
+  disableAllHooks: z.boolean().optional(),
   context: z
     .strictObject({
       /** Conversation size (tokens) VinaX works within; auto-compaction starts at 85% of it. */
@@ -104,6 +134,8 @@ export interface ResolvedSettings {
   theme: ThemeName;
   editorMode: EditorMode;
   context: { maxTokens: number; autoCompact: boolean };
+  hooks: Partial<Record<HookEvent, HookMatcher[]>>;
+  disableAllHooks: boolean;
 }
 
 /**
@@ -133,6 +165,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   theme: 'dark',
   editorMode: 'normal',
   context: { maxTokens: 24_000, autoCompact: true },
+  hooks: {},
+  disableAllHooks: false,
 };
 
 export function resolveSettings(s: Settings): ResolvedSettings {
@@ -150,5 +184,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     theme: s.theme ?? d.theme,
     editorMode: s.editorMode ?? d.editorMode,
     context: { ...d.context, ...s.context },
+    hooks: s.hooks ?? {},
+    disableAllHooks: s.disableAllHooks ?? false,
   };
 }

@@ -45,7 +45,10 @@ export function toolSpec(tool: AnyTool): ToolSpec {
   return {
     name: tool.name,
     description: tool.description,
-    parameters: tidy(z.toJSONSchema(tool.input, { io: 'input' })) as Record<string, unknown>,
+    parameters: (tool.jsonSchema ?? tidy(z.toJSONSchema(tool.input, { io: 'input' }))) as Record<
+      string,
+      unknown
+    >,
   };
 }
 

@@ -14,6 +14,7 @@ import type { PlanDecision } from '../tools/plan-tool.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
 import type { AnyTool, ToolContext, ToolDisplay, ToolKind, ToolOutput } from '../tools/types.js';
 import type { LoadedSession, SessionRecorder, TurnMark } from '../session/store.js';
+import type { HookRunner } from '../hooks/runner.js';
 import type { CheckpointStore } from './checkpoints.js';
 import { applySummary, elideToolOutputs, summarize } from './compact.js';
 import {
@@ -81,7 +82,7 @@ export type AgentEvent =
   | { type: 'compact'; kind: 'elide' | 'summary'; before: number; after: number };
 
 export interface AgentOutcome {
-  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined';
+  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked';
   /** The final assistant text of the turn. */
   text: string;
   error?: string;
@@ -109,7 +110,13 @@ export interface AgentDeps {
   contextLimit?: () => number;
   /** Instructions discovered when a tool first touches a folder (nested VINAX.md). */
   onPathTouched?: (file: string) => string | undefined;
+  hooks?: HookRunner;
+  /** A sub-agent: no turn marks, checkpoints turns or prompt/stop hooks of its own. */
+  nested?: boolean;
 }
+
+/** How many times a Stop hook may send the model back to work in one turn. */
+const MAX_STOP_HOOK_RETRIES = 3;
 
 /** Auto-compaction starts when the request reaches this share of the context budget. */
 const COMPACT_AT = 0.85;
@@ -284,15 +291,40 @@ export class Agent {
     return mark.prompt;
   }
 
+  private warn(onEvent: RunOptions['onEvent'], warnings: readonly string[]): void {
+    for (const text of warnings) onEvent({ type: 'notice', level: 'warning', text });
+  }
+
   async run(prompt: string, opts: RunOptions): Promise<AgentOutcome> {
-    const turn = ++this.turnCounter;
-    const mark = { turn, messageIndex: this.messages.length, prompt };
-    this.marks.push(mark);
-    this.deps.recorder?.record({ type: 'turn', ...mark });
-    this.deps.checkpoints.beginTurn(turn);
-    this.push({ role: 'user', content: prompt });
     const usage: Usage = { promptTokens: 0, completionTokens: 0 };
     const models = new Set<string>();
+    const { hooks, nested } = this.deps;
+    let content = prompt;
+    if (hooks && nested !== true) {
+      const r = await hooks.run('UserPromptSubmit', { prompt }, { signal: opts.signal });
+      this.warn(opts.onEvent, r.warnings);
+      if (r.blocked) {
+        return {
+          status: 'blocked',
+          text: '',
+          steps: 0,
+          usage,
+          models: [],
+          error: r.message ?? 'Blocked by a UserPromptSubmit hook.',
+        };
+      }
+      if (r.context.length > 0)
+        content = `${prompt}\n\n<hook-context>\n${r.context.join('\n')}\n</hook-context>`;
+    }
+    const turn = ++this.turnCounter;
+    if (nested !== true) {
+      const mark = { turn, messageIndex: this.messages.length, prompt };
+      this.marks.push(mark);
+      this.deps.recorder?.record({ type: 'turn', ...mark });
+      this.deps.checkpoints.beginTurn(turn);
+    }
+    this.push({ role: 'user', content });
+    let stopRetries = 0;
     let steps = 0;
     let lastText = '';
     const outcome = (status: AgentOutcome['status'], error?: string): AgentOutcome => ({
@@ -330,6 +362,32 @@ export class Agent {
         }
         const step = await this.step(turn, steps, opts, usage, models);
         lastText = step.text;
+        if (
+          step.status === 'done' &&
+          hooks?.has('Stop') === true &&
+          nested !== true &&
+          stopRetries < MAX_STOP_HOOK_RETRIES
+        ) {
+          const r = await hooks.run(
+            'Stop',
+            { stop_hook_active: stopRetries > 0, last_assistant_message: step.text },
+            { signal: opts.signal },
+          );
+          this.warn(opts.onEvent, r.warnings);
+          if (r.blocked) {
+            stopRetries++;
+            opts.onEvent({
+              type: 'notice',
+              level: 'info',
+              text: `A Stop hook asked VinaX to keep going: ${r.message ?? ''}`,
+            });
+            this.push({
+              role: 'user',
+              content: `A Stop hook did not accept finishing yet:\n${r.message ?? ''}\nAddress this, then finish.`,
+            });
+            continue;
+          }
+        }
         if (step.status !== 'continue') return outcome(step.status, step.error);
       }
     } finally {
@@ -602,13 +660,37 @@ export class Agent {
         const ctx: ToolContext = {
           ...this.deps.context,
           signal,
+          host,
           ...(host.approvePlan ? { approvePlan: host.approvePlan } : {}),
         };
+        let hookApproved = false;
+        if (this.deps.hooks?.has('PreToolUse', tool.name) === true) {
+          const r = await this.deps.hooks.run(
+            'PreToolUse',
+            { tool_name: tool.name, tool_input: p.input },
+            { toolName: tool.name, signal },
+          );
+          this.warn(onEvent, r.warnings);
+          if (r.blocked) {
+            finish(
+              p.call.id,
+              tool.name,
+              fail(`Blocked by a PreToolUse hook: ${r.message ?? ''}`, 'Blocked by a hook'),
+            );
+            continue;
+          }
+          hookApproved = r.approved;
+        }
         const target = tool.target(p.input, ctx);
-        const decision = this.deps.permissions.decide(
+        const decided = this.deps.permissions.decide(
           { name: tool.name, kind: tool.kind, readOnly: tool.readOnly, target },
           host.mode(),
         );
+        // a hook can pre-approve an ordinary prompt, never a dangerous action or a deny rule
+        const decision =
+          decided.kind === 'ask' && hookApproved && decided.danger === undefined
+            ? ({ kind: 'allow', reason: 'Approved by a PreToolUse hook' } as const)
+            : decided;
         if (decision.kind === 'deny') {
           finish(p.call.id, tool.name, fail(`Permission denied: ${decision.reason}`, 'Denied'));
           continue;
@@ -662,6 +744,7 @@ export class Agent {
         const ctx: ToolContext = {
           ...this.deps.context,
           signal,
+          host,
           ...(host.approvePlan ? { approvePlan: host.approvePlan } : {}),
           onProgress: (chunk) => {
             onEvent({ type: 'tool_progress', id: p.call.id, chunk });
@@ -671,11 +754,33 @@ export class Agent {
           await this.deps.checkpoints.capture(tool.affectedPaths?.(p.input, ctx) ?? []);
           const output = await tool.run(p.input, ctx);
           const touched = tool.target(p.input, ctx).path;
+          const extra: string[] = [];
           const found = touched === undefined ? undefined : this.deps.onPathTouched?.(touched);
+          if (found !== undefined) extra.push(found);
+          if (this.deps.hooks?.has('PostToolUse', tool.name) === true) {
+            const r = await this.deps.hooks.run(
+              'PostToolUse',
+              {
+                tool_name: tool.name,
+                tool_input: p.input,
+                tool_response: {
+                  ok: output.ok,
+                  summary: output.summary,
+                  content: output.content.slice(0, 4000),
+                },
+              },
+              { toolName: tool.name, signal },
+            );
+            this.warn(onEvent, r.warnings);
+            if (r.blocked) extra.push(`[PostToolUse hook feedback]\n${r.message ?? ''}`);
+            for (const c of r.context) extra.push(`[PostToolUse hook]\n${c}`);
+          }
           finish(
             p.call.id,
             tool.name,
-            found === undefined ? output : { ...output, content: `${output.content}\n\n${found}` },
+            extra.length === 0
+              ? output
+              : { ...output, content: `${output.content}\n\n${extra.join('\n\n')}` },
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

@@ -1,3 +1,4 @@
+import { VERSION } from './version.js';
 import {
   createAgentSetup,
   projectDataDir,
@@ -15,8 +16,8 @@ export interface OpenedSession {
   writer: SessionWriter;
   /** Present when an earlier session was continued. */
   loaded: LoadedSession | undefined;
-  /** Set when `continue` found nothing to continue. */
-  note?: string;
+  /** Startup notices: nothing to continue, MCP/agent problems, hook warnings. */
+  notes: string[];
 }
 
 export function sessionStore(runtime: Runtime): SessionStore {
@@ -27,7 +28,7 @@ export function sessionStore(runtime: Runtime): SessionStore {
 export async function openSession(
   runtime: Runtime,
   choice: SessionChoice,
-  opts: { maxTurns?: number | undefined; model?: string | undefined },
+  opts: { maxTurns?: number | undefined; model?: string | undefined; cleared?: boolean },
 ): Promise<OpenedSession> {
   const store = sessionStore(runtime);
   let id: string | undefined;
@@ -42,6 +43,7 @@ export async function openSession(
   const writer = loaded === undefined ? store.create() : store.open(loaded.id);
   const setup = await createAgentSetup(runtime, {
     recorder: writer,
+    version: VERSION,
     ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
     ...(opts.model === undefined ? {} : { model: opts.model }),
   });
@@ -49,5 +51,10 @@ export async function openSession(
     setup.agent.restore(loaded);
     setup.checkpoints.load(loaded.checkpoints);
   }
-  return { setup, writer, loaded, ...(note === undefined ? {} : { note }) };
+  const started = await setup.sessionStart(
+    loaded ? 'resume' : choice.kind === 'new' && opts.cleared === true ? 'clear' : 'startup',
+  );
+  const notes = [...(note === undefined ? [] : [note]), ...setup.warnings, ...started.warnings];
+  if (started.blocked) notes.push(`A SessionStart hook reported: ${started.message ?? ''}`);
+  return { setup, writer, loaded, notes };
 }

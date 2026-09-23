@@ -6,6 +6,7 @@ import {
   conversationMarkdown,
   createProvider,
   formatModelRef,
+  HOOK_EVENTS,
   noopLogger,
   openSecretStore,
   parseModelRef,
@@ -565,6 +566,109 @@ const bug: SlashCommand = {
   },
 };
 
+const hooks: SlashCommand = {
+  name: 'hooks',
+  description: 'Show configured hooks',
+  source: 'builtin',
+  run(ctx) {
+    const configured = ctx.setup.hooks.configured;
+    const lines: string[] = [];
+    if (ctx.runtime.settings.resolved.disableAllHooks)
+      lines.push('**All hooks are disabled** (`disableAllHooks: true`).', '');
+    for (const event of HOOK_EVENTS) {
+      const groups = configured[event] ?? [];
+      if (groups.length === 0) continue;
+      lines.push(`**${event}**`);
+      for (const g of groups) {
+        for (const h of g.hooks) {
+          lines.push(
+            `- ${g.matcher === undefined || g.matcher === '' ? '' : `\`${g.matcher}\` → `}\`${h.command}\`${h.timeout === undefined ? '' : ` (timeout ${String(h.timeout)}s)`}`,
+          );
+        }
+      }
+      lines.push('');
+    }
+    if (lines.length === 0) lines.push('No hooks configured.', '');
+    lines.push(
+      'Hooks are shell commands in the `hooks` section of settings. They get the event as JSON on stdin. Exit 0 continues, and exit 2 blocks the action and sends stderr to VinaX. Events: ' +
+        HOOK_EVENTS.map((e) => `\`${e}\``).join(', ') +
+        '.',
+    );
+    ctx.panel('Hooks', lines.join('\n'));
+  },
+};
+
+const STATUS_ICON = {
+  connected: '✔',
+  failed: '✖',
+  'needs-approval': '⏸',
+  connecting: '…',
+} as const;
+
+const mcp: SlashCommand = {
+  name: 'mcp',
+  description: 'MCP servers, their tools, and approving project servers',
+  source: 'builtin',
+  async run(ctx) {
+    const servers = ctx.setup.mcp.servers;
+    if (servers.length === 0) {
+      ctx.panel(
+        'MCP servers',
+        'No MCP servers configured. Add one with `vinax mcp add <name> <command or url>`, or edit `.vinax/mcp.json` or `~/.vinax/mcp.json`.',
+      );
+      return;
+    }
+    const lines = servers.map((s) => {
+      const head = `${STATUS_ICON[s.status]} **${s.name}** _(${s.scope})_ — ${s.status === 'connected' ? plural(s.tools.length, 'tool') : s.status === 'failed' ? `failed: ${s.error ?? ''}` : s.status === 'needs-approval' ? 'waiting for your approval' : 'connecting'}`;
+      const tools = s.tools.map((t) => `  - \`${t.name}\``).join('\n');
+      return tools === '' ? head : `${head}\n${tools}`;
+    });
+    ctx.panel(
+      'MCP servers',
+      `${lines.join('\n\n')}\n\nMCP tools ask before running; allow them with rules like \`mcp__server__*\`.`,
+    );
+    const waiting = servers.filter((s) => s.status === 'needs-approval' || s.status === 'failed');
+    if (waiting.length === 0) return;
+    const name = await ctx.pick(
+      'Start a project MCP server? It runs a program or connects to a URL configured in this repository.',
+      [
+        ...waiting.map((s) => ({
+          label: `${s.status === 'failed' ? 'Retry' : 'Allow and start'} ${s.name}`,
+          value: s.name,
+          hint:
+            'command' in s.config
+              ? `${s.config.command} ${(s.config.args ?? []).join(' ')}`
+              : s.config.url,
+        })),
+        { label: 'Not now', value: '' },
+      ],
+    );
+    if (name === undefined || name === '') return;
+    const result = await ctx.busy(`Starting ${name}`, async () => {
+      await ctx.setup.approveMcpServer(name);
+      return ctx.setup.mcp.servers.find((s) => s.name === name);
+    });
+    if (result?.status === 'connected')
+      ctx.notice('info', `Started ${name} with ${plural(result.tools.length, 'tool')}.`);
+  },
+};
+
+const agents: SlashCommand = {
+  name: 'agents',
+  description: 'Sub-agents the Task tool can use',
+  source: 'builtin',
+  run(ctx) {
+    const lines = ctx.setup.subagents.map(
+      (a) =>
+        `**${a.name}** _(${a.source})_ — ${a.description}\n  tools: ${a.tools === undefined ? 'all' : a.tools.join(', ')}${a.model === undefined ? '' : ` · model: \`${a.model}\``}`,
+    );
+    ctx.panel(
+      'Sub-agents',
+      `${lines.join('\n\n')}\n\nAdd your own as Markdown files in \`.vinax/agents/\` or \`~/.vinax/agents/\`. The frontmatter holds \`name\`, \`description\`, optional \`tools\` and \`model\`; the body is the agent's instructions.`,
+    );
+  },
+};
+
 const exit: SlashCommand = {
   name: 'exit',
   aliases: ['quit'],
@@ -593,6 +697,9 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   logout,
   theme,
   vim,
+  hooks,
+  mcp,
+  agents,
   exportCmd,
   bug,
   exit,

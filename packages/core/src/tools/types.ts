@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { AgentHost } from '../agent/agent.js';
 import type { PlanDecision } from './plan-tool.js';
 import type { ReadTracker } from './read-tracker.js';
 import type { ShellSession } from './shell.js';
@@ -58,6 +59,8 @@ export interface ToolContext {
   onProgress?: (chunk: string) => void;
   /** Asks the user to approve a plan; absent when nobody can answer (headless runs). */
   approvePlan?: (plan: string) => Promise<PlanDecision>;
+  /** The session's host, so a sub-agent (Task) can ask for approvals the same way. */
+  host?: AgentHost;
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {
@@ -65,6 +68,8 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
   /** Written for the model: when and how to use the tool. */
   description: string;
   input: S;
+  /** Parameters as JSON Schema when the tool brings its own (MCP); otherwise derived from `input`. */
+  jsonSchema?: Record<string, unknown>;
   kind: ToolKind;
   /** Read-only tools may run in parallel and are allowed in plan mode. */
   readOnly: boolean;

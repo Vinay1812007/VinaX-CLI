@@ -410,6 +410,12 @@ export function ChatScreen(props: ChatScreenProps) {
         level: 'warning',
         text: 'Interrupted — what VinaX did so far is kept.',
       });
+    } else if (outcome.status === 'blocked') {
+      push({
+        kind: 'notice',
+        level: 'warning',
+        text: `Not sent — a UserPromptSubmit hook blocked it: ${outcome.error ?? ''}`,
+      });
     } else if (outcome.status === 'declined') {
       push({
         kind: 'notice',
@@ -659,7 +665,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
     return () => {
       abortRef.current?.abort();
-      setup.shell.killAll();
+      void setup.close();
       if (hintTimer.current) clearTimeout(hintTimer.current);
     };
   }, []); // mount only

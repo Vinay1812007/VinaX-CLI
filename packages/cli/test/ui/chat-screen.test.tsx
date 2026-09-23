@@ -69,6 +69,7 @@ async function mount(
         runtime={runtime}
         setup={setup}
         session={opened.writer}
+        startupNotices={opened.notes}
         commands={commands}
         editorMode="normal"
         onClear={onClear}
@@ -604,5 +605,52 @@ describe('ChatScreen workflow (M4)', () => {
     expect(frame()).toContain('› hello world');
     await type('d', 'd');
     expect(frame()).toContain('Ask VinaX anything');
+  });
+});
+
+describe('ChatScreen extensibility (M5)', () => {
+  it('shows hooks and sub-agents', async () => {
+    const { frame, type } = await mount({
+      files: {
+        '.vinax/agents/reviewer.md':
+          '---\ndescription: Reviews diffs\ntools: Read, Grep\n---\nBe strict.',
+      },
+      settings: {
+        hooks: {
+          PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './check.sh' }] }],
+        },
+      },
+    });
+    await type('/hooks', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('PreToolUse'), 'hooks panel');
+    expect(frame()).toContain('Bash → ./check.sh');
+    await type('/agents', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Sub-agents'), 'agents panel');
+    expect(frame()).toContain('reviewer (project) — Reviews diffs');
+    expect(frame()).toContain('tools: Read, Grep');
+  });
+
+  it('asks before starting a project MCP server and then lists its tools', async () => {
+    const { MCP_STDIO_SERVER } = await import('@vinax/testkit');
+    const { frame, type } = await mount({
+      files: {
+        '.vinax/mcp.json': JSON.stringify({
+          mcpServers: {
+            demo: {
+              command: process.execPath,
+              args: ['--import', import.meta.resolve('tsx'), MCP_STDIO_SERVER],
+            },
+          },
+        }),
+      },
+    });
+    expect(frame()).toContain('Project MCP server "demo" is not approved yet');
+    await type('/mcp', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Start a project MCP server?'), 'approval picker');
+    expect(frame()).toContain('Allow and start demo');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('Started demo with 3 tools'), 'started');
+    await type('/mcp', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('mcp__demo__echo'), 'tool list');
   });
 });

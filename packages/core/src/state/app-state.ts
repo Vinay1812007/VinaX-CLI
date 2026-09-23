@@ -6,6 +6,8 @@ import { vinaxHome, type Env } from '../config/paths.js';
 const stateSchema = z.object({
   onboardingComplete: z.boolean().default(false),
   trustedDirs: z.array(z.string()).default([]),
+  /** Project MCP servers the user allowed to start, per project folder. */
+  approvedMcp: z.record(z.string(), z.array(z.string())).default({}),
 });
 
 export type AppState = z.infer<typeof stateSchema>;
@@ -53,6 +55,20 @@ export class AppStateStore {
   async isTrusted(dir: string): Promise<boolean> {
     const target = path.resolve(dir);
     return (await this.read()).trustedDirs.some((t) => isInside(target, t));
+  }
+
+  async isMcpApproved(dir: string, server: string): Promise<boolean> {
+    return ((await this.read()).approvedMcp[path.resolve(dir)] ?? []).includes(server);
+  }
+
+  async approveMcp(dir: string, server: string): Promise<void> {
+    const key = path.resolve(dir);
+    await this.update((s) => {
+      const list = s.approvedMcp[key] ?? [];
+      return list.includes(server)
+        ? s
+        : { ...s, approvedMcp: { ...s.approvedMcp, [key]: [...list, server] } };
+    });
   }
 
   async trust(dir: string): Promise<void> {

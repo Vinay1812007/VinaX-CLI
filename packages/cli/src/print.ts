@@ -282,7 +282,7 @@ export async function runPrint(
     return EXIT.error;
   }
   const { setup } = opened;
-  if (opened.note !== undefined) out.notice(opened.note);
+  for (const n of opened.notes) out.notice(`⚠ ${n}`);
   for (const bad of setup.permissions.invalidRules)
     out.notice(`⚠ Ignoring malformed permission rule: ${bad}`);
 
@@ -321,6 +321,6 @@ export async function runPrint(
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
-    setup.shell.killAll();
+    await setup.close();
   }
 }

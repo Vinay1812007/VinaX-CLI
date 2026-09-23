@@ -16,7 +16,11 @@ export interface AppDeps {
   loadTheme: () => Promise<ThemeName>;
   /** Loads settings, keys and providers. */
   createRuntime: () => Promise<Runtime>;
-  openSession: (runtime: Runtime, choice: SessionChoice) => Promise<OpenedSession>;
+  openSession: (
+    runtime: Runtime,
+    choice: SessionChoice,
+    cleared?: boolean,
+  ) => Promise<OpenedSession>;
   listSessions: (runtime: Runtime) => SessionSummary[];
   loadCommands: (runtime: Runtime) => Promise<{ commands: SlashCommand[]; warnings: string[] }>;
   onboarding: OnboardingDeps;
@@ -73,7 +77,7 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
   };
 
   const enterChat = async (runtime: Runtime, choice: SessionChoice, key: number): Promise<void> => {
-    const opened = await deps.openSession(runtime, choice);
+    const opened = await deps.openSession(runtime, choice, key > 0 && choice.kind === 'new');
     const { commands, warnings } = await deps.loadCommands(runtime);
     setPhase({
       name: 'chat',
@@ -81,7 +85,7 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
         runtime,
         opened,
         commands,
-        notices: [...(opened.note === undefined ? [] : [opened.note]), ...warnings],
+        notices: [...opened.notes, ...warnings],
         restored: opened.loaded ? restoreItems(opened.loaded.views) : [],
         key,
       },
@@ -106,7 +110,7 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
   /** /clear and /resume: wipe the screen and remount the chat on another session. */
   const switchSession = (chat: ChatState, choice: SessionChoice): void => {
     void (async () => {
-      chat.opened.setup.shell.killAll();
+      await chat.opened.setup.close();
       await suspendTerminal(() => {
         stdout.write('\x1b[2J\x1b[3J\x1b[H');
       });

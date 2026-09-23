@@ -65,11 +65,19 @@ export function Select<T>({
         const selected = i === index;
         return (
           <Box key={item.label}>
-            <Text color={selected ? theme.accent : undefined} bold={selected}>
-              {selected ? '❯ ' : '  '}
-              {i + 1}. {item.label}
-            </Text>
-            {item.hint === undefined ? null : <Text color={theme.muted}> {item.hint}</Text>}
+            {/* the label keeps its width; a long hint is cut instead */}
+            <Box flexShrink={0}>
+              <Text color={selected ? theme.accent : undefined} bold={selected}>
+                {selected ? '❯ ' : '  '}
+                {i + 1}. {item.label}
+              </Text>
+            </Box>
+            {item.hint === undefined ? null : (
+              <Text color={theme.muted} wrap="truncate-end">
+                {' '}
+                {item.hint}
+              </Text>
+            )}
           </Box>
         );
       })}

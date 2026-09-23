@@ -3,10 +3,10 @@
 VinaX (`vinax`) is an open-source agentic coding assistant for the terminal, powered by free-tier
 models from **Groq** and **OpenRouter**.
 
-> **Status: v0.1 feature set (milestones M1–M4).** VinaX reads, searches and edits your code, runs
-> commands and asks before anything risky. It has slash and custom commands, `@` file mentions,
-> project memory, saved sessions and automatic compaction. It runs on Groq and OpenRouter free
-> tiers with automatic fallback. Hooks, MCP and sub-agents arrive in M5. See
+> **Status: milestones M1–M5.** VinaX reads, searches and edits your code, runs commands and asks
+> before anything risky. It has slash and custom commands, `@` file mentions, project memory, saved
+> sessions and automatic compaction, plus hooks, MCP servers, sub-agents and WebFetch. It runs on
+> Groq and OpenRouter free tiers with automatic fallback. Packaging and release (M6) come next. See
 > [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 
 ## Requirements
@@ -104,6 +104,9 @@ one-line result underneath:
 | `Bash`               | Runs a command. The working directory persists between calls. Commands time out (2 min default, 10 max) and can run in the background (`BashOutput`, `KillBash`). Interactive programs are refused. On Windows it uses Git Bash when installed, otherwise PowerShell |
 | `TodoWrite`          | Keeps a live task list, shown above the prompt                                                                                                                                                                                                                       |
 | `ExitPlanMode`       | Presents a plan for your approval in plan mode                                                                                                                                                                                                                       |
+| `WebFetch`           | Fetches a URL, converts HTML to Markdown and has the small model answer a question about it. Asks per domain (`WebFetch(domain:example.com)`); redirects to another host are reported rather than followed                                                           |
+| `Task`               | Hands a self-contained job to a sub-agent with its own context and gets its report back                                                                                                                                                                              |
+| `mcp__server__tool`  | Tools from your MCP servers                                                                                                                                                                                                                                          |
 
 **Tool calling on free models.** VinaX uses native function calling first. A model can be switched
 to VinaX's text protocol (tool calls written as `<vx:call>` blocks in its reply) in three cases:
@@ -244,6 +247,90 @@ VinaX first removes old, long tool outputs, which costs nothing. If that isn't e
 small model summarize the conversation into Goal, Decisions, Files, Commands, Current state and
 Next steps sections. `/compact [focus]` does this on demand; `context.autoCompact: false` turns
 off the automatic version.
+
+## Hooks, MCP and sub-agents
+
+### Hooks
+
+Hooks are shell commands that run at points in the agent loop. Configure them in any settings file
+(lists from every layer are combined); `disableAllHooks: true` turns them all off. `/hooks` shows
+what is active.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": ".vinax/hooks/guard.sh" }] }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx prettier --write \"$(jq -r .tool_input.file_path)\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "git log --oneline -5" }] }]
+  }
+}
+```
+
+| Event              | When                                  | Can                                             |
+| ------------------ | ------------------------------------- | ----------------------------------------------- |
+| `PreToolUse`       | Before a tool runs (after validation) | block it, or approve it without a prompt        |
+| `PostToolUse`      | After a tool runs                     | send feedback to the model                      |
+| `UserPromptSubmit` | When you send a prompt                | block it, or add context                        |
+| `Stop`             | When the agent is about to finish     | block and tell it to keep going (up to 3 times) |
+| `SessionStart`     | Start, `-c`/`-r` resume and `/clear`  | add context (stdout)                            |
+
+Each hook gets the event as JSON on stdin (`hook_event_name`, `session_id`, `cwd`, `tool_name`,
+`tool_input`, `tool_response`, `prompt`…). Exit 0 continues; exit 2 blocks, and stderr is sent to
+the model. Other exit codes are shown as warnings. A hook can also print JSON:
+`{"decision": "block" | "approve", "reason": "…", "additionalContext": "…"}`. `matcher` is a tool
+name, a `|`-separated list or a regular expression; leave it out to match everything. A hook's
+approval never overrides a deny rule or VinaX's dangerous-command check.
+
+### MCP servers
+
+VinaX is an MCP client for stdio, streamable HTTP and SSE servers. Their tools appear as
+`mcp__<server>__<tool>` and ask before running (allow them with rules like `mcp__github__*`).
+
+```sh
+vinax mcp add files -- npx -y @modelcontextprotocol/server-filesystem ~/notes
+vinax mcp add docs https://example.com/mcp -H "Authorization: Bearer ${DOCS_TOKEN}"
+vinax mcp add legacy https://example.com/sse --transport sse --scope project
+vinax mcp list            # starts each server and reports its tools
+vinax mcp remove files
+```
+
+Servers are saved in `~/.vinax/mcp.json` (`--scope user`, the default) or `.vinax/mcp.json`
+(`--scope project`, meant to be committed) under `mcpServers`. `${VAR}` and `${VAR:-default}` are
+expanded in commands, arguments, env, URLs and headers. **Project servers don't start until you
+approve them** once per folder with `/mcp`, since they run programs that come with the repository.
+`/mcp` also shows each server's status and retries failed ones.
+
+### Sub-agents
+
+The `Task` tool runs a sub-agent: a fresh conversation with the same permissions that works on one
+job and reports back, which keeps long searches out of the main context. `general-purpose` is
+built in. Add your own as Markdown in `.vinax/agents/` or `~/.vinax/agents/`:
+
+```markdown
+---
+name: reviewer
+description: Reviews code for bugs and missing tests
+tools: Read, Grep, Glob
+model: groq:openai/gpt-oss-20b
+---
+
+You are a careful code reviewer. Report problems with file paths and line numbers.
+```
+
+`tools` limits what it may use (`mcp__github__*` style wildcards work) and `model` picks its model;
+both are optional. `/agents` lists them.
 
 ## Print mode
 

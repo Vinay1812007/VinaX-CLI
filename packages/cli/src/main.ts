@@ -2,6 +2,7 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { modelRefSchema, PERMISSION_MODES, SettingsError, type PermissionMode } from '@vinax/core';
 import { configCommand } from './config-command.js';
 import { doctorCommand } from './doctor-command.js';
+import { mcpCommand } from './mcp-command.js';
 import { EXIT } from './exit-codes.js';
 import { runInteractive } from './interactive.js';
 import { paint, processIO, type CliIO } from './io.js';
@@ -137,6 +138,19 @@ export async function main(
 
   program.addCommand(configCommand(io, setExit).exitOverride());
   program.addCommand(doctorCommand(io, setExit).exitOverride());
+  program.addCommand(mcpCommand(io, setExit).exitOverride());
+  // nested subcommands (config set, mcp add, …) must report errors instead of exiting the process
+  const everyCommand = (c: Command): Command[] => [c, ...c.commands.flatMap(everyCommand)];
+  for (const c of everyCommand(program)) {
+    c.exitOverride();
+    c.configureOutput({
+      writeOut: (s) => io.stdout.write(s),
+      writeErr: (s) => io.stderr.write(s),
+      outputError: (s, write) => {
+        write(paint(io.stderr, 'red', s, io.env));
+      },
+    });
+  }
 
   try {
     await program.parseAsync(argv, { from: 'user' });

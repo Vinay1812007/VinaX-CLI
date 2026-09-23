@@ -104,8 +104,7 @@ function mergeInto(
     if (isPlainObject(prev) && isPlainObject(value)) {
       out[key] = mergeInto(prev, value, key);
     } else if (
-      parentKey === 'permissions' &&
-      CONCAT_ARRAYS.has(key) &&
+      ((parentKey === 'permissions' && CONCAT_ARRAYS.has(key)) || parentKey === 'hooks') &&
       Array.isArray(prev) &&
       Array.isArray(value)
     ) {

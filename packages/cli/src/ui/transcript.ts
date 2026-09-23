@@ -49,7 +49,7 @@ export interface TurnRecord {
   durationMs: number;
   fallbacks: string[];
   tools: ToolRecord[];
-  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined';
+  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked';
 }
 
 /**

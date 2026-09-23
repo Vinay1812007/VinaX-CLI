@@ -48,6 +48,9 @@ export interface SessionSummary {
 }
 
 export interface SessionRecorder {
+  /** Session id and transcript path (given to hooks). */
+  readonly id?: string;
+  readonly file?: string;
   record(entry: SessionEntry): void;
   /** Stores file content once (content-addressed) and returns its hash. */
   storeBlob(content: string): string;

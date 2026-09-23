@@ -30,6 +30,25 @@ export {
   type ToolMode,
 } from './agent/agent.js';
 export { CheckpointStore } from './agent/checkpoints.js';
+export {
+  createTaskTool,
+  GENERAL_PURPOSE,
+  loadSubagents,
+  type SubagentDef,
+} from './agent/subagents.js';
+export { HookRunner, matcherMatches, type HookResult } from './hooks/runner.js';
+export {
+  expandEnvVars,
+  loadMcpConfig,
+  mcpConfigPath,
+  mcpServerSchema,
+  updateMcpConfig,
+  type McpScope,
+  type McpServerConfig,
+  type McpServerEntry,
+} from './mcp/config.js';
+export { McpManager, mcpToolName, type McpServerState, type McpStatus } from './mcp/manager.js';
+export { createWebFetchTool, htmlToMarkdown } from './tools/webfetch.js';
 export { applySummary, elideToolOutputs, renderTranscript } from './agent/compact.js';
 export {
   expandCommand,
@@ -92,12 +111,15 @@ export { PromptHistory, searchHistory } from './state/history.js';
 export {
   DEFAULT_SETTINGS,
   EDITOR_MODES,
+  HOOK_EVENTS,
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
   settingsSchema,
   THEME_NAMES,
   type EditorMode,
+  type HookEvent,
+  type HookMatcher,
   type PermissionMode,
   type ResolvedSettings,
   type Settings,

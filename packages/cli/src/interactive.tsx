@@ -42,8 +42,12 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
         ...(opts.model === undefined ? {} : { modelOverride: opts.model }),
       });
     },
-    openSession: (runtime, choice) =>
-      openSession(runtime, choice, { maxTurns: opts.maxTurns, model: opts.model }),
+    openSession: (runtime, choice, cleared) =>
+      openSession(runtime, choice, {
+        maxTurns: opts.maxTurns,
+        model: opts.model,
+        cleared: cleared === true,
+      }),
     listSessions: (runtime) => sessionStore(runtime).list(),
     loadCommands,
     onboarding: {
