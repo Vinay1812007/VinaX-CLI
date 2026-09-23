@@ -26,7 +26,7 @@ OpenRouter keys on a server, so people you give a token to can use VinaX without
 
 2. **Create the service.** In the [Render dashboard](https://dashboard.render.com), choose
    **New → Blueprint**, pick your fork of this repository and confirm. Render reads
-   [`render.yaml`](../render.yaml) and creates a free web service named `vinax-gateway`.
+   [`render.yaml`](https://github.com/Vinay1812007/VinaX-CLI/blob/main/render.yaml) and creates a free web service named `vinax-gateway`.
 
 3. **Fill in the secrets** when Render asks for them (or later under **Environment**):
 
@@ -39,7 +39,7 @@ OpenRouter keys on a server, so people you give a token to can use VinaX without
 4. **Deploy on every green `main` (optional).** The blueprint turns Render's own auto-deploy off.
    Deploys come from GitHub instead, once CI has passed. Copy the service's **Deploy Hook** URL
    (Settings → Deploy Hook) into a GitHub repository secret named `RENDER_DEPLOY_HOOK_URL`.
-   [`deploy-gateway.yml`](../.github/workflows/deploy-gateway.yml) calls it after CI passes on
+   [`deploy-gateway.yml`](https://github.com/Vinay1812007/VinaX-CLI/blob/main/.github/workflows/deploy-gateway.yml) calls it after CI passes on
    `main`. Without the secret, deploy manually from the dashboard.
 
 5. **Check it.** Open `https://<your-service>.onrender.com/health`. Then share the URL and each

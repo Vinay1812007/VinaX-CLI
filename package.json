@@ -19,7 +19,10 @@
     "release": "pnpm build && changeset publish",
     "build:binaries": "bun scripts/build-binaries.ts",
     "gateway:token": "pnpm --filter @vinax/gateway run create-token",
-    "gateway:dev": "pnpm --filter @vinax/gateway run dev"
+    "gateway:dev": "pnpm --filter @vinax/gateway run dev",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
@@ -32,6 +35,9 @@
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1",
-    "vitest": "^5.0.1"
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-tabs": "^0.9.1",
+    "vitest": "^5.0.1",
+    "vue": "^3.5.43"
   }
 }

@@ -9,3 +9,5 @@ coverage/
 .vinax/settings.local.json
 
 dist-bin/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

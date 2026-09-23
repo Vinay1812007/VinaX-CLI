@@ -1,0 +1,142 @@
+/* VinaX brand: the teal accent the CLI uses (#14B8A6). */
+:root {
+  --vp-c-brand-1: #0d9488;
+  --vp-c-brand-2: #0f766e;
+  --vp-c-brand-3: #14b8a6;
+  --vp-c-brand-soft: rgba(20, 184, 166, 0.14);
+  --vp-font-family-base: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --vp-font-family-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --vx-card-border: var(--vp-c-divider);
+}
+
+.dark {
+  --vp-c-brand-1: #2dd4bf;
+  --vp-c-brand-2: #14b8a6;
+  --vp-c-brand-3: #0d9488;
+  --vp-c-brand-soft: rgba(45, 212, 191, 0.16);
+  --vp-c-bg: #0b0f14;
+  --vp-c-bg-alt: #0e131a;
+  --vp-c-bg-soft: #131a22;
+}
+
+/* Page lead: the one-line summary under each title. */
+.vp-doc .lead {
+  font-size: 1.125rem;
+  line-height: 1.7;
+  color: var(--vp-c-text-2);
+  margin: 0.5rem 0 1.5rem;
+}
+
+/* Expandable rows ("What you can do"), built from <details class="vx-accordion">. */
+.vp-doc details.vx-accordion {
+  border: 1px solid var(--vx-card-border);
+  border-radius: 12px;
+  margin: 0;
+  padding: 0;
+  background: var(--vp-c-bg);
+}
+.vp-doc .vx-accordion-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 20px 0;
+}
+.vp-doc details.vx-accordion > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  padding: 14px 18px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--vp-c-text-1);
+}
+.vp-doc details.vx-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+.vp-doc details.vx-accordion > summary::after {
+  content: '';
+  margin-left: auto;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--vp-c-text-3);
+  border-bottom: 2px solid var(--vp-c-text-3);
+  transform: rotate(-45deg);
+  transition: transform 0.2s;
+}
+.vp-doc details.vx-accordion[open] > summary::after {
+  transform: rotate(45deg);
+}
+.vp-doc details.vx-accordion > summary .vx-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.vp-doc details.vx-accordion > .vx-body {
+  padding: 0 18px 6px 60px;
+}
+.vp-doc details.vx-accordion:hover {
+  border-color: var(--vp-c-brand-3);
+}
+
+/* Link cards ("Next steps"). */
+.vp-doc .vx-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+.vp-doc .vx-cards a.vx-card {
+  display: block;
+  border: 1px solid var(--vx-card-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color 0.2s,
+    transform 0.2s;
+}
+.vp-doc .vx-cards a.vx-card:hover {
+  border-color: var(--vp-c-brand-3);
+  transform: translateY(-1px);
+}
+.vp-doc .vx-cards .vx-card-title {
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+  margin-bottom: 4px;
+}
+.vp-doc .vx-cards .vx-card-text {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--vp-c-text-2);
+}
+
+/* Terminal-style transcript samples. */
+.vp-doc pre.vx-terminal {
+  margin: 16px 0;
+  border-radius: 12px;
+  border: 1px solid var(--vx-card-border);
+  background: #0b0f14;
+  color: #d1d5db;
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 16px 18px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.vp-doc .vx-terminal .accent {
+  color: #2dd4bf;
+}
+.vp-doc .vx-terminal .dim {
+  color: #8b949e;
+}
