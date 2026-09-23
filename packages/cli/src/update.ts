@@ -9,7 +9,8 @@ import { PROJECT_URL, type Env } from '@vinax/core';
 declare const __VINAX_TARGET__: string | undefined;
 
 const REPO_API = PROJECT_URL.replace('https://github.com/', 'https://api.github.com/repos/');
-const NPM_PACKAGE = 'vinax';
+/** npm refused the plain name `vinax` as too close to existing packages, so it is scoped. */
+const NPM_PACKAGE = '@sirimillavinay/vinax';
 
 export type InstallKind =
   { kind: 'binary'; path: string; target: string } | { kind: 'npm' } | { kind: 'source' };

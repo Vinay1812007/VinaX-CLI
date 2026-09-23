@@ -6,7 +6,7 @@ Releases are automated. This page is for maintainers.
 
 | Where                                  | What                                                                                   |
 | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| npm                                    | An automation token for an account that can publish `vinax`                            |
+| npm                                    | An automation token for the `sirimillavinay` npm account                               |
 | GitHub secret `NPM_TOKEN`              | That token                                                                             |
 | GitHub settings                        | Actions → General → Workflow permissions: allow GitHub Actions to create pull requests |
 | GitHub secret `RENDER_DEPLOY_HOOK_URL` | Optional: the gateway's Render deploy hook (see [gateway.md](gateway.md))              |
@@ -19,7 +19,7 @@ Add a changeset with your pull request:
 pnpm changeset          # pick the bump (patch / minor / major) and describe the change
 ```
 
-Only the `vinax` package is published. The private packages (`@vinax/core`, `@vinax/testkit` and
+Only the CLI is published, as `@sirimillavinay/vinax` (npm refused the plain name `vinax` as too similar to existing packages; the command is still `vinax`). Name it that way in changesets, e.g. `'@sirimillavinay/vinax': patch`. The private packages (`@vinax/core`, `@vinax/testkit` and
 `@vinax/gateway`) are bundled or deployed, and never published.
 
 ## What the workflows do
@@ -30,7 +30,7 @@ Only the `vinax` package is published. The private packages (`@vinax/core`, `@vi
 - **`release.yml`** runs on every push to `main`:
   1. [changesets/action](https://github.com/changesets/action) opens or updates a "Release vinax"
      pull request that bumps the version and writes `packages/cli/CHANGELOG.md`.
-  2. When that PR is merged, the same workflow publishes `vinax` to npm with provenance.
+  2. When that PR is merged, the same workflow publishes `@sirimillavinay/vinax` to npm with provenance.
   3. After a publish, Bun builds the standalone binaries. Linux and Windows builds run on Ubuntu;
      macOS builds run on macOS, where they are ad-hoc signed. The workflow writes `SHA256SUMS`
      and creates the GitHub Release `v<version>` with every binary attached.
