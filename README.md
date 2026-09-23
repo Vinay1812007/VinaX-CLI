@@ -30,7 +30,7 @@ irm https://raw.githubusercontent.com/Vinay1812007/VinaX-CLI/main/scripts/instal
 
 The scripts download the binary for your machine from
 [GitHub Releases](https://github.com/Vinay1812007/VinaX-CLI/releases), check it against the
-release's `SHA256SUMS`, and install it to `~/.vinax/bin` (or `%LOCALAPPDATA%\vinax\bin`).
+release's `SHA256SUMS`, install it to `~/.vinax/bin` (or `%LOCALAPPDATA%\vinax\bin`), and add that folder to your `PATH`. Open a new terminal afterwards.
 `VINAX_VERSION=0.2.0` pins a version and `VINAX_INSTALL_DIR` picks another folder. You can also
 download a binary from the release page yourself.
 

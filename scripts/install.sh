@@ -8,6 +8,7 @@
 #   VINAX_VERSION       version to install, e.g. 0.2.0 (default: latest)
 #   VINAX_INSTALL_DIR   where to put the binary (default: ~/.vinax/bin)
 #   VINAX_DOWNLOAD_BASE download from this URL instead of GitHub (mirrors, testing)
+#   VINAX_NO_MODIFY_PATH set to leave your shell startup file alone
 set -eu
 
 REPO="Vinay1812007/VinaX-CLI"
@@ -84,21 +85,41 @@ installed="$("$INSTALL_DIR/vinax" --version 2>/dev/null || echo '?')"
 say "✔ Installed VinaX $installed to $INSTALL_DIR/vinax"
 
 case ":$PATH:" in
-  *":$INSTALL_DIR:"*) say "Run: vinax" ;;
-  *)
-    case "${SHELL:-}" in
-      */zsh) rc="$HOME/.zshrc" ;;
-      */bash) rc="$HOME/.bashrc" ;;
-      */fish) rc="" ;;
-      *) rc="$HOME/.profile" ;;
-    esac
-    say ""
-    say "$INSTALL_DIR is not on your PATH yet. Add it with:"
-    if [ -z "$rc" ]; then
-      say "  fish_add_path $INSTALL_DIR"
-    else
-      say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> $rc && . $rc"
-    fi
-    say "Then run: vinax"
+  *":$INSTALL_DIR:"*)
+    say "Run: vinax"
+    exit 0
     ;;
 esac
+
+# Put the install folder on PATH for new terminals (VINAX_NO_MODIFY_PATH=1 skips this).
+# Written as $HOME/... when possible, so the line keeps working if the home folder moves.
+case "$INSTALL_DIR" in
+  "$HOME"/*) dir_ref="\$HOME${INSTALL_DIR#"$HOME"}" ;;
+  *) dir_ref="$INSTALL_DIR" ;;
+esac
+case "${SHELL:-}" in
+  */zsh) rc="${ZDOTDIR:-$HOME}/.zshrc"; line="export PATH=\"$dir_ref:\$PATH\"" ;;
+  */bash)
+    if [ "$os" = darwin ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi
+    line="export PATH=\"$dir_ref:\$PATH\""
+    ;;
+  */fish) rc="$HOME/.config/fish/config.fish"; line="fish_add_path \"$dir_ref\"" ;;
+  *) rc="$HOME/.profile"; line="export PATH=\"$dir_ref:\$PATH\"" ;;
+esac
+
+if [ -n "${VINAX_NO_MODIFY_PATH:-}" ]; then
+  say ""
+  say "$INSTALL_DIR is not on your PATH. Add this line to $rc:"
+  say "  $line"
+  exit 0
+fi
+
+if [ -f "$rc" ] && { grep -qF "$INSTALL_DIR" "$rc" || grep -qF "$dir_ref" "$rc"; }; then
+  : # already added by an earlier install
+else
+  mkdir -p "$(dirname "$rc")"
+  printf '\n# VinaX\n%s\n' "$line" >> "$rc"
+  say "Added $INSTALL_DIR to your PATH in $rc"
+fi
+say ""
+say "Open a new terminal (or run: . $rc), then run: vinax"

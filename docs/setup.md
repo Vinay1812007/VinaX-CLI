@@ -36,7 +36,7 @@ Options, set as environment variables:
 | `VINAX_VERSION=0.1.0` | Install a specific version instead of the latest                                    |
 | `VINAX_INSTALL_DIR=…` | Install somewhere other than `~/.vinax/bin` (`%LOCALAPPDATA%\vinax\bin` on Windows) |
 
-If the folder isn't on your `PATH`, the script prints the line to add. On Windows it adds the folder for you.
+The script adds the folder to your `PATH` in your shell's startup file (`~/.zshrc`, `~/.bashrc` or `~/.bash_profile`, fish's `config.fish`, or `~/.profile`); on Windows, to your user `PATH`. Open a new terminal afterwards. Set `VINAX_NO_MODIFY_PATH=1` to leave your startup file alone.
 
 == npm
 
