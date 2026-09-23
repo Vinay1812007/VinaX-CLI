@@ -261,3 +261,34 @@ export async function startMockMcpHttpServer(): Promise<{
       }),
   };
 }
+
+/**
+ * The parts of the real environment a child process needs: PATH everywhere, and on Windows the
+ * variables that locate Git Bash, PowerShell and the temp folder. Tests use it instead of the
+ * whole environment, so real API keys never leak into them.
+ */
+export function systemEnv(): Record<string, string> {
+  const keys = [
+    'PATH',
+    'SystemRoot',
+    'windir',
+    'ComSpec',
+    'PATHEXT',
+    'ProgramFiles',
+    'ProgramFiles(x86)',
+    'ProgramData',
+    'LOCALAPPDATA',
+    'APPDATA',
+    'USERPROFILE',
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'TEMP',
+    'TMP',
+  ];
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    const v = process.env[k];
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}

@@ -176,7 +176,7 @@ describe('ModelCatalog', () => {
     clock.t += 25 * 60 * 60 * 1000;
     const stale = await catalog.get(provider);
     expect(stale).toMatchObject({ stale: true, fetchedAt: 0 });
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 });
 
@@ -202,6 +202,6 @@ describe('debug log', () => {
     expect(text).not.toContain('gsk_abcdefgh');
     expect(text).not.toContain('my-plain-secret');
     expect(JSON.parse(text)).toMatchObject({ event: 'request', apiKey: '[REDACTED]' });
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 });

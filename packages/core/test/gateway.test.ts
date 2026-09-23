@@ -25,7 +25,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
-  await fs.rm(home, { recursive: true, force: true });
+  await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 async function gatewayMock(opts: MockServerOptions): Promise<{ server: MockServer; url: string }> {

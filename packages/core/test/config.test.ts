@@ -25,7 +25,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmp, { recursive: true, force: true });
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 const write = (file: string, data: unknown): Promise<void> =>

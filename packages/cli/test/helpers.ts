@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
-import { startMockServer, type MockServer, type MockServerOptions } from '@vinax/testkit';
+import {
+  startMockServer,
+  systemEnv,
+  type MockServer,
+  type MockServerOptions,
+} from '@vinax/testkit';
 import type { CliIO } from '../src/io.js';
 import { main } from '../src/main.js';
 
@@ -63,6 +68,7 @@ export async function createHarness(
     }),
   );
   const env: Record<string, string> = {
+    ...systemEnv(),
     VINAX_HOME: home,
     VINAX_SECRETS_BACKEND: 'file',
     NO_COLOR: '1',
@@ -95,7 +101,7 @@ export async function createHarness(
     async cleanup() {
       await groq.close();
       await openrouter.close();
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }

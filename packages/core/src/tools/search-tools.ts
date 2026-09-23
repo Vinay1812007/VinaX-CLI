@@ -126,6 +126,9 @@ function ripgrep(
   const mode = i.output_mode ?? 'files_with_matches';
   const args = [
     '--color=never',
+    // the model and permission rules always see forward slashes, also on Windows
+    '--path-separator',
+    '/',
     '--hidden',
     '--glob',
     '!.git',

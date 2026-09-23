@@ -20,7 +20,7 @@ beforeEach(async () => {
   home = await fs.mkdtemp(path.join(os.tmpdir(), 'vinax-state-'));
 });
 afterEach(async () => {
-  await fs.rm(home, { recursive: true, force: true });
+  await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 describe('AppStateStore', () => {
@@ -64,7 +64,11 @@ describe('PromptHistory', () => {
   });
 
   it('encodes project paths into safe folder names', () => {
-    expect(encodeProjectPath('/Users/me/my app')).toBe('-Users-me-my-app');
+    const encoded = encodeProjectPath('/Users/me/my app');
+    // on Windows the path gains the current drive letter, e.g. C--Users-me-my-app
+    expect(encoded).toMatch(
+      process.platform === 'win32' ? /^[A-Z]--Users-me-my-app$/i : /^-Users-me-my-app$/,
+    );
   });
 });
 

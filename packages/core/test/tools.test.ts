@@ -39,7 +39,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   ctx.shell.killAll();
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 async function call(name: string, input: unknown): Promise<ToolOutput> {
@@ -223,8 +223,11 @@ describe('Bash', () => {
     await fs.mkdir(path.join(dir, 'sub'));
     expect((await call('Bash', { command: 'cd sub && echo moved' })).content).toBe('moved');
     expect(ctx.shell.cwd).toBe(path.join(dir, 'sub'));
-    const pwd = await call('Bash', { command: 'pwd' });
-    expect(pwd.content.trim()).toBe(path.join(dir, 'sub'));
+    // Git Bash prints its own /c/... form for `pwd`, so check the command's output only elsewhere
+    if (process.platform !== 'win32') {
+      const pwd = await call('Bash', { command: 'pwd' });
+      expect(pwd.content.trim()).toBe(path.join(dir, 'sub'));
+    }
     const failing = await call('Bash', { command: 'echo oops >&2; exit 3' });
     expect(failing.ok).toBe(false);
     expect(failing.content).toContain('oops');

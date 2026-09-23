@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { startMockServer, type MockServer } from '@vinax/testkit';
+import { startMockServer, type MockServer, systemEnv } from '@vinax/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applySummary,
@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   for (const s of servers.splice(0)) await s.close();
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 const write = async (p: string, text: string) => {
@@ -207,7 +207,7 @@ describe('compaction', () => {
       VINAX_HOME: home,
       VINAX_SECRETS_BACKEND: 'file',
       GROQ_API_KEY: 'gsk_test000000000',
-      PATH: process.env.PATH,
+      ...systemEnv(),
     };
     const runtime = await createRuntime({ cwd, env });
     const setup = await createAgentSetup(runtime);
@@ -332,7 +332,7 @@ describe('doctor and export', () => {
   it('reports installation checks', async () => {
     const checks = await runDoctor({
       cwd,
-      env: { VINAX_HOME: home, VINAX_SECRETS_BACKEND: 'file', PATH: process.env.PATH },
+      env: { VINAX_HOME: home, VINAX_SECRETS_BACKEND: 'file', ...systemEnv() },
       version: '1.2.3',
       terminal: { isTTY: false, columns: undefined },
     });

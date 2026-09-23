@@ -87,7 +87,9 @@ describe('vinax update', () => {
 
   it.skipIf(!posix)('replaces the binary after checking its checksum', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vinax-update-'));
-    closers.push(() => fs.rm(dir, { recursive: true, force: true }));
+    closers.push(() =>
+      fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
+    );
     const exe = path.join(dir, 'vinax');
     await fs.writeFile(exe, '#!/bin/sh\necho 0.1.0\n', { mode: 0o755 });
     const url = await releaseServer({
@@ -119,7 +121,9 @@ describe('vinax update', () => {
 
   it('refuses a download whose checksum does not match', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vinax-update-'));
-    closers.push(() => fs.rm(dir, { recursive: true, force: true }));
+    closers.push(() =>
+      fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
+    );
     const exe = path.join(dir, 'vinax');
     await fs.writeFile(exe, 'old');
     const url = await releaseServer({
