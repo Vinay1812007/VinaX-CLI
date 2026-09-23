@@ -82,10 +82,11 @@ export function matchBashSpecifier(spec: string, command: string): boolean {
  * a pattern without a slash (`*.env`, `.env`) matches that name at any depth.
  */
 export function pathSpecifierToGlob(spec: string, ctx: RuleContext): string {
-  const home = ctx.home ?? os.homedir();
-  if (spec.startsWith('//')) return spec.slice(1);
-  if (spec.startsWith('~/')) return `${toPosix(home)}/${spec.slice(2)}`;
-  const root = toPosix(ctx.cwd);
+  const home = toPosix(path.resolve(ctx.home ?? os.homedir()));
+  // `//path` is absolute; on Windows it gets the current drive, like any other absolute path
+  if (spec.startsWith('//')) return toPosix(path.resolve(spec.slice(1)));
+  if (spec.startsWith('~/')) return `${home}/${spec.slice(2)}`;
+  const root = toPosix(path.resolve(ctx.cwd));
   if (spec.startsWith('/')) return `${root}${spec}`;
   if (spec.startsWith('./')) return `${root}/${spec.slice(2)}`;
   if (!spec.includes('/')) return `${root}/**/${spec}`;
@@ -95,7 +96,8 @@ export function pathSpecifierToGlob(spec: string, ctx: RuleContext): string {
 export function matchPathSpecifier(spec: string, file: string, ctx: RuleContext): boolean {
   const glob = pathSpecifierToGlob(spec, ctx);
   const target = toPosix(path.resolve(file));
-  const isMatch = picomatch(glob, { dot: true });
+  // Windows paths are case-insensitive (C:\ vs c:\)
+  const isMatch = picomatch(glob, { dot: true, nocase: process.platform === 'win32' });
   // "src/**" should also cover the folder "src" itself
   return isMatch(target) || (glob.endsWith('/**') && target === glob.slice(0, -3));
 }

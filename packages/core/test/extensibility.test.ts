@@ -9,6 +9,7 @@ import {
   startMockServer,
   type MockServer,
   type MockServerOptions,
+  systemEnv,
 } from '@vinax/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -45,7 +46,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 const write = async (p: string, text: string) => {
@@ -79,7 +80,7 @@ async function setupWith(opts: {
     VINAX_HOME: home,
     VINAX_SECRETS_BACKEND: 'file',
     GROQ_API_KEY: 'gsk_test000000000',
-    PATH: process.env.PATH,
+    ...systemEnv(),
   };
   const runtime = await createRuntime({ cwd, env });
   const setup = await createAgentSetup(runtime);
@@ -118,7 +119,7 @@ describe('HookRunner', () => {
   const runner = (config: ConstructorParameters<typeof HookRunner>[0]) =>
     new HookRunner(config, {
       cwd,
-      env: { PATH: process.env.PATH },
+      env: { ...systemEnv() },
       shell: detectShell(),
       disabled: false,
       base: () => ({ session_id: 's1' }),

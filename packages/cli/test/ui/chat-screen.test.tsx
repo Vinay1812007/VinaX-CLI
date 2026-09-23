@@ -34,7 +34,12 @@ afterEach(async () => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitFor(check: () => boolean, what: string, timeoutMs = 4000): Promise<void> {
+async function waitFor(
+  check: () => boolean,
+  what: string,
+  // shell commands start slowly on Windows runners
+  timeoutMs = process.platform === 'win32' ? 20_000 : 4000,
+): Promise<void> {
   const start = Date.now();
   while (!check()) {
     if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for ${what}`);
@@ -55,7 +60,7 @@ async function mount(
   }
   const runtime: Runtime = await createRuntime({
     cwd: h.cwd,
-    env: { ...h.env, PATH: process.env.PATH },
+    env: h.env,
   });
   const opened = await openSession(runtime, { kind: 'new' }, {});
   setup = opened.setup;

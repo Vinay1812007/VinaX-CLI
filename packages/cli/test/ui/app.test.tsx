@@ -30,7 +30,7 @@ beforeEach(async () => {
 afterEach(async () => {
   app?.unmount();
   app = undefined;
-  await fs.rm(home, { recursive: true, force: true });
+  await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 const models: ModelInfo[] = [

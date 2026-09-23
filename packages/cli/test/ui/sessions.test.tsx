@@ -39,7 +39,7 @@ const options: SessionOptions = {
 };
 
 async function mountApp(hh: Harness, start: StartChoice) {
-  const env = { ...hh.env, PATH: process.env.PATH };
+  const env = hh.env;
   await new AppStateStore(env).update((s) => ({
     ...s,
     onboardingComplete: true,

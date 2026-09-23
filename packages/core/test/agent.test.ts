@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { startMockServer, type MockServer, type MockServerOptions } from '@vinax/testkit';
+import {
+  startMockServer,
+  type MockServer,
+  type MockServerOptions,
+  systemEnv,
+} from '@vinax/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createAgentSetup,
@@ -31,7 +36,7 @@ afterEach(async () => {
   ctx.setup.shell.killAll();
   await ctx.groq.close();
   await ctx.openrouter.close();
-  await fs.rm(ctx.root, { recursive: true, force: true });
+  await fs.rm(ctx.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   ctx = undefined;
 });
 
@@ -74,7 +79,7 @@ async function start(opts: {
     VINAX_SECRETS_BACKEND: 'file',
     GROQ_API_KEY: 'gsk_test00000000',
     OPENROUTER_API_KEY: 'sk-or-v1-test0000',
-    PATH: process.env.PATH,
+    ...systemEnv(),
   };
   const runtime = await createRuntime({ cwd, env });
   const setup = await createAgentSetup(runtime, {

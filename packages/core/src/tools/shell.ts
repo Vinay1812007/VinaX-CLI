@@ -31,6 +31,8 @@ export function detectShell(
     env.ProgramFiles,
     env['ProgramFiles(x86)'],
     env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs'),
+    // the default install location, for environments without ProgramFiles set
+    'C:\\Program Files',
   ];
   const gitBash = firstExisting([
     env.VINAX_GIT_BASH_PATH,
@@ -92,6 +94,7 @@ interface Job {
 }
 
 const MAX_BUFFER = 20 * 1024 * 1024;
+const KILL_GRACE_MS = 3000;
 const IS_WINDOWS = process.platform === 'win32';
 
 /**
@@ -181,31 +184,46 @@ export class ShellSession {
     });
     let timedOut = false;
     let interrupted = false;
+    // A killed command normally ends at once, but on Windows a grandchild can keep the output pipe
+    // open; after a grace period, stop waiting and return what was printed so far.
+    let giveUp = (): void => undefined;
+    const abandoned = new Promise<undefined>((resolve) => {
+      giveUp = () => {
+        setTimeout(() => {
+          resolve(undefined);
+        }, KILL_GRACE_MS).unref();
+      };
+    });
+    const stop = (): void => {
+      killTree(child.pid);
+      giveUp();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child.pid);
+      stop();
     }, opts.timeoutMs);
     const onAbort = (): void => {
       interrupted = true;
-      killTree(child.pid);
+      stop();
     };
     if (opts.signal.aborted) onAbort();
     else opts.signal.addEventListener('abort', onAbort, { once: true });
-    if (opts.onOutput) {
-      child.all.setEncoding('utf8');
-      child.all.on('data', (chunk: string) => {
-        opts.onOutput?.(chunk.replace(new RegExp(`\\n?${CWD_MARKER}.*`), ''));
-      });
-    }
-    const result = await child;
+    let collected = '';
+    child.all.setEncoding('utf8');
+    child.all.on('data', (chunk: string) => {
+      collected += chunk;
+      opts.onOutput?.(chunk.replace(new RegExp(`\\n?${CWD_MARKER}.*`), ''));
+    });
+    const result = await Promise.race([child, abandoned]);
     clearTimeout(timer);
     opts.signal.removeEventListener('abort', onAbort);
-    const all = typeof result.all === 'string' ? result.all : '';
+    const all = result === undefined ? collected : typeof result.all === 'string' ? result.all : '';
     const { output, cwd: next } = splitCwdMarker(all);
-    if (next !== undefined && fs.existsSync(next)) this.dir = next;
+    // Git Bash reports C:/Users/...; resolve() turns it into the native form
+    if (next !== undefined && fs.existsSync(next)) this.dir = path.resolve(next);
     return {
       output,
-      exitCode: result.exitCode,
+      exitCode: result?.exitCode,
       timedOut,
       interrupted,
       durationMs: Date.now() - started,
