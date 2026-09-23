@@ -147,10 +147,14 @@ describe('Agent (native tool calling)', () => {
     const results = c.events.flatMap((e) =>
       e.type === 'tool_result' ? [[e.name, e.ok, e.summary]] : [],
     );
-    expect(results).toEqual([
-      ['Read', true, 'Read 1 line'],
-      ['Grep', true, 'Found 1 file'],
-    ]);
+    // parallel calls finish in either order
+    expect(results).toHaveLength(2);
+    expect(results).toEqual(
+      expect.arrayContaining([
+        ['Read', true, 'Read 1 line'],
+        ['Grep', true, 'Found 1 file'],
+      ]),
+    );
     const [first, second] = bodies(c.groq);
     expect(first?.tools?.map((t) => t.function.name)).toContain('Edit');
     expect(first?.tools?.map((t) => t.function.name)).not.toContain('ExitPlanMode');
