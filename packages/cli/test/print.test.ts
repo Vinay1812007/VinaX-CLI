@@ -29,7 +29,7 @@ describe('vinax -p', () => {
     const r = await h.run(['-p', 'say hi'], { stdin: 'piped context' });
     expect(r).toMatchObject({ code: 0, stdout: 'Hello from VinaX\n' });
     const body = h.groq.requests.at(-1)?.body as { messages: { role: string; content: string }[] };
-    expect(body.messages[0]?.content).toContain(`Working directory: ${h.cwd}`);
+    expect(body.messages[0]?.content).toContain(`Project root: ${h.cwd}`);
     expect(body.messages[1]?.content).toBe('say hi\n\n<stdin>\npiped context\n</stdin>');
   });
 
@@ -205,5 +205,96 @@ describe('vinax binary', () => {
     expect(result).toEqual({ code: 0, stdout: 'piped ok\n' });
     const body = h.groq.requests.at(-1)?.body as { messages: { content: string }[] };
     expect(body.messages[1]?.content).toBe('hello from a pipe');
+  });
+});
+
+describe('vinax -p with tools', () => {
+  const tc = (name: string, args: Record<string, unknown>) => ({
+    name,
+    arguments: JSON.stringify(args),
+  });
+
+  it('streams tool_use and tool_result events', async () => {
+    h = await createHarness({
+      groq: { script: { 'main-model': [{ toolCalls: [tc('LS', {})] }, { text: 'Listed.' }] } },
+    });
+    const r = await h.run(['-p', 'list files', '--output-format', 'stream-json']);
+    const events = r.stdout
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(events.map((e) => e.type)).toEqual([
+      'system',
+      'tool_use',
+      'tool_result',
+      'text',
+      'result',
+    ]);
+    expect(events[2]).toMatchObject({ name: 'LS', is_error: false });
+    expect(events.at(-1)).toMatchObject({ result: 'Listed.', num_turns: 2, tool_calls: 1 });
+  });
+
+  it('refuses actions that need approval and tells the model how to allow them', async () => {
+    h = await createHarness({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [tc('Bash', { command: 'npm test' })] },
+            { text: 'Could not run the tests.' },
+          ],
+        },
+      },
+    });
+    const r = await h.run(['-p', 'run tests']);
+    expect(r.code).toBe(0);
+    const toolMsg = (
+      h.groq.requests.at(-1)?.body as { messages: { role: string; content: string }[] }
+    ).messages.at(-1);
+    expect(toolMsg?.content).toContain('Print mode cannot ask for approval');
+    expect(toolMsg?.content).toContain('--allowedTools "Bash(npm test:*)"');
+  });
+
+  it('runs commands allowed with --allowedTools and edits with --permission-mode acceptEdits', async () => {
+    h = await createHarness({
+      groq: {
+        script: {
+          'main-model': [
+            {
+              toolCalls: [
+                tc('Bash', { command: 'echo from-bash' }),
+                tc('Write', { file_path: 'out.txt', content: 'hi\n' }),
+              ],
+            },
+            { text: 'Done.' },
+          ],
+        },
+      },
+    });
+    const r = await h.run([
+      '-p',
+      'go',
+      '--allowedTools',
+      'Bash(echo:*),Read',
+      '--permission-mode',
+      'acceptEdits',
+      '--output-format',
+      'json',
+    ]);
+    expect(r.code).toBe(0);
+    const { readFile } = await import('node:fs/promises');
+    expect(await readFile(path.join(h.cwd, 'out.txt'), 'utf8')).toBe('hi\n');
+    const tools = (
+      h.groq.requests.at(-1)?.body as { messages: { role: string; content: string }[] }
+    ).messages.filter((m) => m.role === 'tool');
+    expect(tools.map((m) => m.content)).toEqual(['from-bash', 'Created out.txt (1 lines).']);
+  });
+
+  it('stops at --max-turns with exit code 1', async () => {
+    const ls = { toolCalls: [tc('LS', {})] };
+    h = await createHarness({ groq: { script: { 'main-model': [ls, ls, ls] } } });
+    const r = await h.run(['-p', 'loop', '--max-turns', '2']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Stopped after 2 model calls (--max-turns).');
+    expect((await h.run(['-p', 'x', '--max-turns', '0'])).code).toBe(2);
   });
 });

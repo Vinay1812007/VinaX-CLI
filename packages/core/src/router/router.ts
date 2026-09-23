@@ -10,6 +10,7 @@ import {
   type ModelRef,
   type Provider,
   type ProviderName,
+  type ToolSpec,
   type Usage,
 } from '../providers/types.js';
 import { AbortError, backoffDelay, sleep as defaultSleep } from './backoff.js';
@@ -23,7 +24,14 @@ export type RouterEvent =
   | { type: 'retry'; ref: ModelRef; attempt: number; delayMs: number; reason: string }
   | { type: 'fallback'; from: ModelRef; to: ModelRef; reason: string }
   | { type: 'text'; text: string }
+  | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
   | { type: 'done'; ref: ModelRef; usage: Usage | undefined };
+
+/** What to send to one particular model (e.g. native tools vs. the text tool protocol). */
+export interface PreparedRequest {
+  messages: readonly ChatMessage[];
+  tools?: readonly ToolSpec[];
+}
 
 export interface LinkFailure {
   ref: ModelRef;
@@ -67,6 +75,13 @@ export interface RouteRequest {
   purpose?: 'main' | 'small';
   /** Overrides the head of the chain (e.g. `--model`). */
   model?: string;
+  /** Builds the request per model; defaults to `messages` with no tools. */
+  prepare?: (ref: ModelRef) => PreparedRequest;
+  /**
+   * Called when a model rejects or garbles tool calls. Return true after switching that model to
+   * a different tool mode, and the same model is retried once straight away.
+   */
+  onToolFormatError?: (ref: ModelRef) => boolean;
 }
 
 export interface RouterDeps {
@@ -127,7 +142,7 @@ export class Router {
 
   async *stream(req: RouteRequest): AsyncGenerator<RouterEvent> {
     const { providers, ledger, settings } = this.deps;
-    const est = estimateTokens(req.messages) + (req.maxTokens ?? DEFAULT_OUTPUT_RESERVE);
+    const prepare = req.prepare ?? ((): PreparedRequest => ({ messages: req.messages }));
     const failures: LinkFailure[] = [];
     let pendingFallback: LinkFailure | undefined;
 
@@ -137,6 +152,9 @@ export class Router {
         failures.push({ ref, reason: `no ${providerLabel(ref.provider)} API key configured` });
         continue;
       }
+      const first = prepare(ref);
+      const est =
+        estimateTokens(first.messages, first.tools) + (req.maxTokens ?? DEFAULT_OUTPUT_RESERVE);
       const decision = ledger.check(ref.provider, ref.model, est);
       if (decision.waitMs > settings.router.maxWaitMs) {
         const failure = {
@@ -160,6 +178,7 @@ export class Router {
         await this.sleep(decision.waitMs, req.signal);
       }
 
+      let toolFormatRetried = false;
       for (let attempt = 0; ; attempt++) {
         if (req.signal.aborted) throw new AbortError();
         yield { type: 'attempt', ref };
@@ -167,19 +186,21 @@ export class Router {
         let emitted = false;
         let usage: Usage | undefined;
         try {
+          const prepared = prepare(ref);
           const deltas = provider.stream({
             model: ref.model,
-            messages: req.messages,
+            messages: prepared.messages,
             signal: req.signal,
+            ...(prepared.tools === undefined ? {} : { tools: prepared.tools }),
             ...(req.maxTokens === undefined ? {} : { maxTokens: req.maxTokens }),
           });
           for await (const d of deltas) {
-            if (d.type === 'text') {
-              emitted = true;
-              yield { type: 'text', text: d.text };
-            } else {
+            if (d.type === 'usage') {
               usage = d.usage;
+              continue;
             }
+            emitted = true;
+            yield d;
           }
           yield { type: 'done', ref, usage };
           return;
@@ -187,6 +208,22 @@ export class Router {
           const err = toProviderError(raw, ref.provider, this.now());
           if (err.kind === 'aborted' || isAborted(req.signal)) throw new AbortError();
           if (emitted) throw new StreamInterruptedError(ref, err);
+          if (
+            err.kind === 'tool_format' &&
+            !toolFormatRetried &&
+            req.onToolFormatError?.(ref) === true
+          ) {
+            toolFormatRetried = true;
+            yield {
+              type: 'retry',
+              ref,
+              attempt: attempt + 1,
+              delayMs: 0,
+              reason: `${err.message} — retrying with the text tool protocol`,
+            };
+            attempt--;
+            continue;
+          }
           const delay = this.retryDelay(err, attempt);
           this.logger.debug('router.failure', {
             ref: formatModelRef(ref),

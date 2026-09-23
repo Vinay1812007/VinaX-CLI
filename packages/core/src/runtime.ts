@@ -7,7 +7,12 @@ import { ModelCatalog } from './providers/catalog.js';
 import { providerLabel } from './providers/errors.js';
 import { RateLimitLedger } from './providers/ratelimit.js';
 import { createProviders } from './providers/registry.js';
-import { formatModelRef, type Provider, type ProviderName } from './providers/types.js';
+import {
+  formatModelRef,
+  type ModelInfo,
+  type Provider,
+  type ProviderName,
+} from './providers/types.js';
 import { Router } from './router/router.js';
 
 export interface Runtime {
@@ -20,6 +25,8 @@ export interface Runtime {
   providers: ReadonlyMap<ProviderName, Provider>;
   missingKeys: readonly ProviderName[];
   catalog: ModelCatalog;
+  /** Model lists fetched at startup (cached 24h); empty for unreachable providers. */
+  models: ReadonlyMap<ProviderName, readonly ModelInfo[]>;
   router: Router;
   /** Non-fatal problems to show the user once (unknown settings, unavailable models, ...). */
   warnings: string[];
@@ -45,10 +52,11 @@ async function findUnavailableModels(
   providers: ReadonlyMap<ProviderName, Provider>,
   catalog: ModelCatalog,
   timeoutMs: number,
-): Promise<{ skip: Set<string>; warnings: string[] }> {
+): Promise<{ skip: Set<string>; warnings: string[]; models: Map<ProviderName, ModelInfo[]> }> {
   const skip = new Set<string>();
   const warnings: string[] = [];
   const known = new Map<ProviderName, Set<string> | undefined>();
+  const models = new Map<ProviderName, ModelInfo[]>();
   for (const { ref, provider: name, model } of refs) {
     const provider = providers.get(name);
     if (!provider) continue;
@@ -56,6 +64,7 @@ async function findUnavailableModels(
       try {
         const result = await catalog.get(provider, { signal: AbortSignal.timeout(timeoutMs) });
         known.set(name, new Set(result.models.map((m) => m.id)));
+        models.set(name, result.models);
       } catch {
         known.set(name, undefined);
       }
@@ -66,7 +75,7 @@ async function findUnavailableModels(
       warnings.push(`${ref} is not in ${providerLabel(name)}'s model list; skipping it.`);
     }
   }
-  return { skip, warnings };
+  return { skip, warnings, models };
 }
 
 export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
@@ -94,7 +103,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     .chain('small')
     .map((r) => ({ ref: formatModelRef(r), ...r }))
     .filter((r) => r.ref !== opts.modelOverride);
-  const { skip, warnings } = await findUnavailableModels(
+  const { skip, warnings, models } = await findUnavailableModels(
     configured,
     providers,
     catalog,
@@ -119,6 +128,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     providers,
     missingKeys,
     catalog,
+    models,
     router: new Router({ providers, ledger, settings: resolved, logger, skip }),
     warnings: [...settings.warnings, ...warnings],
   };

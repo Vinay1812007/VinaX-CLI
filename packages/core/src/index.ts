@@ -20,11 +20,45 @@ export {
   type Env,
 } from './config/paths.js';
 export {
-  ChatSession,
-  effectiveContextWindow,
+  Agent,
   INTERRUPTED_MARKER,
-  type TurnOutcome,
-} from './chat/session.js';
+  type AgentEvent,
+  type AgentHost,
+  type AgentOutcome,
+  type PermissionAnswer,
+  type PermissionRequest,
+  type ToolMode,
+} from './agent/agent.js';
+export { CheckpointStore } from './agent/checkpoints.js';
+export { createAgentSetup, type AgentSetup, type AgentSetupOptions } from './agent/setup.js';
+export { buildSystemPrompt, readGitInfo, type GitInfo } from './agent/system-prompt.js';
+export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
+export { effectiveContextWindow } from './context/budget.js';
+export { detectDanger } from './permissions/danger.js';
+export { PermissionEngine, suggestBashRule, type Decision } from './permissions/engine.js';
+export {
+  matchBashSpecifier,
+  matchPathSpecifier,
+  parseRule,
+  type PermissionRule,
+} from './permissions/rules.js';
+export { splitCommands, type SimpleCommand } from './permissions/shell-parse.js';
+export { interactiveCommandReason } from './tools/bash-tool.js';
+export { applyEdit, applyEdits } from './tools/edit-core.js';
+export { ReadTracker } from './tools/read-tracker.js';
+export { createToolset, toolSpec } from './tools/registry.js';
+export { detectShell, ShellSession, splitCwdMarker, type ShellInfo } from './tools/shell.js';
+export { TodoStore, type TodoItem } from './tools/todo.js';
+export type { PlanDecision } from './tools/plan-tool.js';
+export type {
+  AnyTool,
+  DiffHunk,
+  DiffLine,
+  ToolContext,
+  ToolDisplay,
+  ToolKind,
+  ToolOutput,
+} from './tools/types.js';
 export { AppStateStore, type AppState } from './state/app-state.js';
 export { PromptHistory, searchHistory } from './state/history.js';
 export {
@@ -51,7 +85,6 @@ export {
 } from './config/secrets.js';
 export { estimateTokens } from './context/tokens.js';
 export { createFileLogger, noopLogger, redact, type Logger } from './log/logger.js';
-export { chatSystemPrompt, currentEnvironment, type EnvironmentInfo } from './prompt/system.js';
 export { ModelCatalog, type CatalogResult } from './providers/catalog.js';
 export {
   ProviderError,
@@ -80,6 +113,8 @@ export {
   type Provider,
   type ProviderName,
   type StreamDelta,
+  type ToolCall,
+  type ToolSpec,
   type Usage,
 } from './providers/types.js';
 export { AbortError, backoffDelay, sleep } from './router/backoff.js';
@@ -88,6 +123,7 @@ export {
   Router,
   StreamInterruptedError,
   type LinkFailure,
+  type PreparedRequest,
   type RouteRequest,
   type RouterEvent,
 } from './router/router.js';

@@ -12,10 +12,17 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "diff": "^9.0.0",
+    "execa": "^10.0.1",
+    "fast-glob": "^3.3.3",
+    "ignore": "^7.0.9",
     "openai": "^7.21.0",
+    "picomatch": "^4.0.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/picomatch": "^4.0.3",
     "@vinax/testkit": "workspace:*"
   }
 }

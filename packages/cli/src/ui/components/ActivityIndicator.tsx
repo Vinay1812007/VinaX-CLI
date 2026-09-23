@@ -21,10 +21,18 @@ interface Props {
   outputChars: number;
   /** Set while the router waits for a rate-limit window. */
   waiting?: string | undefined;
+  /** What is happening instead of the rotating verb, e.g. "Running Bash". */
+  activity?: string | undefined;
   now?: () => number;
 }
 
-export function ActivityIndicator({ startedAt, outputChars, waiting, now = Date.now }: Props) {
+export function ActivityIndicator({
+  startedAt,
+  outputChars,
+  waiting,
+  activity,
+  now = Date.now,
+}: Props) {
   const theme = useTheme();
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -48,7 +56,7 @@ export function ActivityIndicator({ startedAt, outputChars, waiting, now = Date.
     <Text>
       <Text color={theme.accent}>{FRAMES[tick % FRAMES.length]} </Text>
       <Text color={waiting === undefined ? theme.accent : theme.warning}>
-        {waiting ?? `${verb}…`}
+        {waiting ?? `${activity ?? verb}…`}
       </Text>
       <Text color={theme.muted}> ({details.join(' · ')})</Text>
     </Text>

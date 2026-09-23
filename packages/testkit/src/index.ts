@@ -7,6 +7,8 @@ export interface MockTurn {
   headers?: Record<string, string>;
   /** Streamed as SSE content deltas, one chunk per array entry. */
   text?: string | string[];
+  /** Native tool calls, streamed after the text with their arguments split across two deltas. */
+  toolCalls?: { id?: string; name: string; arguments: string }[];
   /** JSON error body for non-200 replies. */
   error?: { message: string; type?: string; code?: string };
   usage?: { prompt_tokens: number; completion_tokens: number };
@@ -99,7 +101,29 @@ async function reply(res: http.ServerResponse, model: string, turn: MockTurn): P
     if (res.destroyed) return;
     sse(res, chunk(model, { content: part }));
   }
-  sse(res, chunk(model, {}, 'stop'));
+  for (const [index, call] of (turn.toolCalls ?? []).entries()) {
+    const half = Math.floor(call.arguments.length / 2);
+    sse(
+      res,
+      chunk(model, {
+        tool_calls: [
+          {
+            index,
+            id: call.id ?? `call_${String(index)}`,
+            type: 'function',
+            function: { name: call.name, arguments: call.arguments.slice(0, half) },
+          },
+        ],
+      }),
+    );
+    sse(
+      res,
+      chunk(model, {
+        tool_calls: [{ index, function: { arguments: call.arguments.slice(half) } }],
+      }),
+    );
+  }
+  sse(res, chunk(model, {}, turn.toolCalls && turn.toolCalls.length > 0 ? 'tool_calls' : 'stop'));
   const usage = turn.usage ?? { prompt_tokens: 10, completion_tokens: parts.length };
   sse(res, {
     id: 'chatcmpl-mock',

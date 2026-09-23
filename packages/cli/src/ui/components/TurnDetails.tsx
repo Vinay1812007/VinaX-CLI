@@ -29,7 +29,7 @@ function limitLine(key: string, s: RateLimitSnapshot): string {
 /** Ctrl+O: which model answered each turn, tokens, timing, fallbacks and live rate limits. */
 export function TurnDetails({ turns, limits, offset, height, width }: Props) {
   const theme = useTheme();
-  const perTurn = 3;
+  const perTurn = 4;
   const visible = Math.max(1, Math.floor((height - 6 - limits.length) / perTurn));
   const end = turns.length - offset;
   const shown = turns.slice(Math.max(0, end - visible), end);
@@ -50,6 +50,23 @@ export function TurnDetails({ turns, limits, offset, height, width }: Props) {
               : ` · ${formatTokens(t.inputTokens)} in / ${formatTokens(t.outputTokens ?? 0)} out`}
             {t.status === 'done' ? '' : ` · ${t.status}`}
           </Text>
+          {t.tools.map((tool, j) => (
+            <Box key={j} flexDirection="column">
+              <Text color={tool.ok ? undefined : theme.error} wrap="truncate-end">
+                {'  ▸ '}
+                {tool.name} {truncate(tool.label, width - 20)} — {tool.summary}
+              </Text>
+              {tool.output
+                .split('\n')
+                .slice(0, 3)
+                .map((line, k) => (
+                  <Text key={k} color={theme.muted} wrap="truncate-end">
+                    {'      '}
+                    {line}
+                  </Text>
+                ))}
+            </Box>
+          ))}
           {t.fallbacks.length === 0 ? null : (
             <Text color={theme.warning} wrap="truncate-end">
               {'  '}fallback: {t.fallbacks.join(' → ')}

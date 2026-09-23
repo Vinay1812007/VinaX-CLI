@@ -3,20 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  AbortError,
   AppStateStore,
-  ChatSession,
-  DEFAULT_SETTINGS,
   effectiveContextWindow,
   encodeProjectPath,
-  INTERRUPTED_MARKER,
   ModelCatalog,
-  ProviderError,
   PromptHistory,
   RateLimitLedger,
-  Router,
   searchHistory,
-  type ChatRequest,
   type Provider,
   type ProviderName,
   type StreamDelta,
@@ -71,92 +64,22 @@ describe('PromptHistory', () => {
   });
 });
 
-class ScriptedProvider implements Provider {
+class CatalogProvider implements Provider {
   readonly name: ProviderName = 'groq';
-  seen: ChatRequest[] = [];
-  constructor(private readonly steps: (string[] | Error)[]) {}
   listModels = () =>
     Promise.resolve([{ id: 'm', contextWindow: 131_072, supportsTools: true, free: true }]);
   validateKey = () => Promise.resolve({ ok: true as const });
-  async *stream(req: ChatRequest): AsyncGenerator<StreamDelta> {
-    this.seen.push({ ...req, messages: [...req.messages] });
-    const step = this.steps.shift();
-    if (step instanceof Error) throw step;
-    for (const t of step ?? []) {
-      await Promise.resolve();
-      if (req.signal.aborted) throw new ProviderError('aborted', 'aborted', 'groq');
-      yield { type: 'text', text: t };
-    }
+  // eslint-disable-next-line require-yield
+  async *stream(): AsyncGenerator<StreamDelta> {
+    await Promise.resolve();
   }
 }
 
-function sessionWith(provider: ScriptedProvider) {
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    model: 'groq:m',
-    fallbackChain: [],
-    router: { ...DEFAULT_SETTINGS.router, maxRetries: 0 },
-  };
-  const ledger = new RateLimitLedger(() => 100);
-  const router = new Router({ providers: new Map([['groq', provider]]), ledger, settings });
-  return { session: new ChatSession(router, 'SYSTEM'), ledger };
-}
-
-describe('ChatSession', () => {
-  it('keeps multi-turn history', async () => {
-    const p = new ScriptedProvider([['Hi', ' there'], ['Second']]);
-    const { session } = sessionWith(p);
-    const events: string[] = [];
-    const a = await session.send('hello', {
-      signal: new AbortController().signal,
-      onEvent: (e) => events.push(e.type),
-    });
-    expect(a).toMatchObject({ status: 'done', text: 'Hi there' });
-    await session.send('again', { signal: new AbortController().signal, onEvent: () => undefined });
-    expect(p.seen[1]?.messages.map((m) => `${m.role}:${m.content}`)).toEqual([
-      'system:SYSTEM',
-      'user:hello',
-      'assistant:Hi there',
-      'user:again',
-    ]);
-    expect(events).toEqual(['attempt', 'text', 'text', 'done']);
-  });
-
-  it('records partial answers on interrupt', async () => {
-    const p = new ScriptedProvider([['part', 'never']]);
-    const { session } = sessionWith(p);
-    const ac = new AbortController();
-    const outcome = await session.send('q', {
-      signal: ac.signal,
-      onEvent: (e) => {
-        if (e.type === 'text') ac.abort();
-      },
-    });
-    expect(outcome).toMatchObject({ status: 'interrupted', text: 'part' });
-    expect(session.messages.at(-1)).toEqual({
-      role: 'assistant',
-      content: `part\n\n${INTERRUPTED_MARKER}`,
-    });
-  });
-
-  it('drops the unanswered prompt when the request fails', async () => {
-    const p = new ScriptedProvider([new ProviderError('auth', 'Groq 401: bad key', 'groq', 401)]);
-    const { session } = sessionWith(p);
-    const outcome = await session.send('q', {
-      signal: new AbortController().signal,
-      onEvent: () => undefined,
-    });
-    expect(outcome.status).toBe('failed');
-    expect(outcome.error).toContain('Groq 401: bad key');
-    expect(session.messages).toHaveLength(1);
-    expect(AbortError).toBeDefined();
-  });
-
+describe('effectiveContextWindow', () => {
   it('caps the context window by the tokens-per-minute budget', async () => {
-    const p = new ScriptedProvider([]);
-    const { ledger } = sessionWith(p);
+    const ledger = new RateLimitLedger(() => 100);
     const deps = {
-      providers: new Map([['groq' as const, p]]),
+      providers: new Map([['groq' as const, new CatalogProvider()]]),
       catalog: new ModelCatalog(home),
       ledger,
     };

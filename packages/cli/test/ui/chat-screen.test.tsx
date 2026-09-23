@@ -1,4 +1,6 @@
-import { createRuntime, type Runtime } from '@vinax/core';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { createAgentSetup, createRuntime, type AgentSetup, type Runtime } from '@vinax/core';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatScreen } from '../../src/ui/components/ChatScreen.js';
@@ -21,6 +23,7 @@ const KEYS = {
 let h: Harness | undefined;
 let app: ReturnType<typeof render> | undefined;
 afterEach(async () => {
+  setup?.shell.killAll();
   app?.unmount();
   app = undefined;
   await h?.cleanup();
@@ -37,27 +40,48 @@ async function waitFor(check: () => boolean, what: string, timeoutMs = 4000): Pr
   }
 }
 
+let setup: AgentSetup | undefined;
+
 async function mount(
-  opts: Parameters<typeof createHarness>[0] = {},
+  opts: Parameters<typeof createHarness>[0] & { files?: Record<string, string> } = {},
   props: { initialPrompt?: string } = {},
 ) {
   h = await createHarness(opts);
-  const runtime: Runtime = await createRuntime({ cwd: h.cwd, env: h.env });
+  for (const [rel, text] of Object.entries(opts.files ?? {})) {
+    await fs.mkdir(path.dirname(path.join(h.cwd, rel)), { recursive: true });
+    await fs.writeFile(path.join(h.cwd, rel), text);
+  }
+  const runtime: Runtime = await createRuntime({
+    cwd: h.cwd,
+    env: { ...h.env, PATH: process.env.PATH },
+  });
+  setup = await createAgentSetup(runtime);
   const onExit = vi.fn();
   app = render(
     <ThemeContext.Provider value={mono}>
-      <ChatScreen runtime={runtime} version="9.9.9" tips={['a tip']} onExit={onExit} {...props} />
+      <ChatScreen
+        runtime={runtime}
+        setup={setup}
+        version="9.9.9"
+        tips={['a tip']}
+        onExit={onExit}
+        {...props}
+      />
     </ThemeContext.Provider>,
   );
   const frame = () => app?.lastFrame() ?? '';
   const type = async (...chunks: string[]) => {
+    // Ink subscribes to input after drawing a new screen; give it a moment like a real user would.
+    await sleep(60);
     for (const c of chunks) {
       app?.stdin.write(c);
       await sleep(20);
     }
   };
   await waitFor(() => frame().includes('Ask VinaX anything'), 'prompt box');
-  return { frame, type, onExit, harness: h };
+  const cwd = h.cwd;
+  const read = (rel: string) => fs.readFile(path.join(cwd, rel), 'utf8');
+  return { frame, type, onExit, harness: h, read };
 }
 
 const lastChatBody = (hh: Harness) => {
@@ -197,5 +221,214 @@ describe('ChatScreen', () => {
     );
     await waitFor(() => frame().includes('started'), 'initial answer');
     expect(frame()).toContain('› kick off');
+  });
+});
+
+const call = (name: string, args: Record<string, unknown>) => ({
+  name,
+  arguments: JSON.stringify(args),
+});
+const reqBodies = (hh: Harness) =>
+  hh.groq.requests
+    .filter((r) => r.path === '/v1/chat/completions')
+    .map((r) => r.body as { messages: { role: string; content: string | null }[] });
+
+describe('ChatScreen agent', () => {
+  it('shows tool calls as tree lines and runs reads without asking', async () => {
+    const { frame, type } = await mount({
+      files: { 'notes.txt': 'one\ntwo\n' },
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Read', { file_path: 'notes.txt' })] },
+            { text: 'It has two lines.' },
+          ],
+        },
+      },
+    });
+    await type('read notes', KEYS.enter);
+    await waitFor(() => frame().includes('It has two lines.'), 'answer');
+    expect(frame()).toContain('▸ Read notes.txt');
+    expect(frame()).toContain('└ Read 2 lines');
+  });
+
+  it('asks before an edit, shows the diff, and applies it on Yes', async () => {
+    const { frame, type, read } = await mount({
+      files: { 'a.txt': 'hello world\n' },
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Read', { file_path: 'a.txt' })] },
+            {
+              toolCalls: [
+                call('Edit', { file_path: 'a.txt', old_string: 'world', new_string: 'VinaX' }),
+              ],
+            },
+            { text: 'Done.' },
+          ],
+        },
+      },
+    });
+    await type('greet vinax', KEYS.enter);
+    await waitFor(() => frame().includes('Edit a.txt?'), 'permission prompt');
+    const promptFrame = frame();
+    expect(promptFrame).toContain('- hello world');
+    expect(promptFrame).toContain('+ hello VinaX');
+    expect(promptFrame).toContain('Yes, and auto-accept edits');
+    expect(promptFrame).toContain("Yes, and don't ask again for Edit(**) this session");
+    expect(promptFrame).not.toContain('Ask VinaX anything');
+    await type('1');
+    await waitFor(() => frame().includes('Done.'), 'answer');
+    expect(await read('a.txt')).toBe('hello VinaX\n');
+    expect(frame()).toContain('└ Changed +1 −1 lines');
+  });
+
+  it('takes "No" with feedback and passes it to the model', async () => {
+    const { frame, type, harness } = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Bash', { command: 'npm test' })] },
+            { text: 'OK, using pnpm.' },
+          ],
+        },
+      },
+    });
+    await type('run tests', KEYS.enter);
+    await waitFor(() => frame().includes('Run this command?'), 'command prompt');
+    expect(frame()).toContain('npm test');
+    await type('4');
+    await waitFor(() => frame().includes('What should VinaX do instead?'), 'feedback input');
+    await type('use pnpm', KEYS.enter);
+    await waitFor(() => frame().includes('OK, using pnpm.'), 'answer');
+    expect(reqBodies(harness).at(-1)?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'I declined that action. Instead: use pnpm',
+    });
+  });
+
+  it('remembers "don\'t ask again" for the session', async () => {
+    const { frame, type } = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Bash', { command: 'echo first' })] },
+            { text: 'one' },
+            { toolCalls: [call('Bash', { command: 'echo second' })] },
+            { text: 'two' },
+          ],
+        },
+      },
+    });
+    await type('go', KEYS.enter);
+    await waitFor(() => frame().includes('Run this command?'), 'prompt');
+    await type('2');
+    await waitFor(() => frame().includes('◆ one'), 'first answer');
+    await type('again', KEYS.enter);
+    await waitFor(() => frame().includes('◆ two'), 'second answer without asking');
+    expect(frame()).toContain('└ Exit 0 · 1 line');
+  });
+
+  it('warns about dangerous commands and offers no blanket approval', async () => {
+    const { frame, type } = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Bash', { command: 'rm -rf build' })] },
+            { text: 'skipped' },
+          ],
+        },
+      },
+    });
+    await type('clean', KEYS.enter);
+    await waitFor(() => frame().includes('Run this command?'), 'prompt');
+    expect(frame()).toContain('⚠ This deletes files recursively without confirmation (rm -rf)');
+    expect(frame()).not.toContain("don't ask again");
+    await type(KEYS.esc);
+    await waitFor(() => frame().includes('Stopped: you declined'), 'declined notice');
+  });
+
+  it('shows the live task list', async () => {
+    const todos = [
+      { content: 'Read the code', status: 'completed' },
+      { content: 'Fix the bug', status: 'in_progress', activeForm: 'Fixing the bug' },
+      { content: 'Run tests', status: 'pending' },
+    ];
+    const { frame, type } = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('TodoWrite', { todos })] },
+            { text: 'Working.', chunkDelayMs: 50 },
+          ],
+        },
+      },
+    });
+    await type('plan work', KEYS.enter);
+    await waitFor(() => frame().includes('Working.'), 'answer');
+    expect(frame()).toContain('Tasks');
+    expect(frame()).toContain('☑ Read the code');
+    expect(frame()).toContain('◐ Fixing the bug');
+    expect(frame()).toContain('☐ Run tests');
+  });
+
+  it('asks for plan approval in plan mode and switches to auto-accept', async () => {
+    const { frame, type, harness } = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('ExitPlanMode', { plan: '1. Change **a.txt**\n2. Run tests' })] },
+            { text: 'Starting now.' },
+          ],
+        },
+      },
+    });
+    await type(KEYS.shiftTab, KEYS.shiftTab);
+    expect(frame()).toContain('plan mode');
+    await type('make a plan', KEYS.enter);
+    await waitFor(() => frame().includes('Go ahead with this plan?'), 'plan prompt');
+    expect(frame()).toContain('1. Change a.txt');
+    await type('1');
+    await waitFor(() => frame().includes('Starting now.'), 'answer');
+    expect(frame()).toContain('auto-accept edits');
+    const first = harness.groq.requests.find((r) => r.path === '/v1/chat/completions')?.body as {
+      tools: { function: { name: string } }[];
+    };
+    expect(first.tools.map((t) => t.function.name)).not.toContain('Edit');
+  });
+
+  it('rewinds the conversation and restores files with Esc Esc', async () => {
+    const { frame, type, read } = await mount({
+      files: { 'a.txt': 'original\n' },
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Read', { file_path: 'a.txt' })] },
+            { toolCalls: [call('Write', { file_path: 'a.txt', content: 'rewritten\n' })] },
+            { text: 'Rewrote it.' },
+          ],
+        },
+      },
+    });
+    await type('rewrite a.txt', KEYS.enter);
+    await waitFor(
+      () => frame().includes('Write a.txt') || frame().includes('Edit a.txt?'),
+      'prompt',
+    );
+    await type('1');
+    await waitFor(() => frame().includes('Rewrote it.'), 'answer');
+    expect(await read('a.txt')).toBe('rewritten\n');
+    await type(KEYS.esc, KEYS.esc);
+    await waitFor(() => frame().includes('Rewind to before which prompt?'), 'rewind picker');
+    expect(frame()).toContain('1 file changed since');
+    await type(KEYS.enter);
+    await waitFor(
+      () => frame().includes('Restore the conversation and 1 changed file(s)'),
+      'restore options',
+    );
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('Rewound the conversation and 1 file'), 'rewound');
+    expect(await read('a.txt')).toBe('original\n');
+    expect(frame()).toContain('› rewrite a.txt');
   });
 });

@@ -1,3 +1,4 @@
+import type { ToolDisplay } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
 
 export type TranscriptItem =
@@ -5,7 +6,24 @@ export type TranscriptItem =
   | { id: number; kind: 'user'; text: string }
   /** `first` marks the opening chunk of an answer (it gets the answer marker). */
   | { id: number; kind: 'assistant'; markdown: string; first: boolean }
-  | { id: number; kind: 'notice'; level: StatusNotice['level']; text: string };
+  | { id: number; kind: 'notice'; level: StatusNotice['level']; text: string }
+  | {
+      id: number;
+      kind: 'tool';
+      name: string;
+      label: string;
+      ok: boolean;
+      summary: string;
+      display: ToolDisplay | undefined;
+    };
+
+export interface ToolRecord {
+  name: string;
+  label: string;
+  ok: boolean;
+  summary: string;
+  output: string;
+}
 
 /** Per-turn details for the Ctrl+O view. */
 export interface TurnRecord {
@@ -15,7 +33,8 @@ export interface TurnRecord {
   outputTokens: number | undefined;
   durationMs: number;
   fallbacks: string[];
-  status: 'done' | 'interrupted' | 'failed';
+  tools: ToolRecord[];
+  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined';
 }
 
 /**

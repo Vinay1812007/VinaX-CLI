@@ -2,10 +2,25 @@ import { PROVIDER_NAMES, type ProviderName } from '../config/schema.js';
 
 export { PROVIDER_NAMES, type ProviderName };
 
+/** A tool call as the model produced it; `arguments` is the raw JSON text. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export type ChatMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string };
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  | { role: 'tool'; toolCallId: string; name: string; content: string };
+
+/** A tool offered to the model through native (OpenAI-style) function calling. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
 
 export interface ModelRef {
   provider: ProviderName;
@@ -45,11 +60,15 @@ export interface Usage {
   completionTokens: number;
 }
 
-export type StreamDelta = { type: 'text'; text: string } | { type: 'usage'; usage: Usage };
+export type StreamDelta =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
+  | { type: 'usage'; usage: Usage };
 
 export interface ChatRequest {
   model: string;
   messages: readonly ChatMessage[];
+  tools?: readonly ToolSpec[];
   maxTokens?: number;
   signal: AbortSignal;
 }

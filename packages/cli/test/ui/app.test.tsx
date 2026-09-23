@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   AppStateStore,
+  type AgentSetup,
   type KeyCheck,
   type ModelInfo,
   type ProviderName,
@@ -67,13 +68,13 @@ function fakeOnboarding(overrides: Partial<OnboardingDeps> = {}) {
 
 function mountApp(onboarding: OnboardingDeps) {
   const state = new AppStateStore({ VINAX_HOME: home });
-  const createRuntime = vi.fn((): Promise<Runtime> =>
+  const createSession = vi.fn((): Promise<{ runtime: Runtime; setup: AgentSetup }> =>
     Promise.reject(new Error('chat is not under test here')),
   );
   const deps: AppDeps = {
     state,
     loadTheme: () => Promise.resolve('dark'),
-    createRuntime,
+    createSession,
     onboarding,
   };
   const onExit = vi.fn();
@@ -95,7 +96,7 @@ function mountApp(onboarding: OnboardingDeps) {
       await sleep(25);
     }
   };
-  return { state, frame, type, onExit, createRuntime };
+  return { state, frame, type, onExit, createSession };
 }
 
 describe('onboarding', () => {
@@ -160,21 +161,21 @@ describe('folder trust', () => {
       ...s,
       onboardingComplete: true,
     }));
-    const { frame, type, onExit, createRuntime } = mountApp(deps);
+    const { frame, type, onExit, createSession } = mountApp(deps);
     await waitFor(() => frame().includes('Do you trust'), 'trust prompt');
     await type('\x1b[B', '\r');
     expect(onExit).toHaveBeenCalledWith(1);
-    expect(createRuntime).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it('remembers trust and starts the chat', async () => {
     const { deps } = fakeOnboarding();
     const state = new AppStateStore({ VINAX_HOME: home });
     await state.update((s) => ({ ...s, onboardingComplete: true }));
-    const { frame, type, createRuntime } = mountApp(deps);
+    const { frame, type, createSession } = mountApp(deps);
     await waitFor(() => frame().includes('Do you trust'), 'trust prompt');
     await type('\r');
-    await waitFor(() => createRuntime.mock.calls.length === 1, 'runtime start');
+    await waitFor(() => createSession.mock.calls.length === 1, 'runtime start');
     expect(await state.isTrusted(path.join(home, 'proj', 'sub'))).toBe(true);
   });
 });

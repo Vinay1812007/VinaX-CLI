@@ -1,6 +1,6 @@
 import { Box, Text, useApp } from 'ink';
 import { useEffect, useState } from 'react';
-import type { AppStateStore, Env, Runtime, ThemeName } from '@vinax/core';
+import type { AgentSetup, AppStateStore, Env, Runtime, ThemeName } from '@vinax/core';
 import { ChatScreen } from './components/ChatScreen.js';
 import { Onboarding, type OnboardingDeps } from './components/Onboarding.js';
 import { TrustPrompt } from './components/TrustPrompt.js';
@@ -10,7 +10,8 @@ export interface AppDeps {
   state: AppStateStore;
   /** Reads the configured theme; throws on invalid settings. */
   loadTheme: () => Promise<ThemeName>;
-  createRuntime: () => Promise<Runtime>;
+  /** Loads settings, keys and providers, then wires the agent. */
+  createSession: () => Promise<{ runtime: Runtime; setup: AgentSetup }>;
   onboarding: OnboardingDeps;
 }
 
@@ -22,7 +23,6 @@ export interface AppProps {
   /** Chosen once per process so every render of the welcome panel agrees. */
   tips: readonly string[];
   initialPrompt?: string | undefined;
-  modelOverride?: string | undefined;
   onExit: (code: number) => void;
 }
 
@@ -31,19 +31,10 @@ type Phase =
   | { name: 'onboarding'; theme: ThemeName }
   | { name: 'trust' }
   | { name: 'starting' }
-  | { name: 'chat'; runtime: Runtime }
+  | { name: 'chat'; runtime: Runtime; setup: AgentSetup }
   | { name: 'error'; message: string };
 
-export function App({
-  deps,
-  version,
-  cwd,
-  env,
-  tips,
-  initialPrompt,
-  modelOverride,
-  onExit,
-}: AppProps) {
+export function App({ deps, version, cwd, env, tips, initialPrompt, onExit }: AppProps) {
   const { exit } = useApp();
   const [phase, setPhase] = useState<Phase>({ name: 'loading' });
   const [themeName, setThemeName] = useState<ThemeName>('dark');
@@ -60,7 +51,8 @@ export function App({
 
   const startChat = async (): Promise<void> => {
     setPhase({ name: 'starting' });
-    setPhase({ name: 'chat', runtime: await deps.createRuntime() });
+    const { runtime, setup } = await deps.createSession();
+    setPhase({ name: 'chat', runtime, setup });
   };
 
   const afterOnboarding = async (): Promise<void> => {
@@ -122,10 +114,10 @@ export function App({
       body = (
         <ChatScreen
           runtime={phase.runtime}
+          setup={phase.setup}
           version={version}
           tips={tips}
           initialPrompt={initialPrompt}
-          modelOverride={modelOverride}
           onExit={quit}
         />
       );

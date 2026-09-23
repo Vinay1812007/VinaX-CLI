@@ -8,6 +8,8 @@ export type ProviderErrorKind =
   | 'auth'
   | 'not_found'
   | 'bad_request'
+  /** The model produced a malformed tool call, or the endpoint does not support tools. */
+  | 'tool_format'
   | 'server'
   | 'timeout'
   | 'network'
@@ -42,6 +44,9 @@ function kindForStatus(status: number | undefined): ProviderErrorKind {
   return 'bad_request';
 }
 
+const TOOL_FORMAT =
+  /tool_use_failed|failed to call a function|support tool use|tool calling|tools? (is|are) not supported/i;
+
 function describe(err: { error: unknown; message: string }): string {
   const body = err.error as { message?: unknown } | undefined;
   const msg = typeof body?.message === 'string' ? body.message : err.message;
@@ -71,8 +76,12 @@ export function toProviderError(err: unknown, provider: ProviderName, now: numbe
     const status = typeof err.status === 'number' ? err.status : undefined;
     const headers = err.headers as Headers | undefined;
     const retryAfterMs = headers ? retryAfterFrom(headers, now) : undefined;
+    const body = err.error as { code?: unknown } | undefined;
+    const toolFormat =
+      (status === 400 || status === 404 || status === 422) &&
+      (body?.code === 'tool_use_failed' || TOOL_FORMAT.test(describe(err)));
     return new ProviderError(
-      kindForStatus(status),
+      toolFormat ? 'tool_format' : kindForStatus(status),
       `${label}${status === undefined ? '' : ` ${status}`}: ${describe(err)}`,
       provider,
       status,

@@ -1,30 +1,25 @@
 import {
-  AbortError,
-  AllModelsFailedError,
-  chatSystemPrompt,
+  createAgentSetup,
   createRuntime,
-  currentEnvironment,
-  formatModelRef,
   providerLabel,
+  formatModelRef,
   SECRET_ENV_VARS,
   SettingsError,
-  type ChatMessage,
-  type RouterEvent,
+  type AgentEvent,
+  type AgentHost,
+  type AgentOutcome,
   type Runtime,
-  type Usage,
 } from '@vinax/core';
-import { paint, readAll, type CliIO } from './io.js';
 import { EXIT } from './exit-codes.js';
+import { paint, readAll, type CliIO } from './io.js';
+import { cliSettings, type SessionOptions } from './session-options.js';
 import { VERSION } from './version.js';
 
 export const OUTPUT_FORMATS = ['text', 'json', 'stream-json'] as const;
 export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
-export interface PrintOptions {
-  prompt: string | undefined;
+export interface PrintOptions extends SessionOptions {
   outputFormat: OutputFormat;
-  model: string | undefined;
-  verbose: boolean;
 }
 
 interface FallbackRecord {
@@ -46,12 +41,13 @@ function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
 }
 
-/** Renders router events and the final result in the requested output format. */
+const TOOL_OUTPUT_IN_STREAM = 4000;
+
+/** Renders agent events and the final result in the requested output format. */
 class Output {
   private text = '';
-  private model: string | undefined;
-  private usage: Usage | undefined;
   private readonly fallbacks: FallbackRecord[] = [];
+  private toolCalls = 0;
 
   constructor(
     private readonly format: OutputFormat,
@@ -67,18 +63,56 @@ class Output {
     this.io.stderr.write(`${paint(this.io.stderr, 'dim', message, this.io.env)}\n`);
   }
 
-  init(chain: string[], cwd: string): void {
+  init(chain: string[], cwd: string, mode: string): void {
     if (this.format === 'stream-json') {
-      this.line({ type: 'system', subtype: 'init', version: VERSION, cwd, models: chain });
+      this.line({
+        type: 'system',
+        subtype: 'init',
+        version: VERSION,
+        cwd,
+        models: chain,
+        permission_mode: mode,
+      });
     }
   }
 
-  event(ev: RouterEvent): void {
+  private writeText(t: string): void {
+    this.text += t;
+    if (this.format === 'text') this.io.stdout.write(t);
+    else if (this.format === 'stream-json') this.line({ type: 'text', text: t });
+  }
+
+  event(ev: AgentEvent): void {
     switch (ev.type) {
       case 'text':
-        this.text += ev.text;
-        if (this.format === 'text') this.io.stdout.write(ev.text);
-        else if (this.format === 'stream-json') this.line({ type: 'text', text: ev.text });
+        this.writeText(ev.text);
+        return;
+      case 'tool_call':
+        this.toolCalls++;
+        // keep separate steps' prose apart in plain-text output
+        if (this.format === 'text' && this.text !== '' && !this.text.endsWith('\n'))
+          this.writeText('\n');
+        if (this.format === 'stream-json')
+          this.line({ type: 'tool_use', id: ev.id, name: ev.name, input: ev.input });
+        if (this.verbose) this.notice(`▸ ${ev.name} ${ev.label}`);
+        return;
+      case 'tool_result':
+        if (this.format === 'stream-json') {
+          this.line({
+            type: 'tool_result',
+            id: ev.id,
+            name: ev.name,
+            is_error: !ev.ok,
+            summary: ev.summary,
+            content: ev.content.slice(0, TOOL_OUTPUT_IN_STREAM),
+          });
+        }
+        if (this.verbose) this.notice(`  └ ${ev.summary}`);
+        return;
+      case 'notice':
+        if (this.format === 'stream-json')
+          this.line({ type: 'notice', kind: 'info', text: ev.text });
+        this.notice(`↪ ${ev.text}`);
         return;
       case 'fallback': {
         const rec = { from: formatModelRef(ev.from), to: formatModelRef(ev.to), reason: ev.reason };
@@ -115,44 +149,38 @@ class Output {
       case 'attempt':
         if (this.verbose) this.notice(`→ ${formatModelRef(ev.ref)}`);
         return;
+      case 'tool_progress':
       case 'done':
-        this.model = formatModelRef(ev.ref);
-        this.usage = ev.usage;
         return;
     }
   }
 
-  private result(durationMs: number, error?: string): Record<string, unknown> {
-    return {
-      type: 'result',
-      subtype: error === undefined ? 'success' : 'error',
-      is_error: error !== undefined,
-      result: this.text,
-      ...(error === undefined ? {} : { error }),
-      model: this.model ?? null,
-      usage: this.usage
-        ? { input_tokens: this.usage.promptTokens, output_tokens: this.usage.completionTokens }
-        : null,
-      fallbacks: this.fallbacks,
-      duration_ms: durationMs,
-    };
-  }
-
-  success(durationMs: number): void {
-    if (this.format === 'text') {
-      if (!this.text.endsWith('\n')) this.io.stdout.write('\n');
-    } else {
-      this.line(this.result(durationMs));
-    }
-  }
-
-  failure(message: string, durationMs: number): void {
+  finish(outcome: AgentOutcome | undefined, durationMs: number, error?: string): void {
+    const failed = error !== undefined;
     if (this.format === 'text') {
       if (this.text !== '' && !this.text.endsWith('\n')) this.io.stdout.write('\n');
     } else {
-      this.line(this.result(durationMs, message));
+      this.line({
+        type: 'result',
+        subtype: failed ? 'error' : 'success',
+        is_error: failed,
+        result: outcome?.text ?? this.text,
+        ...(failed ? { error } : {}),
+        model: outcome?.models.at(-1) ?? null,
+        usage: outcome
+          ? {
+              input_tokens: outcome.usage.promptTokens,
+              output_tokens: outcome.usage.completionTokens,
+            }
+          : null,
+        num_turns: outcome?.steps ?? 0,
+        tool_calls: this.toolCalls,
+        fallbacks: this.fallbacks,
+        duration_ms: durationMs,
+      });
     }
-    this.io.stderr.write(`${paint(this.io.stderr, 'red', `✖ ${message}`, this.io.env)}\n`);
+    if (failed)
+      this.io.stderr.write(`${paint(this.io.stderr, 'red', `✖ ${error}`, this.io.env)}\n`);
   }
 }
 
@@ -164,7 +192,26 @@ function noKeysMessage(): string {
   ].join('\n');
 }
 
-/** `vinax -p`: one non-interactive completion streamed to stdout. Returns the exit code. */
+/** Actions that need approval fail with this hint instead of hanging: nobody can answer in -p. */
+function headlessHost(runtime: Runtime): AgentHost {
+  const mode = runtime.settings.resolved.permissions.defaultMode;
+  return {
+    mode: () => mode,
+    askPermission: (req) =>
+      Promise.resolve({
+        kind: 'unavailable',
+        message: [
+          `Not allowed: ${req.reason} Print mode cannot ask for approval.`,
+          req.suggestion === undefined
+            ? 'The user can allow it with --allowedTools or --permission-mode acceptEdits.'
+            : `The user can allow it with --allowedTools "${req.suggestion}".`,
+          'Continue without this action if possible, and say what was skipped.',
+        ].join(' '),
+      }),
+  };
+}
+
+/** `vinax -p`: runs the agent once, non-interactively, and prints the result. */
 export async function runPrint(
   opts: PrintOptions,
   io: CliIO,
@@ -181,51 +228,65 @@ export async function runPrint(
 
   let runtime: Runtime;
   try {
+    const cli = cliSettings(opts);
     runtime = await createRuntime({
       cwd: io.cwd,
       env: io.env,
       verbose: opts.verbose,
-      ...(opts.model === undefined
-        ? {}
-        : { cli: { model: opts.model }, modelOverride: opts.model }),
+      ...(cli === undefined ? {} : { cli }),
+      ...(opts.model === undefined ? {} : { modelOverride: opts.model }),
     });
   } catch (err) {
-    out.failure(err instanceof SettingsError ? err.message : String(err), Date.now() - started);
+    out.finish(
+      undefined,
+      Date.now() - started,
+      err instanceof SettingsError ? err.message : String(err),
+    );
     return EXIT.error;
   }
   for (const w of runtime.warnings) out.notice(`⚠ ${w}`);
   if (runtime.logger.file !== undefined) out.notice(`debug log: ${runtime.logger.file}`);
   if (runtime.providers.size === 0) {
-    out.failure(noKeysMessage(), Date.now() - started);
+    out.finish(undefined, Date.now() - started, noKeysMessage());
     return EXIT.error;
   }
+
+  const setup = await createAgentSetup(runtime, {
+    ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
+    ...(opts.model === undefined ? {} : { model: opts.model }),
+  });
+  for (const bad of setup.permissions.invalidRules)
+    out.notice(`⚠ Ignoring malformed permission rule: ${bad}`);
 
   const ac = new AbortController();
   const onAbort = (): void => {
     ac.abort();
   };
   signal?.addEventListener('abort', onAbort, { once: true });
-
-  const messages: ChatMessage[] = [
-    { role: 'system', content: chatSystemPrompt(currentEnvironment(io.cwd)) },
-    { role: 'user', content: prompt },
-  ];
-  out.init(runtime.router.chain('main').map(formatModelRef), io.cwd);
+  const mode = runtime.settings.resolved.permissions.defaultMode;
+  out.init(runtime.router.chain('main', opts.model).map(formatModelRef), io.cwd, mode);
   try {
-    for await (const ev of runtime.router.stream({ messages, signal: ac.signal })) out.event(ev);
-    out.success(Date.now() - started);
-    return EXIT.ok;
-  } catch (err) {
-    if (err instanceof AbortError) {
-      out.failure('Interrupted', Date.now() - started);
-      return EXIT.interrupted;
+    const outcome = await setup.agent.run(prompt, {
+      signal: ac.signal,
+      host: headlessHost(runtime),
+      onEvent: (ev) => {
+        out.event(ev);
+      },
+    });
+    const elapsed = Date.now() - started;
+    switch (outcome.status) {
+      case 'done':
+        out.finish(outcome, elapsed);
+        return EXIT.ok;
+      case 'interrupted':
+        out.finish(outcome, elapsed, 'Interrupted');
+        return EXIT.interrupted;
+      default:
+        out.finish(outcome, elapsed, outcome.error ?? `Stopped: ${outcome.status}`);
+        return EXIT.error;
     }
-    const message =
-      err instanceof AllModelsFailedError || err instanceof Error ? err.message : String(err);
-    runtime.logger.debug('print.failed', { message });
-    out.failure(message, Date.now() - started);
-    return EXIT.error;
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    setup.shell.killAll();
   }
 }

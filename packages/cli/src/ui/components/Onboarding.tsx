@@ -13,7 +13,7 @@ import {
 import { formatTokens } from '../format.js';
 import { renderMarkdown } from '../markdown.js';
 import { THEME_LABELS, THEMES, useTheme } from '../theme.js';
-import { MaskedInput } from './MaskedInput.js';
+import { LineInput } from './LineInput.js';
 import { Select } from './Select.js';
 
 export interface OnboardingDeps {
@@ -301,7 +301,8 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
               {keyState.error === undefined ? null : (
                 <Text color={theme.error}>✖ {keyState.error}</Text>
               )}
-              <MaskedInput
+              <LineInput
+                mask
                 placeholder={`Paste your ${providerLabel(current)} key and press Enter (Esc to skip)`}
                 onSubmit={(v) => void submitKey(v)}
                 onCancel={nextKey}

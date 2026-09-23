@@ -1,9 +1,11 @@
 import OpenAI from 'openai';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
 import { ProviderError, providerLabel, toProviderError } from './errors.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import type {
+  ChatMessage,
   ChatRequest,
   KeyCheck,
   ModelInfo,
@@ -34,6 +36,27 @@ const catalogEntrySchema = z.looseObject({
   pricing: z.looseObject({ prompt: z.string(), completion: z.string() }).optional(),
 });
 const catalogSchema = z.looseObject({ data: z.array(z.unknown()) });
+
+function toWire(m: ChatMessage): ChatCompletionMessageParam {
+  switch (m.role) {
+    case 'assistant':
+      return m.toolCalls && m.toolCalls.length > 0
+        ? {
+            role: 'assistant',
+            content: m.content === '' ? null : m.content,
+            tool_calls: m.toolCalls.map((c) => ({
+              id: c.id,
+              type: 'function' as const,
+              function: { name: c.name, arguments: c.arguments },
+            })),
+          }
+        : { role: 'assistant', content: m.content };
+    case 'tool':
+      return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+    default:
+      return { role: m.role, content: m.content };
+  }
+}
 
 function toModelInfo(raw: unknown): ModelInfo | undefined {
   const parsed = catalogEntrySchema.safeParse(raw);
@@ -117,6 +140,7 @@ export class OpenAICompatibleProvider implements Provider {
       provider: this.name,
       model: req.model,
       messages: req.messages.length,
+      tools: req.tools?.length ?? 0,
       maxTokens: req.maxTokens,
     });
     let chunks = 0;
@@ -125,7 +149,20 @@ export class OpenAICompatibleProvider implements Provider {
         .create(
           {
             model: req.model,
-            messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+            messages: req.messages.map(toWire),
+            ...(req.tools && req.tools.length > 0
+              ? {
+                  tools: req.tools.map((t) => ({
+                    type: 'function' as const,
+                    function: {
+                      name: t.name,
+                      description: t.description,
+                      parameters: t.parameters,
+                    },
+                  })),
+                  tool_choice: 'auto' as const,
+                }
+              : {}),
             stream: true,
             stream_options: { include_usage: true },
             ...(req.maxTokens === undefined ? {} : { max_tokens: req.maxTokens }),
@@ -143,8 +180,18 @@ export class OpenAICompatibleProvider implements Provider {
       });
       for await (const chunk of data) {
         chunks++;
-        const text = chunk.choices[0]?.delta.content;
+        const delta = chunk.choices[0]?.delta;
+        const text = delta?.content;
         if (typeof text === 'string' && text !== '') yield { type: 'text', text };
+        for (const tc of delta?.tool_calls ?? []) {
+          yield {
+            type: 'tool_call_delta',
+            index: tc.index,
+            ...(tc.id === undefined ? {} : { id: tc.id }),
+            ...(tc.function?.name === undefined ? {} : { name: tc.function.name }),
+            ...(tc.function?.arguments === undefined ? {} : { argsChunk: tc.function.arguments }),
+          };
+        }
         if (chunk.usage) {
           yield {
             type: 'usage',
