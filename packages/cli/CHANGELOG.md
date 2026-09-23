@@ -1,4 +1,4 @@
-# vinax
+# @sirimillavinay/vinax
 
 ## 0.1.0
 

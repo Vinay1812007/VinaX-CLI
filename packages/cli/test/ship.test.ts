@@ -76,7 +76,11 @@ describe('vinax update', () => {
       target: 'linux-x64',
     });
     expect(
-      detectInstall(undefined, '/usr/bin/node', '/usr/lib/node_modules/vinax/dist/vinax.js'),
+      detectInstall(
+        undefined,
+        '/usr/bin/node',
+        '/usr/lib/node_modules/@sirimillavinay/vinax/dist/vinax.js',
+      ),
     ).toEqual({ kind: 'npm' });
     expect(
       detectInstall(undefined, '/usr/bin/node', '/home/me/VinaX-CLI/packages/cli/dist/vinax.js'),

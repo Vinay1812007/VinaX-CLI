@@ -36,7 +36,7 @@ download a binary from the release page yourself.
 **npm** (Node.js 22 or newer):
 
 ```sh
-npm install -g vinax     # or run it once: npx vinax
+npm install -g @sirimillavinay/vinax     # or run it once: npx @sirimillavinay/vinax
 ```
 
 **From source:**
@@ -51,7 +51,7 @@ node packages/cli/dist/vinax.js --help   # or: pnpm vinax --help
 ```
 
 **Updating:** `vinax update` installs the latest release the same way VinaX was installed. A binary
-replaces itself after checking the checksum, an npm install runs `npm install -g vinax@latest`, and
+replaces itself after checking the checksum, an npm install runs `npm install -g @sirimillavinay/vinax@latest`, and
 a source checkout tells you to `git pull`. `vinax update --check` only reports.
 
 > The standalone binaries have two differences from the npm package. They keep keys in
