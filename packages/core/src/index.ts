@@ -152,7 +152,23 @@ export {
   RateLimitLedger,
   type RateLimitSnapshot,
 } from './providers/ratelimit.js';
-export { createProvider, createProviders, PROJECT_URL } from './providers/registry.js';
+export {
+  createGatewayClient,
+  createGatewayProvider,
+  createProvider,
+  createProviders,
+  PROJECT_URL,
+} from './providers/registry.js';
+export {
+  checkGateway,
+  GATEWAY_WAKING,
+  GatewayClient,
+  gatewayUrlProblem,
+  GatewayUnavailableError,
+  type GatewayCheck,
+  type GatewayProbe,
+} from './providers/gateway.js';
+export { saveGatewayLogin, removeGatewayLogin } from './config/gateway-login.js';
 export {
   formatModelRef,
   parseModelRef,

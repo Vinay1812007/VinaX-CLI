@@ -2,7 +2,9 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { modelRefSchema, PERMISSION_MODES, SettingsError, type PermissionMode } from '@vinax/core';
 import { configCommand } from './config-command.js';
 import { doctorCommand } from './doctor-command.js';
+import { loginCommand, logoutCommand } from './login-command.js';
 import { mcpCommand } from './mcp-command.js';
+import { cleanupOldBinary, detectInstall, runUpdate } from './update.js';
 import { EXIT } from './exit-codes.js';
 import { runInteractive } from './interactive.js';
 import { paint, processIO, type CliIO } from './io.js';
@@ -139,6 +141,26 @@ export async function main(
   program.addCommand(configCommand(io, setExit).exitOverride());
   program.addCommand(doctorCommand(io, setExit).exitOverride());
   program.addCommand(mcpCommand(io, setExit).exitOverride());
+  program.addCommand(loginCommand(io, setExit));
+  program.addCommand(logoutCommand(io, setExit));
+  program.addCommand(
+    new Command('update')
+      .description('Update VinaX to the latest release (the same way it was installed)')
+      .option('--check', 'only report whether an update is available')
+      .action(async (o: { check?: boolean }) => {
+        setExit(
+          await runUpdate(
+            VERSION,
+            { check: o.check === true, env: io.env },
+            {
+              out: (s) => io.stdout.write(`${s}\n`),
+              err: (s) => io.stderr.write(`${s}\n`),
+            },
+          ),
+        );
+      }),
+  );
+  void cleanupOldBinary(detectInstall());
   // nested subcommands (config set, mcp add, …) must report errors instead of exiting the process
   const everyCommand = (c: Command): Command[] => [c, ...c.commands.flatMap(everyCommand)];
   for (const c of everyCommand(program)) {

@@ -6,8 +6,15 @@ import { createFileLogger, noopLogger, type Logger } from './log/logger.js';
 import { ModelCatalog } from './providers/catalog.js';
 import { providerLabel } from './providers/errors.js';
 import { RateLimitLedger } from './providers/ratelimit.js';
-import { createProviders } from './providers/registry.js';
+import { GATEWAY_WAKING, type GatewayClient } from './providers/gateway.js';
 import {
+  createGatewayClient,
+  createGatewayProvider,
+  createProvider,
+  createProviders,
+} from './providers/registry.js';
+import {
+  PROVIDER_NAMES,
   formatModelRef,
   type ModelInfo,
   type Provider,
@@ -15,7 +22,6 @@ import {
 } from './providers/types.js';
 import { Router } from './router/router.js';
 import { UsageTracker } from './state/usage.js';
-import { createProvider } from './providers/registry.js';
 import type { SecretName } from './config/secrets.js';
 
 export interface Runtime {
@@ -34,8 +40,14 @@ export interface Runtime {
   usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
-  /** Stops using a provider (after /logout). */
+  /** Stops using a provider key, or the gateway (after /logout). */
   removeProvider(name: SecretName): void;
+  /** The VinaX gateway, when the user logged in to one. */
+  readonly gateway: GatewayClient | undefined;
+  /** Providers currently served through the gateway. */
+  readonly viaGateway: ReadonlySet<ProviderName>;
+  /** Starts using a gateway for every provider without a key of its own (after /login). */
+  setGateway(url: string, token: string): void;
   /** Non-fatal problems to show the user once (unknown settings, unavailable models, ...). */
   warnings: string[];
 }
@@ -60,6 +72,7 @@ async function findUnavailableModels(
   providers: ReadonlyMap<ProviderName, Provider>,
   catalog: ModelCatalog,
   timeoutMs: number,
+  unreachable: ReadonlySet<ProviderName>,
 ): Promise<{ skip: Set<string>; warnings: string[]; models: Map<ProviderName, ModelInfo[]> }> {
   const skip = new Set<string>();
   const warnings: string[] = [];
@@ -67,7 +80,7 @@ async function findUnavailableModels(
   const models = new Map<ProviderName, ModelInfo[]>();
   for (const { ref, provider: name, model } of refs) {
     const provider = providers.get(name);
-    if (!provider) continue;
+    if (!provider || unreachable.has(name)) continue;
     if (!known.has(name)) {
       try {
         const result = await catalog.get(provider, { signal: AbortSignal.timeout(timeoutMs) });
@@ -97,12 +110,25 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const secrets = await openSecretStore(env);
   const resolved = settings.resolved;
   const ledger = new RateLimitLedger((p) => resolved.providers[p].rpm);
-  const { providers, missingKeys } = await createProviders({
+  const { providers, missingKeys, gateway, viaGateway } = await createProviders({
     settings: resolved,
     secrets,
     ledger,
     logger,
   });
+  const deps = { settings: resolved, ledger, logger };
+  // A sleeping gateway would stall startup on the model catalog, so check it quickly and let it
+  // wake in the background; its models are simply tried until the catalog can be fetched.
+  const unreachable = new Set<ProviderName>();
+  const startupNotes: string[] = [];
+  if (gateway && viaGateway.size > 0) {
+    const probe = await gateway.client.probe(2500);
+    if (!probe.ok) {
+      for (const p of viaGateway) unreachable.add(p);
+      startupNotes.push(`${GATEWAY_WAKING}.`);
+      gateway.client.wake().catch(() => undefined);
+    }
+  }
   const catalog = new ModelCatalog(cacheDir(env));
 
   const probe = new Router({ providers, ledger, settings: resolved });
@@ -116,6 +142,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     providers,
     catalog,
     opts.catalogTimeoutMs ?? 10_000,
+    unreachable,
   );
 
   logger.debug('runtime', {
@@ -130,16 +157,40 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   process.once('exit', () => {
     usage.flush();
   });
-  const liveProviders = providers;
+  let gatewayLink = gateway;
+  const useGatewayFor = (name: ProviderName): boolean => {
+    if (!gatewayLink || !resolved.providers[name].enabled) return false;
+    providers.set(name, createGatewayProvider(name, gatewayLink.client, gatewayLink.token, deps));
+    viaGateway.add(name);
+    return true;
+  };
   return {
     cwd: opts.cwd,
     env,
     usage,
     setProviderKey(name, key) {
-      liveProviders.set(name, createProvider(name, key, { settings: resolved, ledger, logger }));
+      providers.set(name, createProvider(name, key, deps));
+      viaGateway.delete(name);
     },
     removeProvider(name) {
-      liveProviders.delete(name);
+      if (name === 'gateway') {
+        for (const p of viaGateway) providers.delete(p);
+        viaGateway.clear();
+        gatewayLink = undefined;
+        return;
+      }
+      providers.delete(name);
+      useGatewayFor(name);
+    },
+    get gateway() {
+      return gatewayLink?.client;
+    },
+    viaGateway,
+    setGateway(url, token) {
+      for (const p of viaGateway) providers.delete(p);
+      viaGateway.clear();
+      gatewayLink = { client: createGatewayClient(resolved, url), token };
+      for (const name of PROVIDER_NAMES) if (!providers.has(name)) useGatewayFor(name);
     },
     settings,
     logger,
@@ -150,6 +201,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     catalog,
     models,
     router: new Router({ providers, ledger, settings: resolved, logger, skip, usage }),
-    warnings: [...settings.warnings, ...warnings],
+    warnings: [...settings.warnings, ...startupNotes, ...warnings],
   };
 }

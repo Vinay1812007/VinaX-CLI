@@ -7,3 +7,5 @@ coverage/
 !.env.example
 .DS_Store
 .vinax/settings.local.json
+
+dist-bin/

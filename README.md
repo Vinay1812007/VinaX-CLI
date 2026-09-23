@@ -3,19 +3,43 @@
 VinaX (`vinax`) is an open-source agentic coding assistant for the terminal, powered by free-tier
 models from **Groq** and **OpenRouter**.
 
-> **Status: milestones M1–M5.** VinaX reads, searches and edits your code, runs commands and asks
-> before anything risky. It has slash and custom commands, `@` file mentions, project memory, saved
-> sessions and automatic compaction, plus hooks, MCP servers, sub-agents and WebFetch. It runs on
-> Groq and OpenRouter free tiers with automatic fallback. Packaging and release (M6) come next. See
-> [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+> **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
+> runs commands and asks before anything risky. It has slash and custom commands, `@` file
+> mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
+> sub-agents and WebFetch. It runs on Groq and OpenRouter free tiers with automatic fallback, or
+> through an optional shared [gateway](docs/gateway.md). See [docs/](docs/README.md) for the
+> documentation.
 
-## Requirements
+## Install
 
-- Node.js **22 or newer**
-- A free API key from [Groq](https://console.groq.com/keys) and/or
-  [OpenRouter](https://openrouter.ai/keys)
+You need a free API key from [Groq](https://console.groq.com/keys) and/or
+[OpenRouter](https://openrouter.ai/keys), or a token for someone's [VinaX gateway](#gateway).
 
-## Install from source
+**Standalone binary** (no Node.js needed; macOS, Linux and Windows on x64 and arm64):
+
+```sh
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/Vinay1812007/VinaX-CLI/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Vinay1812007/VinaX-CLI/main/scripts/install.ps1 | iex
+```
+
+The scripts download the binary for your machine from
+[GitHub Releases](https://github.com/Vinay1812007/VinaX-CLI/releases), check it against the
+release's `SHA256SUMS`, and install it to `~/.vinax/bin` (or `%LOCALAPPDATA%\vinax\bin`).
+`VINAX_VERSION=0.2.0` pins a version and `VINAX_INSTALL_DIR` picks another folder. You can also
+download a binary from the release page yourself.
+
+**npm** (Node.js 22 or newer):
+
+```sh
+npm install -g vinax     # or run it once: npx vinax
+```
+
+**From source:**
 
 ```sh
 git clone https://github.com/Vinay1812007/VinaX-CLI.git
@@ -26,7 +50,24 @@ pnpm build
 node packages/cli/dist/vinax.js --help   # or: pnpm vinax --help
 ```
 
+**Updating:** `vinax update` installs the latest release the same way VinaX was installed. A binary
+replaces itself after checking the checksum, an npm install runs `npm install -g vinax@latest`, and
+a source checkout tells you to `git pull`. `vinax update --check` only reports.
+
+> The standalone binaries have two differences from the npm package. They keep keys in
+> `~/.vinax/credentials.json` (mode 0600), because the OS keychain module can't be embedded. And
+> `Grep` uses `rg` from your `PATH`, falling back to a slower built-in search, because ripgrep isn't
+> bundled. `vinax doctor` shows both.
+
 ## Add your API keys
+
+On first run VinaX walks you through setup. You can also log in from the shell:
+
+```sh
+vinax login groq                     # prompts for the key without echoing it, then checks it
+vinax login --gateway https://…      # use a VinaX gateway instead (asks for your token)
+vinax logout groq                    # or: vinax logout --gateway
+```
 
 Environment variables always take precedence over stored keys:
 
@@ -430,11 +471,28 @@ Example `~/.vinax/settings.json`:
 }
 ```
 
-`theme` (`dark`, `light` or `colorblind`), `editorMode` (`normal` or `vim`) and `context`
-(`maxTokens`, `autoCompact`) are settings too. `vinax doctor` runs the `/doctor` checks from your
+`theme` (`dark`, `light` or `colorblind`), `editorMode` (`normal` or `vim`), `context`
+(`maxTokens`, `autoCompact`) and `gateway` (`url`, `timeoutMs`) are settings too. `vinax doctor` runs the `/doctor` checks from your
 shell. `VINAX_HOME` relocates `~/.vinax`.
 `VINAX_SECRETS_BACKEND=file` skips the OS keychain. `NO_COLOR` turns off all colour, whatever the
 theme.
+
+## Gateway
+
+The gateway is an **optional**, small server that holds shared Groq/OpenRouter keys and relays
+chat completions, so a team or class can use VinaX without everyone creating keys. The agent and
+all tools still run on your machine; only model requests go through the gateway.
+
+```sh
+vinax login --gateway https://vinax-gateway.onrender.com   # paste the token you were given
+```
+
+Providers you have your own key for keep using it; the others go through the gateway. The gateway
+runs on Render's free plan, which sleeps after 15 idle minutes. The first request after that shows
+**Waking VinaX gateway…** and can take up to a minute; VinaX waits up to `gateway.timeoutMs`
+(120 s) instead of failing. Everyone behind one gateway shares its free-tier quotas.
+
+To run your own (free Render web service, tokens, limits), see [docs/gateway.md](docs/gateway.md).
 
 ## Development
 
@@ -443,15 +501,19 @@ pnpm install
 pnpm test          # vitest: unit, Ink component and CLI integration tests (mock OpenAI server)
 pnpm typecheck
 pnpm lint
-pnpm build         # bundles packages/cli/dist/vinax.js with tsup
+pnpm build         # bundles packages/cli/dist/vinax.js and apps/gateway/dist with tsup
 pnpm vinax -p "hi" # run from source
+pnpm build:binaries darwin-arm64   # standalone binaries in dist-bin/ (needs Bun)
 ```
 
-| Package            | Purpose                                                                     |
-| ------------------ | --------------------------------------------------------------------------- |
-| `packages/core`    | UI-free: settings, secrets, providers, rate-limit ledger, router, debug log |
-| `packages/cli`     | The `vinax` executable (bundles core)                                       |
-| `packages/testkit` | Scriptable mock OpenAI-compatible server used by the tests                  |
+| Package            | Purpose                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `packages/core`    | UI-free: settings, secrets, providers, router, agent loop, tools, permissions, MCP |
+| `packages/cli`     | The `vinax` executable: Ink UI, commands, print mode (bundles core)                |
+| `packages/testkit` | Scriptable mock OpenAI-compatible and MCP servers used by the tests                |
+| `apps/gateway`     | The optional Hono gateway deployed to Render                                       |
+
+Releases are automated with changesets; see [docs/releasing.md](docs/releasing.md).
 
 ## License
 

@@ -13,6 +13,8 @@ export type ProviderErrorKind =
   | 'server'
   | 'timeout'
   | 'network'
+  /** The endpoint cannot be used right now (a VinaX gateway that did not wake up). */
+  | 'unavailable'
   | 'aborted';
 
 export class ProviderError extends Error {

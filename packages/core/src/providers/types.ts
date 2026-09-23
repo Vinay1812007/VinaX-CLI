@@ -63,7 +63,9 @@ export interface Usage {
 export type StreamDelta =
   | { type: 'text'; text: string }
   | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
-  | { type: 'usage'; usage: Usage };
+  | { type: 'usage'; usage: Usage }
+  /** Progress that is not model output, e.g. waiting for the gateway to wake (empty clears it). */
+  | { type: 'status'; text: string };
 
 export interface ChatRequest {
   model: string;

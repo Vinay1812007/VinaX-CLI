@@ -1,0 +1,107 @@
+name: Release
+
+# On every push to main, changesets either opens/updates a "Version packages" PR, or (once that
+# PR is merged) publishes `vinax` to npm. After a publish, standalone binaries are built and
+# attached to a GitHub Release named v<version>, which install.sh / install.ps1 and
+# `vinax update` download from.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm release
+          title: Release vinax
+          commit: 'chore: release vinax'
+          createGithubReleases: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+      - id: version
+        run: echo "version=$(node -p "require('./packages/cli/package.json').version")" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: npm
+    if: needs.npm.outputs.published == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl windows-x64 windows-arm64
+          # macOS builds are made (and ad-hoc signed) on macOS so Gatekeeper accepts them.
+          - os: macos-latest
+            targets: darwin-x64 darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - run: bun scripts/build-binaries.ts ${{ matrix.targets }}
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
+        run: for f in dist-bin/vinax-darwin-*; do codesign --force --sign - "$f"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: dist-bin/vinax-*
+
+  github-release:
+    needs: [npm, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-bin
+          pattern: binaries-*
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist-bin && sha256sum vinax-* > SHA256SUMS && cat SHA256SUMS
+      - name: Release notes
+        run: |
+          node -e "
+            const v = process.argv[1];
+            const log = require('fs').readFileSync('packages/cli/CHANGELOG.md', 'utf8');
+            const m = log.split(/^## /m).find((s) => s.startsWith(v + '\n'));
+            process.stdout.write((m ? m.slice(v.length + 1) : 'See CHANGELOG.md') + '\n\nInstall: https://github.com/${{ github.repository }}#install\n');
+          " "${{ needs.npm.outputs.version }}" > notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ needs.npm.outputs.version }}" dist-bin/* \
+            --title "VinaX v${{ needs.npm.outputs.version }}" --notes-file notes.md --target "$GITHUB_SHA"

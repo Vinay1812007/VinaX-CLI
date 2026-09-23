@@ -1,12 +1,14 @@
 import { render } from 'ink';
 import {
   AppStateStore,
+  checkGateway,
   createProvider,
   createRuntime,
   loadSettings,
   noopLogger,
   openSecretStore,
   RateLimitLedger,
+  saveGatewayLogin,
   SECRET_ENV_VARS,
   updateSettingsFile,
 } from '@vinax/core';
@@ -64,6 +66,14 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
       listModels: async (p, key) => (await probe(p, key)).listModels(),
       saveSettings: async (patch) => {
         await updateSettingsFile({ cwd, env, scope: 'user' }, (s) => ({ ...s, ...patch }));
+      },
+      checkGateway: async (url, token, onWaking) =>
+        checkGateway(url, token, {
+          timeoutMs: (await scratchSettings()).gateway.timeoutMs,
+          onWaking,
+        }),
+      saveGateway: async (url, token) => {
+        await saveGatewayLogin(url, token, { cwd, env });
       },
       defaultModel: opts.model ?? 'groq:openai/gpt-oss-120b',
     },

@@ -148,6 +148,17 @@ class Output {
         }
         this.notice(`↻ ${ev.reason} — retrying in ${seconds(ev.delayMs)}`);
         return;
+      case 'status':
+        if (ev.text === '') return;
+        if (this.format === 'stream-json')
+          this.line({
+            type: 'notice',
+            kind: 'status',
+            model: formatModelRef(ev.ref),
+            text: ev.text,
+          });
+        this.notice(`… ${ev.text}`);
+        return;
       case 'attempt':
         if (this.verbose) this.notice(`→ ${formatModelRef(ev.ref)}`);
         return;

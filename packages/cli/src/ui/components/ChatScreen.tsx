@@ -372,6 +372,11 @@ export function ChatScreen(props: ChatScreenProps) {
           setStreaming((s) => s && { ...s, waiting });
           return;
         }
+        case 'status': {
+          const waiting = ev.text === '' ? undefined : ev.text;
+          setStreaming((s) => s && { ...s, waiting });
+          return;
+        }
         case 'retry':
           setNotice({
             level: 'warning',
@@ -801,7 +806,7 @@ export function ChatScreen(props: ChatScreenProps) {
             version={version}
             cwd={runtime.cwd}
             model={modelRef.model}
-            provider={providerLabel(modelRef.provider)}
+            provider={`${providerLabel(modelRef.provider)}${runtime.viaGateway.has(modelRef.provider) ? ' (VinaX gateway)' : ''}`}
             tips={tips}
             width={width}
           />

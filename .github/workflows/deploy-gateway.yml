@@ -1,0 +1,29 @@
+name: Deploy gateway
+
+# Deploys the gateway to Render after CI passes on main. Needs the repository secret
+# RENDER_DEPLOY_HOOK_URL (Render dashboard → the service → Settings → Deploy Hook).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the Render deploy hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::RENDER_DEPLOY_HOOK_URL is not set, so the gateway was not deployed."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 -X POST "${HOOK}&ref=${SHA}" > /dev/null
+          echo "Deploy of ${SHA} requested."

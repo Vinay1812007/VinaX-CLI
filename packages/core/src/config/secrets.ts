@@ -3,12 +3,13 @@ import path from 'node:path';
 import { vinaxHome, type Env } from './paths.js';
 import type { ProviderName } from './schema.js';
 
-export type SecretName = ProviderName;
+export type SecretName = ProviderName | 'gateway';
 export type SecretSource = 'env' | 'keychain' | 'file';
 
 export const SECRET_ENV_VARS: Record<SecretName, string> = {
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  gateway: 'VINAX_GATEWAY_TOKEN',
 };
 
 interface SecretBackend {

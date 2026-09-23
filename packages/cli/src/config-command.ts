@@ -19,6 +19,47 @@ import { paint, readSecret, type CliIO } from './io.js';
 
 const SCOPES = ['user', 'project', 'local'] as const;
 
+/** Reads a provider key (prompt or stdin), checks it live unless told not to, and stores it. */
+export async function storeProviderKey(
+  io: CliIO,
+  provider: string,
+  verify: boolean,
+): Promise<number> {
+  const out = (s: string) => io.stdout.write(`${s}\n`);
+  const err = (s: string) => io.stderr.write(`${s}\n`);
+  if (!isProvider(provider)) {
+    err(`Unknown provider "${provider}". Choose one of: ${PROVIDER_NAMES.join(', ')}`);
+    return EXIT.usage;
+  }
+  const key = await readSecret(io, `${providerLabel(provider)} API key: `);
+  if (key === '') {
+    err('No key given.');
+    return EXIT.usage;
+  }
+  if (verify) {
+    const { resolved } = await loadSettings({ cwd: io.cwd, env: io.env });
+    const check = await createProvider(provider, key, {
+      settings: resolved,
+      ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+      logger: noopLogger,
+    }).validateKey();
+    if (!check.ok && check.rejected) {
+      err(`✖ ${providerLabel(provider)} rejected that key; it was not saved.`);
+      return EXIT.error;
+    }
+    if (!check.ok) err(`⚠ Could not verify the key (${check.reason}); saving it anyway.`);
+  }
+  const store = await openSecretStore(io.env);
+  const where = await store.set(provider, key);
+  out(
+    `✔ Saved ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}.`,
+  );
+  if (io.env[SECRET_ENV_VARS[provider]] !== undefined) {
+    err(`Note: ${SECRET_ENV_VARS[provider]} is set and takes precedence over the stored key.`);
+  }
+  return EXIT.ok;
+}
+
 function getPath(obj: unknown, dotted: string): unknown {
   let node = obj;
   for (const seg of dotted.split('.')) {
@@ -141,39 +182,7 @@ export function configCommand(io: CliIO, setExit: (code: number) => void): Comma
     .description(`Store an API key (${PROVIDER_NAMES.join(' | ')}); reads it from stdin when piped`)
     .option('--no-verify', 'store without a live check against the provider')
     .action(async (provider: string, o: { verify: boolean }) => {
-      if (!isProvider(provider)) {
-        err(`Unknown provider "${provider}". Choose one of: ${PROVIDER_NAMES.join(', ')}`);
-        setExit(EXIT.usage);
-        return;
-      }
-      const key = await readSecret(io, `${providerLabel(provider)} API key: `);
-      if (key === '') {
-        err('No key given.');
-        setExit(EXIT.usage);
-        return;
-      }
-      if (o.verify) {
-        const { resolved } = await loadSettings({ cwd: io.cwd, env: io.env });
-        const check = await createProvider(provider, key, {
-          settings: resolved,
-          ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
-          logger: noopLogger,
-        }).validateKey();
-        if (!check.ok && check.rejected) {
-          err(`✖ ${providerLabel(provider)} rejected that key; it was not saved.`);
-          setExit(EXIT.error);
-          return;
-        }
-        if (!check.ok) err(`⚠ Could not verify the key (${check.reason}); saving it anyway.`);
-      }
-      const store = await openSecretStore(io.env);
-      const where = await store.set(provider, key);
-      out(
-        `✔ Saved ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}.`,
-      );
-      if (io.env[SECRET_ENV_VARS[provider]] !== undefined) {
-        err(`Note: ${SECRET_ENV_VARS[provider]} is set and takes precedence over the stored key.`);
-      }
+      setExit(await storeProviderKey(io, provider, o.verify));
     });
 
   cmd

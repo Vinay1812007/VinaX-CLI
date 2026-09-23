@@ -40,7 +40,11 @@ const models: ModelInfo[] = [
 ];
 
 function fakeOnboarding(overrides: Partial<OnboardingDeps> = {}) {
-  const saved: { keys: [ProviderName, string][]; settings: unknown[] } = { keys: [], settings: [] };
+  const saved: { keys: [ProviderName, string][]; settings: unknown[]; gateway: string[] } = {
+    keys: [],
+    settings: [],
+    gateway: [],
+  };
   const deps: OnboardingDeps = {
     envKey: () => undefined,
     storedKey: () => Promise.resolve(undefined),
@@ -57,6 +61,18 @@ function fakeOnboarding(overrides: Partial<OnboardingDeps> = {}) {
     listModels: () => Promise.resolve(models),
     saveSettings: (patch) => {
       saved.settings.push(patch);
+      return Promise.resolve();
+    },
+    checkGateway: (_url, token, onWaking) => {
+      onWaking();
+      return Promise.resolve(
+        token === 'vxg_good'
+          ? { ok: true, models: 3, version: '0.1.0' }
+          : { ok: false, rejected: true, reason: 'the gateway rejected that token' },
+      );
+    },
+    saveGateway: (url, token) => {
+      saved.gateway.push(`${url} ${token}`);
       return Promise.resolve();
     },
     defaultModel: 'groq:openai/gpt-oss-120b',
@@ -140,6 +156,28 @@ describe('onboarding', () => {
       () => frame().includes('Using GROQ_API_KEY — Groq accepted it.'),
       'env key accepted',
     );
+    expect(saved.keys).toEqual([]);
+  });
+
+  it('can connect to a VinaX gateway instead of entering keys', async () => {
+    const { deps, saved } = fakeOnboarding();
+    const { frame, type } = mountApp(deps);
+    await waitFor(() => frame().includes('Choose a colour theme'), 'theme step');
+    await type('\r', '4');
+    await waitFor(() => frame().includes('Connect to a VinaX gateway'), 'gateway step');
+    expect(frame()).toContain('setup 3/4');
+    await type('https://gw.example.com/', '\r');
+    await waitFor(() => frame().includes('gateway token'), 'token entry');
+    await type('vxg_bad', '\r');
+    await waitFor(() => frame().includes('the gateway rejected that token'), 'rejected');
+    expect(frame()).not.toContain('vxg_bad');
+    await type('vxg_good', '\r');
+    await waitFor(() => frame().includes('Connected to gateway v0.1.0 — 3 models'), 'connected');
+    await type('\r');
+    await waitFor(() => frame().includes("You're all set"), 'done step');
+    expect(frame()).toContain('gateway https://gw.example.com');
+    expect(frame()).not.toContain('Without a key');
+    expect(saved.gateway).toEqual(['https://gw.example.com vxg_good']);
     expect(saved.keys).toEqual([]);
   });
 

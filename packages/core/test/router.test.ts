@@ -116,6 +116,8 @@ const summarize = (events: RouterEvent[]): string[] =>
         return `done ${formatModelRef(e.ref)}`;
       case 'tool_call_delta':
         return `tool ${e.name ?? ''}${e.argsChunk ?? ''}`;
+      case 'status':
+        return `status ${e.text}`;
     }
   });
 

@@ -7,19 +7,24 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm -r --filter=./packages/** run build",
-    "typecheck": "pnpm -r run typecheck",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck && tsc -p scripts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
     "changeset": "changeset",
-    "vinax": "tsx packages/cli/src/bin.ts"
+    "vinax": "tsx packages/cli/src/bin.ts",
+    "release": "pnpm build && changeset publish",
+    "build:binaries": "bun scripts/build-binaries.ts",
+    "gateway:token": "pnpm --filter @vinax/gateway run create-token",
+    "gateway:dev": "pnpm --filter @vinax/gateway run dev"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.4.2",
     "@types/node": "^22.20.4",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",

@@ -38,6 +38,8 @@ export interface MockServerOptions {
   models?: { id: string; context_window?: number; supported_parameters?: string[] }[];
   /** Keys accepted as `Authorization: Bearer <key>`. Empty means any key. */
   apiKeys?: string[];
+  /** Serves an unauthenticated `GET /health` like the VinaX gateway: 200 while it returns true, else 503. */
+  health?: () => boolean;
 }
 
 export interface MockServer {
@@ -161,6 +163,12 @@ export async function startMockServer(opts: MockServerOptions = {}): Promise<Moc
       const path = (req.url ?? '/').split('?')[0] ?? '/';
       requests.push({ method: req.method ?? 'GET', path, headers: req.headers, body });
 
+      if (req.method === 'GET' && path === '/health' && opts.health) {
+        const up = opts.health();
+        res.writeHead(up ? 200 : 503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(up ? { status: 'ok', version: 'mock' } : { status: 'starting' }));
+        return;
+      }
       const auth = req.headers.authorization ?? '';
       const key = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       if (key === '' || (keys.length > 0 && !keys.includes(key))) {

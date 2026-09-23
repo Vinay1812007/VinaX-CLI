@@ -3,6 +3,7 @@ import { loadSettings, SettingsError } from './config/load.js';
 import type { Env } from './config/paths.js';
 import { openSecretStore, SECRET_ENV_VARS } from './config/secrets.js';
 import { providerLabel } from './providers/errors.js';
+import { GatewayClient } from './providers/gateway.js';
 import { PROVIDER_NAMES } from './providers/types.js';
 import type { Runtime } from './runtime.js';
 import { ripgrepStatus } from './tools/search-tools.js';
@@ -50,16 +51,23 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
     checks.push({ name, status, detail });
   };
 
+  const bun = (process.versions as Record<string, string | undefined>).bun;
   const major = Number(process.versions.node.split('.')[0]);
-  add(
-    'Node.js',
-    major >= 22 ? 'ok' : 'fail',
-    `v${process.versions.node}${major >= 22 ? '' : ' — VinaX needs Node.js 22 or newer'}`,
-  );
+  if (bun === undefined) {
+    add(
+      'Node.js',
+      major >= 22 ? 'ok' : 'fail',
+      `v${process.versions.node}${major >= 22 ? '' : ' — VinaX needs Node.js 22 or newer'}`,
+    );
+  } else {
+    add('Runtime', 'ok', `standalone binary (Bun ${bun})`);
+  }
   add('VinaX', 'ok', `v${opts.version}`);
 
+  let gatewayUrl: string | undefined;
   try {
     const loaded = await loadSettings({ cwd: opts.cwd, env: opts.env });
+    gatewayUrl = loaded.resolved.gateway.url;
     add(
       'Settings',
       loaded.warnings.length === 0 ? 'ok' : 'warn',
@@ -70,14 +78,18 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
   }
 
   const store = await openSecretStore(opts.env);
+  const gatewayToken = gatewayUrl === undefined ? undefined : await store.get('gateway');
+  const viaGateway = gatewayToken !== undefined;
   let anyKey = false;
   for (const name of PROVIDER_NAMES) {
     const secret = await store.get(name);
     if (!secret) {
       add(
         `${providerLabel(name)} key`,
-        'warn',
-        `not set (set ${SECRET_ENV_VARS[name]} or run: vinax config set-key ${name})`,
+        viaGateway ? 'ok' : 'warn',
+        viaGateway
+          ? 'not set — requests go through the VinaX gateway'
+          : `not set (set ${SECRET_ENV_VARS[name]} or run: vinax config set-key ${name})`,
       );
       continue;
     }
@@ -94,7 +106,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
       check.ok ? `valid (${secret.source})` : check.reason,
     );
   }
-  if (!anyKey) add('API keys', 'fail', 'no provider key is configured, so VinaX cannot answer');
+  if (!anyKey && !viaGateway) {
+    add(
+      'API keys',
+      'fail',
+      'no provider key or gateway is configured, so VinaX cannot answer (run: vinax login)',
+    );
+  }
 
   if (opts.runtime) {
     add(
@@ -144,10 +162,23 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
       ? `${String(opts.terminal.columns ?? '?')} columns, ${colors}, TERM=${opts.env.TERM ?? 'unset'}${opts.env.TERM_PROGRAM === undefined ? '' : ` (${opts.env.TERM_PROGRAM})`}`
       : 'not a terminal (fine for vinax -p)',
   );
-  add(
-    'Gateway',
-    'ok',
-    'not used — requests go straight to the providers (the optional gateway arrives later)',
-  );
+  if (gatewayUrl === undefined) {
+    add('Gateway', 'ok', 'not used — requests go straight to the providers with your own keys');
+  } else if (!viaGateway) {
+    add(
+      'Gateway',
+      'warn',
+      `${gatewayUrl} is configured but no token is stored (run: vinax login --gateway ${gatewayUrl})`,
+    );
+  } else {
+    const probe = await new GatewayClient(gatewayUrl, { timeoutMs: 5000 }).probe(5000);
+    add(
+      'Gateway',
+      probe.ok ? 'ok' : 'warn',
+      probe.ok
+        ? `${gatewayUrl} is up${probe.version === undefined ? '' : ` (v${probe.version})`}`
+        : `${gatewayUrl} did not answer (${probe.reason}); it may be asleep, and the first request wakes it`,
+    );
+  }
   return checks;
 }

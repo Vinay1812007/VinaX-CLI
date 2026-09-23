@@ -24,6 +24,8 @@ export type RouterEvent =
   | { type: 'wait'; ref: ModelRef; ms: number; reason: string }
   | { type: 'retry'; ref: ModelRef; attempt: number; delayMs: number; reason: string }
   | { type: 'fallback'; from: ModelRef; to: ModelRef; reason: string }
+  /** Progress from the provider that is not output (an empty text clears it). */
+  | { type: 'status'; ref: ModelRef; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
   | { type: 'done'; ref: ModelRef; usage: Usage | undefined };
@@ -204,6 +206,10 @@ export class Router {
           for await (const d of deltas) {
             if (d.type === 'usage') {
               usage = d.usage;
+              continue;
+            }
+            if (d.type === 'status') {
+              yield { type: 'status', ref, text: d.text };
               continue;
             }
             emitted = true;

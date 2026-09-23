@@ -4,18 +4,41 @@
   "description": "VinaX: an agentic coding assistant for your terminal, powered by free-tier LLMs.",
   "type": "module",
   "license": "MIT",
+  "author": "Vinay1812007",
+  "homepage": "https://github.com/Vinay1812007/VinaX-CLI#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vinay1812007/VinaX-CLI.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/Vinay1812007/VinaX-CLI/issues"
+  },
+  "keywords": [
+    "cli",
+    "ai",
+    "agent",
+    "coding-assistant",
+    "terminal",
+    "groq",
+    "openrouter",
+    "llm"
+  ],
   "bin": {
     "vinax": "dist/vinax.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "node -e \"for (const f of ['README.md', 'LICENSE']) require('fs').copyFileSync('../../' + f, f)\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -44,5 +67,9 @@
     "@vinax/testkit": "workspace:*",
     "ink-testing-library": "^4.0.0",
     "tsup": "^8.5.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

@@ -93,6 +93,14 @@ export const settingsSchema = z.strictObject({
     )
     .optional(),
   disableAllHooks: z.boolean().optional(),
+  gateway: z
+    .strictObject({
+      /** An optional VinaX gateway (set by `vinax login --gateway`). */
+      url: z.url().optional(),
+      /** Longest wait for the gateway to wake up and answer (Render free services sleep). */
+      timeoutMs: z.number().int().positive().optional(),
+    })
+    .optional(),
   context: z
     .strictObject({
       /** Conversation size (tokens) VinaX works within; auto-compaction starts at 85% of it. */
@@ -134,6 +142,7 @@ export interface ResolvedSettings {
   theme: ThemeName;
   editorMode: EditorMode;
   context: { maxTokens: number; autoCompact: boolean };
+  gateway: { url: string | undefined; timeoutMs: number };
   hooks: Partial<Record<HookEvent, HookMatcher[]>>;
   disableAllHooks: boolean;
 }
@@ -165,6 +174,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   theme: 'dark',
   editorMode: 'normal',
   context: { maxTokens: 24_000, autoCompact: true },
+  gateway: { url: undefined, timeoutMs: 120_000 },
   hooks: {},
   disableAllHooks: false,
 };
@@ -184,6 +194,10 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     theme: s.theme ?? d.theme,
     editorMode: s.editorMode ?? d.editorMode,
     context: { ...d.context, ...s.context },
+    gateway: {
+      url: s.gateway?.url ?? d.gateway.url,
+      timeoutMs: s.gateway?.timeoutMs ?? d.gateway.timeoutMs,
+    },
     hooks: s.hooks ?? {},
     disableAllHooks: s.disableAllHooks ?? false,
   };

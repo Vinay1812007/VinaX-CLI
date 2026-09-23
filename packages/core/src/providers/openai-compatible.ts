@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
 import { ProviderError, providerLabel, toProviderError } from './errors.js';
+import { GATEWAY_WAKING, GatewayUnavailableError, type GatewayClient } from './gateway.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import type {
   ChatMessage,
@@ -25,6 +26,8 @@ export interface OpenAICompatibleOptions {
   /** Authenticated GET used to validate a key (`/models` is public on some providers). */
   keyCheckPath: string;
   now?: () => number;
+  /** Set when requests go through the VinaX gateway, which names models `<provider>:<id>`. */
+  gateway?: GatewayClient;
 }
 
 const catalogEntrySchema = z.looseObject({
@@ -91,6 +94,22 @@ export class OpenAICompatibleProvider implements Provider {
     });
   }
 
+  /** The model id as the endpoint knows it. */
+  private wireModel(model: string): string {
+    return this.opts.gateway ? `${this.name}:${model}` : model;
+  }
+
+  /** Waits for a sleeping gateway; a gateway that never wakes becomes an `unavailable` error. */
+  private async wakeGateway(signal?: AbortSignal): Promise<void> {
+    try {
+      await this.opts.gateway?.wake(signal);
+    } catch (err) {
+      if (err instanceof GatewayUnavailableError)
+        throw new ProviderError('unavailable', err.message, this.name);
+      throw err;
+    }
+  }
+
   private async getJson(
     pathname: string,
     signal?: AbortSignal,
@@ -100,6 +119,7 @@ export class OpenAICompatibleProvider implements Provider {
       signal: signal ?? AbortSignal.timeout(this.opts.timeoutMs),
     });
     const text = await res.text();
+    if (res.ok) this.opts.gateway?.markOk();
     let body: unknown = text;
     try {
       body = JSON.parse(text);
@@ -114,7 +134,12 @@ export class OpenAICompatibleProvider implements Provider {
     if (status !== 200)
       throw new Error(`${providerLabel(this.name)} /models returned HTTP ${status}`);
     const parsed = catalogSchema.parse(body);
-    return parsed.data.map(toModelInfo).filter((m): m is ModelInfo => m !== undefined);
+    const models = parsed.data.map(toModelInfo).filter((m): m is ModelInfo => m !== undefined);
+    if (!this.opts.gateway) return models;
+    const prefix = `${this.name}:`;
+    return models
+      .filter((m) => m.id.startsWith(prefix))
+      .map((m) => ({ ...m, id: m.id.slice(prefix.length) }));
   }
 
   async accountInfo(signal?: AbortSignal): Promise<Record<string, string> | undefined> {
@@ -137,6 +162,7 @@ export class OpenAICompatibleProvider implements Provider {
 
   async validateKey(signal?: AbortSignal): Promise<KeyCheck> {
     try {
+      await this.wakeGateway(signal);
       const { status } = await this.getJson(this.opts.keyCheckPath, signal);
       if (status === 200) return { ok: true };
       if (status === 401 || status === 403)
@@ -152,8 +178,8 @@ export class OpenAICompatibleProvider implements Provider {
   }
 
   async *stream(req: ChatRequest): AsyncGenerator<StreamDelta> {
-    const { logger, ledger } = this.opts;
-    const started = this.now();
+    const { logger, ledger, gateway } = this.opts;
+    let started = this.now();
     logger.debug('request', {
       provider: this.name,
       model: req.model,
@@ -163,10 +189,16 @@ export class OpenAICompatibleProvider implements Provider {
     });
     let chunks = 0;
     try {
+      if (gateway && !gateway.isAwake() && !(await gateway.probe(undefined, req.signal)).ok) {
+        yield { type: 'status', text: GATEWAY_WAKING };
+        await this.wakeGateway(req.signal);
+        yield { type: 'status', text: '' };
+        started = this.now();
+      }
       const { data, response } = await this.client.chat.completions
         .create(
           {
-            model: req.model,
+            model: this.wireModel(req.model),
             messages: req.messages.map(toWire),
             ...(req.tools && req.tools.length > 0
               ? {
@@ -189,6 +221,7 @@ export class OpenAICompatibleProvider implements Provider {
         )
         .withResponse();
       ledger.observe(this.name, req.model, response.headers);
+      gateway?.markOk();
       logger.debug('response', {
         provider: this.name,
         model: req.model,

@@ -5,6 +5,7 @@ import {
   providerLabel,
   SECRET_ENV_VARS,
   THEME_NAMES,
+  type GatewayCheck,
   type KeyCheck,
   type ModelInfo,
   type ProviderName,
@@ -23,6 +24,9 @@ export interface OnboardingDeps {
   saveKey: (p: ProviderName, key: string) => Promise<void>;
   listModels: (p: ProviderName, key: string) => Promise<ModelInfo[]>;
   saveSettings: (patch: { theme: ThemeName; model?: string }) => Promise<void>;
+  /** Checks a gateway and token, waking the gateway first (`onWaking` fires if it was asleep). */
+  checkGateway: (url: string, token: string, onWaking: () => void) => Promise<GatewayCheck>;
+  saveGateway: (url: string, token: string) => Promise<void>;
   defaultModel: string;
 }
 
@@ -34,7 +38,7 @@ interface Props {
   onDone: () => void;
 }
 
-type Step = 'theme' | 'provider' | 'key' | 'model' | 'done';
+type Step = 'theme' | 'provider' | 'key' | 'gateway' | 'model' | 'done';
 const STEPS: readonly Step[] = ['theme', 'provider', 'key', 'model'];
 
 type KeyState =
@@ -42,6 +46,12 @@ type KeyState =
   | { phase: 'entry'; error?: string }
   | { phase: 'validating' }
   | { phase: 'ok'; message: string; warning?: boolean };
+
+type GatewayState =
+  | { phase: 'url'; error?: string }
+  | { phase: 'token'; url: string; error?: string }
+  | { phase: 'checking'; url: string; waking: boolean }
+  | { phase: 'ok'; url: string; message: string; warning?: boolean };
 
 const PREVIEW = [
   '## Preview',
@@ -61,7 +71,7 @@ export function chatModels(models: readonly ModelInfo[], provider: ProviderName)
 
 function Frame({ step, children }: { step: Step; children: ReactNode }) {
   const theme = useTheme();
-  const n = STEPS.indexOf(step) + 1;
+  const n = STEPS.indexOf(step === 'gateway' ? 'key' : step) + 1;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1}>
       <Text>
@@ -95,6 +105,8 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
   >('loading');
   const [model, setModel] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+  const [gateway, setGateway] = useState<GatewayState>({ phase: 'url' });
+  const gatewayUrl = gateway.phase === 'ok' ? gateway.url : undefined;
 
   const current = providers[keyIndex];
 
@@ -195,6 +207,37 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
     );
   };
 
+  const submitGateway = async (url: string, token: string): Promise<void> => {
+    setGateway({ phase: 'checking', url, waking: false });
+    const check = await deps.checkGateway(url, token, () => {
+      setGateway({ phase: 'checking', url, waking: true });
+    });
+    if (!check.ok && check.rejected) {
+      const toUrl = /URL|https/.test(check.reason);
+      setGateway(
+        toUrl
+          ? { phase: 'url', error: check.reason }
+          : { phase: 'token', url, error: check.reason },
+      );
+      return;
+    }
+    await deps.saveGateway(url, token);
+    setGateway(
+      check.ok
+        ? {
+            phase: 'ok',
+            url,
+            message: `Connected${check.version === undefined ? '' : ` to gateway v${check.version}`} — ${String(check.models)} models available.`,
+          }
+        : {
+            phase: 'ok',
+            url,
+            warning: true,
+            message: `Saved, but it could not be checked: ${check.reason}`,
+          },
+    );
+  };
+
   const finish = async (): Promise<void> => {
     setSaving(true);
     await deps.saveSettings({ theme: themeName, ...(model === undefined ? {} : { model }) });
@@ -206,6 +249,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
     (_input, key) => {
       if (!key.return) return;
       if (step === 'key' && keyState.phase === 'ok') nextKey();
+      else if (step === 'gateway' && gateway.phase === 'ok') setStep('done');
       else if (step === 'done' && !saving) void finish();
       else if (step === 'model' && noModels) setStep('done');
     },
@@ -213,6 +257,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
       isActive:
         step === 'done' ||
         (step === 'key' && keyState.phase === 'ok') ||
+        (step === 'gateway' && gateway.phase === 'ok') ||
         (step === 'model' && noModels),
     },
   );
@@ -254,7 +299,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
           Both are free. You can add the other one later with `vinax config set-key`.
         </Text>
         <Box marginTop={1}>
-          <Select<ProviderName[]>
+          <Select<ProviderName[] | 'gateway'>
             items={[
               { label: 'Groq', value: ['groq'], hint: 'fastest · ~8K tokens/min per model' },
               {
@@ -267,9 +312,19 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
                 value: ['groq', 'openrouter'],
                 hint: 'recommended: Groq first, OpenRouter as fallback',
               },
+              {
+                label: 'A VinaX gateway',
+                value: 'gateway',
+                hint: 'no keys needed: someone runs a shared gateway for you',
+              },
             ]}
             initialIndex={2}
             onSelect={(list) => {
+              if (list === 'gateway') {
+                setGateway({ phase: 'url' });
+                setStep('gateway');
+                return;
+              }
               setProviders(list);
               setKeyIndex(0);
               setKeyState({ phase: 'entry' });
@@ -313,6 +368,67 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
             <>
               <Text color={keyState.warning === true ? theme.warning : theme.success}>
                 {keyState.warning === true ? '⚠' : '✔'} {keyState.message}
+              </Text>
+              <Text color={theme.muted}>Press Enter to continue</Text>
+            </>
+          ) : null}
+        </Box>
+      </Frame>
+    );
+  }
+
+  if (step === 'gateway') {
+    return (
+      <Frame step={step}>
+        <Text bold>Connect to a VinaX gateway</Text>
+        <Text color={theme.muted}>
+          The person who runs it gives you its URL and a token. Requests then use their shared keys.
+        </Text>
+        <Box marginTop={1} flexDirection="column">
+          {gateway.phase === 'url' ? (
+            <>
+              {gateway.error === undefined ? null : (
+                <Text color={theme.error}>✖ {gateway.error}</Text>
+              )}
+              <LineInput
+                placeholder="Gateway URL, e.g. https://vinax-gateway.onrender.com (Esc to go back)"
+                onSubmit={(v) => {
+                  const url = v.trim().replace(/\/+$/, '');
+                  if (url !== '') setGateway({ phase: 'token', url });
+                }}
+                onCancel={() => {
+                  setStep('provider');
+                }}
+              />
+            </>
+          ) : null}
+          {gateway.phase === 'token' ? (
+            <>
+              <Text color={theme.muted}>{gateway.url}</Text>
+              {gateway.error === undefined ? null : (
+                <Text color={theme.error}>✖ {gateway.error}</Text>
+              )}
+              <LineInput
+                mask
+                placeholder="Paste your gateway token and press Enter (Esc to change the URL)"
+                onSubmit={(v) => void submitGateway(gateway.url, v.trim())}
+                onCancel={() => {
+                  setGateway({ phase: 'url' });
+                }}
+              />
+            </>
+          ) : null}
+          {gateway.phase === 'checking' ? (
+            <Text color={theme.muted}>
+              {gateway.waking
+                ? 'Waking VinaX gateway… free servers sleep when idle; this can take a minute'
+                : `Checking ${gateway.url}…`}
+            </Text>
+          ) : null}
+          {gateway.phase === 'ok' ? (
+            <>
+              <Text color={gateway.warning === true ? theme.warning : theme.success}>
+                {gateway.warning === true ? '⚠' : '✔'} {gateway.message}
               </Text>
               <Text color={theme.muted}>Press Enter to continue</Text>
             </>
@@ -377,15 +493,22 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
         <Text color={theme.muted}>theme </Text>
         {THEME_LABELS[themeName]}
       </Text>
-      <Text>
-        <Text color={theme.muted}>keys </Text>
-        {configured.length === 0 ? 'none yet' : configured.map(providerLabel).join(', ')}
-      </Text>
+      {gatewayUrl === undefined ? (
+        <Text>
+          <Text color={theme.muted}>keys </Text>
+          {configured.length === 0 ? 'none yet' : configured.map(providerLabel).join(', ')}
+        </Text>
+      ) : (
+        <Text>
+          <Text color={theme.muted}>gateway </Text>
+          {gatewayUrl}
+        </Text>
+      )}
       <Text>
         <Text color={theme.muted}>model </Text>
         {model ?? deps.defaultModel}
       </Text>
-      {configured.length === 0 ? (
+      {configured.length === 0 && gatewayUrl === undefined ? (
         <Text color={theme.warning}>
           ⚠ Without a key VinaX cannot answer. Add one later: vinax config set-key groq
         </Text>

@@ -1,0 +1,33 @@
+# Render blueprint for the optional VinaX gateway (apps/gateway).
+# New → Blueprint in the Render dashboard, pick this repository, then fill in the secret values.
+# Deploys are triggered by .github/workflows/deploy-gateway.yml after CI passes on main.
+services:
+  - type: web
+    name: vinax-gateway
+    runtime: node
+    plan: free
+    buildCommand: npx --yes pnpm@12.5.1 install --frozen-lockfile --filter "@vinax/gateway..." && npx --yes pnpm@12.5.1 --filter @vinax/gateway build
+    startCommand: node apps/gateway/dist/server.js
+    healthCheckPath: /health
+    autoDeployTrigger: 'off'
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      # Provider keys shared by everyone with a token (at least one is required).
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Comma-separated name:sha256 entries; create them with `pnpm gateway:token <name>`.
+      - key: VINAX_TOKEN_HASHES
+        sync: false
+      # Per-token limits (kept in memory; they reset when the service restarts or wakes up).
+      - key: RATE_LIMIT_RPM
+        value: '20'
+      - key: RATE_LIMIT_RPD
+        value: '500'
+      - key: MAX_BODY_BYTES
+        value: '1000000'
+      # Tried in order when a client asks for "model": "auto".
+      - key: DEFAULT_MODELS
+        value: groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free
