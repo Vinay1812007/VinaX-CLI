@@ -130,7 +130,9 @@ describe('ChatScreen', () => {
       },
     });
     expect(frame()).toContain('v9.9.9');
-    expect(frame()).toContain('main-model via Groq');
+    expect(frame()).toContain('main-model · Groq');
+    expect(frame()).toContain('new session');
+    expect(frame()).toContain('╲  ╱ ╲╱');
     expect(frame()).toContain('a tip');
     await type('hi there', KEYS.enter);
     await waitFor(
@@ -655,5 +657,103 @@ describe('ChatScreen extensibility (M5)', () => {
     await waitFor(() => frame().includes('Started demo with 3 tools'), 'started');
     await type('/mcp', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes('mcp__demo__echo'), 'tool list');
+  });
+  it('shows /about and /health panels', async () => {
+    const { frame, type } = await mount();
+    await type('/about', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('About VinaX'), 'about panel');
+    for (const row of ['Version', 'Runtime', 'Installation', 'Provider', 'Model', 'Gateway'])
+      expect(frame()).toContain(row);
+    expect(frame()).toMatch(/Version\s+│?\s*v\d+\.\d+\.\d+/);
+    expect(frame()).toContain('Groq (groq.com)');
+    expect(frame()).toContain('https://github.com/Vinay1812007/VinaX-CLI');
+    await type('/health', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Full details: /doctor'), 'health panel');
+    expect(frame()).toMatch(/\d+ ok · \d+ warnings? · 0 failures/);
+    expect(frame()).toContain('Providers & models');
+    expect(frame()).toContain('○ NVIDIA key');
+    expect(frame()).toContain('MCP — no servers configured');
+  });
+
+  it('switches to NVIDIA with the searchable /model picker and shows it in /models', async () => {
+    const { frame, type, harness, writer } = await mount({
+      nvidiaKey: true,
+      nvidia: {
+        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'nvidia/embed-qa' }],
+        script: { 'openai/gpt-oss-20b': [{ text: 'hi from nvidia' }] },
+      },
+    });
+    await type('/model', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('type to filter'), 'model picker');
+    expect(frame()).toContain('NVIDIA · nvidia.com');
+    expect(frame()).toContain('NVD_CHAT_OSS_20_B · 131K ctx');
+    expect(frame()).not.toContain('nvidia/embed-qa');
+    await type('nvd_');
+    await waitFor(() => frame().includes('⌕ nvd_ · 1 of'), 'filtered');
+    await type(KEYS.enter);
+    await waitFor(
+      () =>
+        frame().includes('Using nvidia:openai/gpt-oss-20b (NVD_CHAT_OSS_20_B) for this session'),
+      'switched',
+    );
+    await type('hello', KEYS.enter);
+    await waitFor(() => frame().includes('hi from nvidia'), 'nvidia answer');
+    expect(
+      harness.nvidia.requests.some(
+        (r) => (r.body as { model?: string } | undefined)?.model === 'openai/gpt-oss-20b',
+      ),
+    ).toBe(true);
+    const { SessionStore, projectDataDir } = await import('@vinax/core');
+    const loaded = new SessionStore(projectDataDir(harness.cwd, harness.env), harness.cwd).load(
+      writer.id,
+    );
+    expect(loaded.model).toBe('nvidia:openai/gpt-oss-20b');
+
+    await type('/models', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Fallback order'), 'models panel');
+    expect(frame()).toContain('Current nvidia:openai/gpt-oss-20b · alias NVD_CHAT_OSS_20_B');
+    expect(frame()).toContain('NVIDIA nvidia.com — key configured · 2 models in catalog');
+    expect(frame()).toContain('NVD_CHAT_OSS_20_B → nvidia:openai/gpt-oss-20b');
+    await waitFor(() => frame().includes('Switch model?'), 'switch picker');
+    await type(KEYS.esc);
+  });
+
+  it('warns when switching to a model without a key', async () => {
+    const { frame, type } = await mount();
+    await type('/model NVD_CHAT_OSS_20_B', KEYS.enter);
+    const flat = () => frame().replace(/\s+/g, ' ');
+    await waitFor(() => flat().includes('there is no NVIDIA key yet'), 'no key warning');
+    expect(flat()).toContain('NVIDIA_API_KEY');
+  });
+
+  it('ends a turn that used tools with a Done summary and shows agent progress', async () => {
+    const { frame, type } = await mount({
+      files: { 'notes.txt': 'one\ntwo\n' },
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Read', { file_path: 'notes.txt' })] },
+            { text: 'Two lines.' },
+          ],
+        },
+      },
+    });
+    await type('read notes', KEYS.enter);
+    await waitFor(() => frame().includes('▸ Done'), 'summary');
+    expect(frame()).toMatch(/└ No files changed · 1 tool call · \d+\.\ds/);
+  });
+
+  it('explains a failed turn with an error card', async () => {
+    const { frame, type } = await mount({
+      groq: { script: { 'main-model': [{ status: 401, error: { message: 'Invalid API Key' } }] } },
+      openrouter: {
+        script: { 'free-model:free': [{ status: 404, error: { message: 'No endpoints found' } }] },
+      },
+    });
+    await type('hi', KEYS.enter);
+    await waitFor(() => frame().includes('Every model in the fallback chain failed'), 'card');
+    expect(frame()).toContain('Groq · main-model — authentication failed');
+    expect(frame()).toContain('OpenRouter · free-model:free — model not available');
+    expect(frame()).toContain('› check the Groq key');
   });
 });

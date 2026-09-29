@@ -155,7 +155,7 @@ describe('gateway login and runtime', () => {
         model: 'groq:main',
         smallModel: 'groq:main',
         fallbackChain: [],
-        providers: { openrouter: { enabled: false } },
+        providers: { openrouter: { enabled: false }, nvidia: { enabled: false } },
         router: { maxRetries: 0 },
         gateway: { url, timeoutMs: 20_000 },
       }),
@@ -235,6 +235,31 @@ describe('gateway login and runtime', () => {
     ]);
     expect(events.some((e) => e.type === 'text' && e.text === 'awake now')).toBe(true);
   }, 20_000);
+
+  it('routes NVIDIA through the gateway too, and skips it quietly when the gateway lacks it', async () => {
+    const { url } = await gatewayMock({
+      apiKeys: ['vxg_tok'],
+      health: () => true,
+      models: [{ id: 'groq:main', context_window: 131072 }],
+    });
+    await fs.writeFile(
+      path.join(home, 'settings.json'),
+      JSON.stringify({
+        model: 'groq:main',
+        smallModel: 'groq:main',
+        fallbackChain: ['nvidia:openai/gpt-oss-20b'],
+        providers: { openrouter: { enabled: false } },
+        gateway: { url },
+      }),
+    );
+    const runtime = await createRuntime({
+      cwd: home,
+      env: { ...env(), VINAX_GATEWAY_TOKEN: 'vxg_tok' },
+    });
+    expect([...runtime.viaGateway]).toEqual(['groq', 'nvidia']);
+    expect([...runtime.skipped]).toEqual(['nvidia:openai/gpt-oss-20b']);
+    expect(runtime.warnings).toEqual([]);
+  });
 
   it('doctor reports the gateway', async () => {
     const { url } = await gatewayMock({ apiKeys: ['vxg_tok'], health: () => true });

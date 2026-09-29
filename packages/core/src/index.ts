@@ -57,7 +57,7 @@ export {
   splitArgs,
   type CustomCommand,
 } from './commands/custom.js';
-export { runDoctor, type DoctorCheck } from './doctor.js';
+export { runDoctor, type DoctorCheck, type DoctorGroup } from './doctor.js';
 export { conversationMarkdown } from './export.js';
 export { attachMentions, FileIndex, fuzzyScore } from './files/index.js';
 export {
@@ -78,7 +78,13 @@ export {
 export { generateTitle } from './session/title.js';
 export { UsageTracker, type DayUsage, type UsageCounts } from './state/usage.js';
 export { createAgentSetup, type AgentSetup, type AgentSetupOptions } from './agent/setup.js';
-export { buildSystemPrompt, readGitInfo, type GitInfo } from './agent/system-prompt.js';
+export {
+  buildSystemPrompt,
+  gitSection,
+  parseGitStatus,
+  readGitInfo,
+  type GitInfo,
+} from './agent/system-prompt.js';
 export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
 export { effectiveContextWindow } from './context/budget.js';
 export { detectDanger } from './permissions/danger.js';
@@ -112,6 +118,7 @@ export {
   DEFAULT_SETTINGS,
   EDITOR_MODES,
   HOOK_EVENTS,
+  MODEL_REF_HINT,
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
@@ -186,6 +193,23 @@ export {
   type Usage,
 } from './providers/types.js';
 export { AbortError, backoffDelay, sleep } from './router/backoff.js';
+export {
+  CATEGORY_LABELS,
+  explainError,
+  formatFailureReport,
+  type FailureCategory,
+  type FailureLine,
+  type FailureReport,
+} from './router/explain.js';
+export {
+  KNOWN_MODELS,
+  knownModel,
+  modelAlias,
+  normalizeModelRef,
+  providerHost,
+  withKnownMetadata,
+  type KnownModel,
+} from './providers/known-models.js';
 export {
   AllModelsFailedError,
   Router,

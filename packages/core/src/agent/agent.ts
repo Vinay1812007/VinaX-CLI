@@ -9,6 +9,7 @@ import {
 } from '../providers/types.js';
 import { estimateTokens } from '../context/tokens.js';
 import { AbortError } from '../router/backoff.js';
+import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
@@ -86,6 +87,8 @@ export interface AgentOutcome {
   /** The final assistant text of the turn. */
   text: string;
   error?: string;
+  /** For `failed` turns: the failure explained, with actions to try. */
+  report?: FailureReport;
   steps: number;
   usage: Usage;
   models: string[];
@@ -327,13 +330,18 @@ export class Agent {
     let stopRetries = 0;
     let steps = 0;
     let lastText = '';
-    const outcome = (status: AgentOutcome['status'], error?: string): AgentOutcome => ({
+    const outcome = (
+      status: AgentOutcome['status'],
+      error?: string,
+      report?: FailureReport,
+    ): AgentOutcome => ({
       status,
       text: lastText,
       steps,
       usage,
       models: [...models],
       ...(error === undefined ? {} : { error }),
+      ...(report === undefined ? {} : { report }),
     });
 
     const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
@@ -388,7 +396,7 @@ export class Agent {
             continue;
           }
         }
-        if (step.status !== 'continue') return outcome(step.status, step.error);
+        if (step.status !== 'continue') return outcome(step.status, step.error, step.report);
       }
     } finally {
       removeRules();
@@ -401,7 +409,12 @@ export class Agent {
     opts: RunOptions,
     usage: Usage,
     models: Set<string>,
-  ): Promise<{ status: 'continue' | AgentOutcome['status']; text: string; error?: string }> {
+  ): Promise<{
+    status: 'continue' | AgentOutcome['status'];
+    text: string;
+    error?: string;
+    report?: FailureReport;
+  }> {
     const { signal, host, onEvent } = opts;
     const mode = host.mode();
     const active = this.deps.tools.filter((t) =>
@@ -496,7 +509,12 @@ export class Agent {
       // an unanswered prompt is dropped entirely so the user can simply ask again
       else if (stepNo === 1) this.truncate(this.messages.length - 1, this.marks.length - 1);
       else this.push({ role: 'assistant', content: '[the model could not be reached]' });
-      return { status: 'failed', text, error: err instanceof Error ? err.message : String(err) };
+      return {
+        status: 'failed',
+        text,
+        error: err instanceof Error ? err.message : String(err),
+        report: explainError(err),
+      };
     }
 
     if (current === 'text') {

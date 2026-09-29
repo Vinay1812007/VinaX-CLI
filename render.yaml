@@ -18,6 +18,8 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
       # Comma-separated name:sha256 entries; create them with `pnpm gateway:token <name>`.
       - key: VINAX_TOKEN_HASHES
         sync: false

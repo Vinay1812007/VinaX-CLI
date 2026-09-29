@@ -61,6 +61,12 @@ const PREVIEW = [
   '```',
 ].join('\n');
 
+const KEY_PAGES: Record<ProviderName, string> = {
+  groq: 'https://console.groq.com/keys',
+  openrouter: 'https://openrouter.ai/keys',
+  nvidia: 'https://build.nvidia.com',
+};
+
 /** Chat-capable models: enough context, tool support not ruled out, and free on OpenRouter. */
 export function chatModels(models: readonly ModelInfo[], provider: ProviderName): ModelInfo[] {
   return models
@@ -296,7 +302,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
       <Frame step={step}>
         <Text bold>Which provider do you want to use?</Text>
         <Text color={theme.muted}>
-          Both are free. You can add the other one later with `vinax config set-key`.
+          Groq and OpenRouter have free tiers. You can add others later with /login.
         </Text>
         <Box marginTop={1}>
           <Select<ProviderName[] | 'gateway'>
@@ -308,7 +314,12 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
                 hint: 'many :free models · 50 requests/day',
               },
               {
-                label: 'Both',
+                label: 'NVIDIA',
+                value: ['nvidia'],
+                hint: 'nvidia.com · openai/gpt-oss-20b (NVD_CHAT_OSS_20_B)',
+              },
+              {
+                label: 'Groq + OpenRouter',
                 value: ['groq', 'openrouter'],
                 hint: 'recommended: Groq first, OpenRouter as fallback',
               },
@@ -318,7 +329,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
                 hint: 'no keys needed: someone runs a shared gateway for you',
               },
             ]}
-            initialIndex={2}
+            initialIndex={3}
             onSelect={(list) => {
               if (list === 'gateway') {
                 setGateway({ phase: 'url' });
@@ -337,7 +348,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
   }
 
   if (step === 'key' && current !== undefined) {
-    const url = current === 'groq' ? 'https://console.groq.com/keys' : 'https://openrouter.ai/keys';
+    const url = KEY_PAGES[current];
     return (
       <Frame step={step}>
         <Text bold>{providerLabel(current)} API key</Text>

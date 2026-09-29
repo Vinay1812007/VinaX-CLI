@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { normalizeModelRef } from '../providers/known-models.js';
 import { matchBashSpecifier, parseRule } from '../permissions/rules.js';
 import { inWorkspace, resolvePath } from '../tools/paths.js';
 import { truncateMiddle } from '../tools/truncate.js';
@@ -129,9 +130,10 @@ export async function loadCustomCommands(
           ? data.description
           : (body.trim().split('\n')[0] ?? '').replace(/^#+\s*/, '').slice(0, 80);
       const name = parts.join(':');
-      const model = typeof data.model === 'string' ? data.model : undefined;
-      if (model !== undefined && !/^(groq|openrouter):\S+$/.test(model)) {
-        errors.push(`${file}: model must look like "groq:openai/gpt-oss-120b"`);
+      const rawModel = typeof data.model === 'string' ? data.model : undefined;
+      const model = rawModel === undefined ? undefined : normalizeModelRef(rawModel);
+      if (rawModel !== undefined && model === undefined) {
+        errors.push(`${file}: model must look like "groq:openai/gpt-oss-120b" or be an alias`);
       }
       const allowedTools = asList(data['allowed-tools']);
       for (const rule of allowedTools)
@@ -142,7 +144,7 @@ export async function loadCustomCommands(
         description: description === '' ? `Custom command (${scope})` : description,
         argumentHint: typeof data['argument-hint'] === 'string' ? data['argument-hint'] : undefined,
         allowedTools,
-        model: model !== undefined && /^(groq|openrouter):\S+$/.test(model) ? model : undefined,
+        model,
         body,
         file,
         scope,

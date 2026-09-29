@@ -1,7 +1,12 @@
 # Troubleshooting
 
-Start with `vinax doctor` (or `/doctor` inside VinaX). It checks your install, settings, keys,
-search, shell, git, key storage, terminal and gateway, and exits with code 1 if something is broken.
+Start with `vinax health` (or `/health` inside VinaX) for a one-line-per-check summary, or
+`vinax doctor` (`/doctor`) for full details. They check your install, settings, keys, models,
+search, shell, git, key storage, terminal, gateway and MCP servers, and exit with code 1 if
+something is broken. `○` marks something optional you haven't set up, such as a provider you don't use.
+
+When a request fails, VinaX shows what failed and why (authentication, missing key, rate limit,
+temporary provider error, network, model not available) with suggested next steps.
 `vinax --verbose` writes a debug log of every request to `~/.vinax/logs/`, with keys redacted.
 
 ### "Rate limited" and fallback notices
@@ -16,6 +21,13 @@ OpenRouter's `:free` models allow 50 requests a day per account, or 1,000 after 
 credit purchase. When OpenRouter reports the quota as used up, VinaX skips those models until it
 resets instead of waiting.
 
+### NVIDIA requests fail
+
+Check the key with `vinax health`: an `NVIDIA key` line marked `✖` means NVIDIA rejected it (get a
+new one at [build.nvidia.com](https://build.nvidia.com), then `vinax login nvidia`). If you point
+`providers.nvidia.baseUrl` at a self-hosted NIM, make sure it serves the model you ask for; a model
+missing from its catalog is skipped with a warning at startup.
+
 ### "Waking VinaX gateway…"
 
 A gateway on Render's free plan sleeps after 15 idle minutes, and the first request after that
@@ -24,7 +36,7 @@ takes up to a minute. If it never wakes, check the service's logs in the Render 
 
 ### Keys are not found
 
-Environment variables (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `VINAX_GATEWAY_TOKEN`) take
+Environment variables (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `VINAX_GATEWAY_TOKEN`) take
 precedence over stored keys. `vinax config keys` shows which key is used and where it comes from.
 Standalone binaries and systems without a keychain store keys in `~/.vinax/credentials.json`.
 

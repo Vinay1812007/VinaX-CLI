@@ -1,7 +1,12 @@
 import type { ResolvedSettings } from '../config/schema.js';
 import { estimateTokens } from '../context/tokens.js';
 import { noopLogger, type Logger } from '../log/logger.js';
-import { ProviderError, providerLabel, toProviderError } from '../providers/errors.js';
+import {
+  ProviderError,
+  providerLabel,
+  toProviderError,
+  type ProviderErrorKind,
+} from '../providers/errors.js';
 import type { RateLimitLedger } from '../providers/ratelimit.js';
 import type { UsageTracker } from '../state/usage.js';
 import {
@@ -39,6 +44,8 @@ export interface PreparedRequest {
 export interface LinkFailure {
   ref: ModelRef;
   reason: string;
+  /** Why the link failed: a provider error kind, no key, or the local rate-limit ledger. */
+  kind: ProviderErrorKind | 'no_key' | 'local_limit';
 }
 
 export class AllModelsFailedError extends Error {
@@ -157,7 +164,11 @@ export class Router {
     for (const ref of req.noFallback === true ? chain.slice(0, 1) : chain) {
       const provider = providers.get(ref.provider);
       if (!provider) {
-        failures.push({ ref, reason: `no ${providerLabel(ref.provider)} API key configured` });
+        failures.push({
+          ref,
+          reason: `no ${providerLabel(ref.provider)} API key configured`,
+          kind: 'no_key',
+        });
         continue;
       }
       const first = prepare(ref);
@@ -165,9 +176,10 @@ export class Router {
         estimateTokens(first.messages, first.tools) + (req.maxTokens ?? DEFAULT_OUTPUT_RESERVE);
       const decision = ledger.check(ref.provider, ref.model, est);
       if (decision.waitMs > settings.router.maxWaitMs) {
-        const failure = {
+        const failure: LinkFailure = {
           ref,
           reason: `${providerLabel(ref.provider)} ${decision.reason ?? 'rate limited'}`,
+          kind: 'local_limit',
         };
         failures.push(failure);
         pendingFallback = failure;
@@ -250,7 +262,7 @@ export class Router {
             await this.sleep(delay, req.signal);
             continue;
           }
-          const failure = { ref, reason: err.message };
+          const failure: LinkFailure = { ref, reason: err.message, kind: err.kind };
           failures.push(failure);
           pendingFallback = failure;
           break;

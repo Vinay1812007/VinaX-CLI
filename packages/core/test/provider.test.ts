@@ -32,7 +32,7 @@ function makeProvider(
     timeoutMs: 5000,
     ledger,
     logger: noopLogger,
-    keyCheckPath: '/models',
+    keyCheck: { path: '/models' },
   });
 }
 

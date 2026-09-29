@@ -7,11 +7,14 @@ import {
   createProvider,
   formatModelRef,
   HOOK_EVENTS,
+  KNOWN_MODELS,
+  modelAlias,
   noopLogger,
   openSecretStore,
   parseModelRef,
   PROJECT_URL,
   PROVIDER_NAMES,
+  providerHost,
   providerLabel,
   RateLimitLedger,
   runDoctor,
@@ -25,8 +28,11 @@ import {
   saveGatewayLogin,
   type ProviderName,
 } from '@vinax/core';
+import { CHECK_ICON, healthMarkdown } from '../../health.js';
+import { detectInstall } from '../../update.js';
 import { VERSION } from '../../version.js';
-import { chatModels } from '../components/Onboarding.js';
+import { modelSelectItems, providerSummaries } from '../model-items.js';
+import { sessionItems } from '../sessions.js';
 import { formatTokens, shortenPath } from '../format.js';
 import { THEME_LABELS } from '../theme.js';
 import { sessionStore } from '../../session.js';
@@ -37,8 +43,6 @@ const INIT_PROMPT = `Study this codebase and write a VINAX.md file in the projec
 2. A short architecture overview: the big picture that takes reading several files to understand.
 3. Conventions that are not obvious from the code (naming, error handling, where things go).
 Keep it under 60 lines, factual and specific to this project — no generic advice. If VINAX.md already exists, improve it instead of starting over. Fold in anything useful from README.md, AGENTS.md or other assistant rule files.`;
-
-const ICON = { ok: '✔', warn: '⚠', fail: '✖' } as const;
 
 function plural(n: number, word: string): string {
   return `${String(n)} ${word}${n === 1 ? '' : 's'}`;
@@ -120,45 +124,111 @@ const compact: SlashCommand = {
   },
 };
 
+/** Switches this session's model and says how to make it the default. */
+function switchModel(ctx: CommandContext, input: string): void {
+  let ref: string;
+  try {
+    ref = formatModelRef(parseModelRef(input));
+  } catch (err) {
+    ctx.notice('error', err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const { provider } = parseModelRef(ref);
+  ctx.setup.agent.setModel(ref);
+  ctx.session.record({ type: 'model', model: ref });
+  const alias = modelAlias(ref);
+  const warnings: string[] = [];
+  if (!ctx.runtime.providers.has(provider))
+    warnings.push(
+      `there is no ${providerLabel(provider)} key yet — add one with /login or set ${SECRET_ENV_VARS[provider]}`,
+    );
+  if (ctx.runtime.skipped.has(ref))
+    warnings.push(`it is not in ${providerLabel(provider)}'s model list, so it will be skipped`);
+  ctx.notice(
+    warnings.length === 0 ? 'info' : 'warning',
+    `Using ${ref}${alias === undefined ? '' : ` (${alias})`} for this session${warnings.length === 0 ? '' : `, but ${warnings.join(' and ')}`}. To make it the default: vinax config set model ${alias ?? ref}`,
+  );
+}
+
+async function pickModel(ctx: CommandContext, title: string): Promise<string | undefined> {
+  const current = ctx.setup.agent.model ?? ctx.runtime.settings.resolved.model;
+  const items = modelSelectItems(ctx.runtime, current);
+  if (!items.some((i) => i.disabled !== true)) {
+    ctx.notice(
+      'warning',
+      'No model list is available. Add a key with /login, or use /model <provider:model>.',
+    );
+    return undefined;
+  }
+  const ref = await ctx.pick(title, items, { searchable: true });
+  return ref === undefined || ref === '' ? undefined : ref;
+}
+
 const model: SlashCommand = {
   name: 'model',
-  argumentHint: '[provider:model]',
+  argumentHint: '[provider:model | alias]',
   description: 'Switch the model for this session',
   source: 'builtin',
   async run(ctx) {
-    let ref: string | undefined = ctx.args === '' ? undefined : ctx.args;
-    if (ref === undefined) {
-      const current = ctx.setup.agent.model ?? ctx.runtime.settings.resolved.model;
-      const items = [...ctx.runtime.providers.keys()].flatMap((p) =>
-        chatModels(ctx.runtime.models.get(p) ?? [], p).map((m) => {
-          const r = `${p}:${m.id}`;
-          return {
-            label: `${r}${r === current ? '  (current)' : ''}`,
-            value: r,
-            ...(m.contextWindow === undefined
-              ? {}
-              : { hint: `${formatTokens(m.contextWindow)} context` }),
-          };
-        }),
+    const ref = ctx.args === '' ? await pickModel(ctx, 'Model for this session') : ctx.args;
+    if (ref !== undefined) switchModel(ctx, ref);
+  },
+};
+
+const models: SlashCommand = {
+  name: 'models',
+  description: 'Browse providers, models, aliases and the fallback order',
+  source: 'builtin',
+  async run(ctx) {
+    const { runtime } = ctx;
+    const r = runtime.settings.resolved;
+    const current = ctx.setup.agent.model ?? r.model;
+    const currentRef = parseModelRef(current);
+    const alias = modelAlias(current);
+    const lines: string[] = [
+      `**Current** \`${current}\`${alias === undefined ? '' : ` · alias \`${alias}\``} · ${providerLabel(currentRef.provider)}`,
+      '',
+      '**Providers**',
+    ];
+    for (const p of providerSummaries(runtime)) {
+      const state = p.viaGateway
+        ? 'via the VinaX gateway'
+        : p.configured
+          ? 'key configured'
+          : `not configured — /login or ${SECRET_ENV_VARS[p.provider]}`;
+      const size =
+        p.catalogSize === undefined
+          ? p.configured
+            ? ' · catalog unavailable'
+            : ''
+          : ` · ${plural(p.catalogSize, 'model')} in catalog`;
+      lines.push(
+        `- ${p.configured ? '✔' : '○'} **${providerLabel(p.provider)}** _${providerHost(p.provider)}_ — ${state}${size}`,
       );
-      if (items.length === 0) {
-        ctx.notice('warning', 'No model list is available. Use /model <provider:model>.');
-        return;
-      }
-      ref = await ctx.pick('Model for this session', items);
-      if (ref === undefined) return;
     }
-    try {
-      parseModelRef(ref);
-    } catch (err) {
-      ctx.notice('error', err instanceof Error ? err.message : String(err));
-      return;
+    lines.push('', '**Fallback order**');
+    const chain = [...new Set([current, ...r.fallbackChain])];
+    for (const [i, ref] of chain.entries()) {
+      const { provider } = parseModelRef(ref);
+      const status = !runtime.providers.has(provider)
+        ? 'no key'
+        : runtime.skipped.has(ref)
+          ? 'skipped: not in catalog'
+          : 'ready';
+      const a = modelAlias(ref);
+      lines.push(`${String(i + 1)}. \`${ref}\`${a === undefined ? '' : ` (${a})`} — ${status}`);
     }
-    ctx.setup.agent.setModel(ref);
-    ctx.notice(
-      'info',
-      `Using ${ref} for this session. To make it the default: vinax config set model ${ref}`,
+    lines.push('', '**Aliases**');
+    for (const k of KNOWN_MODELS)
+      if (k.alias !== undefined)
+        lines.push(`- \`${k.alias}\` → \`${k.provider}:${k.model}\` · ${k.label}`);
+    lines.push(
+      '',
+      'Change the default with `vinax config set model <ref|alias>` and the order with `fallbackChain` in settings.',
     );
+    ctx.panel('Models', lines.join('\n'));
+    const ref = await pickModel(ctx, 'Switch model? (Esc keeps the current one)');
+    if (ref !== undefined && ref !== current) switchModel(ctx, ref);
   },
 };
 
@@ -284,14 +354,9 @@ const resume: SlashCommand = {
       ctx.notice('info', 'There are no other sessions in this folder yet.');
       return;
     }
-    const id = await ctx.pick(
-      'Resume which conversation?',
-      sessions.map((s) => ({
-        label: s.title ?? (s.firstPrompt ?? '(untitled)').slice(0, 60),
-        value: s.id,
-        hint: `${s.updatedAt.toISOString().slice(0, 16).replace('T', ' ')} · ${plural(s.turns, 'prompt')}`,
-      })),
-    );
+    const id = await ctx.pick('Resume which conversation?', sessionItems(sessions), {
+      searchable: true,
+    });
     if (id !== undefined) ctx.resume(id);
   },
 };
@@ -414,7 +479,84 @@ const doctor: SlashCommand = {
     if (!checks) return;
     ctx.panel(
       'Doctor',
-      checks.map((c) => `${ICON[c.status]} **${c.name}** — ${c.detail}`).join('\n\n'),
+      checks.map((c) => `${CHECK_ICON[c.status]} **${c.name}** — ${c.detail}`).join('\n\n'),
+    );
+  },
+};
+
+const health: SlashCommand = {
+  name: 'health',
+  description: 'Concise health summary: providers, keys, models, gateway, MCP, tools',
+  source: 'builtin',
+  async run(ctx) {
+    const checks = await ctx.busy('Checking health', () =>
+      runDoctor({
+        cwd: ctx.runtime.cwd,
+        env: ctx.runtime.env,
+        version: VERSION,
+        runtime: ctx.runtime,
+        mcp: ctx.setup.mcp.servers,
+        terminal: { isTTY: process.stdout.isTTY, columns: process.stdout.columns },
+      }),
+    );
+    if (!checks) return;
+    ctx.panel('Health', healthMarkdown(checks));
+  },
+};
+
+function installLabel(): string {
+  const install = detectInstall();
+  switch (install.kind) {
+    case 'binary':
+      return `standalone binary (${install.target})`;
+    case 'npm':
+      return 'npm package (@sirimillavinay/vinax)';
+    case 'source':
+      return 'from source';
+  }
+}
+
+const about: SlashCommand = {
+  name: 'about',
+  description: 'Version, runtime, install, model, gateway and MCP at a glance',
+  source: 'builtin',
+  run(ctx) {
+    const { runtime } = ctx;
+    const current = ctx.setup.agent.model ?? runtime.settings.resolved.model;
+    const ref = parseModelRef(current);
+    const alias = modelAlias(current);
+    const bun = (process.versions as Record<string, string | undefined>).bun;
+    const servers = ctx.setup.mcp.servers;
+    const connected = servers.filter((s) => s.status === 'connected').length;
+    const gateway = runtime.gateway
+      ? `${runtime.gateway.url}${runtime.viaGateway.size === 0 ? ' (not in use: own keys)' : ` · serving ${[...runtime.viaGateway].map(providerLabel).join(', ')}`}`
+      : 'not used';
+    const rows: [string, string][] = [
+      ['Version', `v${VERSION}`],
+      ['Runtime', bun === undefined ? `Node.js ${process.version}` : `Bun ${bun}`],
+      ['Installation', installLabel()],
+      ['Provider', `${providerLabel(ref.provider)} (${providerHost(ref.provider)})`],
+      ['Model', `\`${ref.model}\`${alias === undefined ? '' : ` · \`${alias}\``}`],
+      ['Gateway', gateway],
+      [
+        'MCP',
+        servers.length === 0
+          ? 'no servers'
+          : `${String(connected)}/${String(servers.length)} servers connected`,
+      ],
+      ['Platform', `${os.type()} ${os.release()}`],
+      ['Architecture', process.arch],
+      ['Repository', PROJECT_URL],
+    ];
+    ctx.panel(
+      'About VinaX',
+      [
+        '**VinaX** — your AI coding agent for the terminal',
+        '',
+        '| | |',
+        '|---|---|',
+        ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+      ].join('\n'),
     );
   },
 };
@@ -749,6 +891,7 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   clear,
   compact,
   model,
+  models,
   config,
   permissions,
   init,
@@ -758,6 +901,8 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   status,
   usage,
   doctor,
+  health,
+  about,
   login,
   logout,
   theme,

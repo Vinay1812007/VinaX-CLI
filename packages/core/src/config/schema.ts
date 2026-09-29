@@ -1,15 +1,16 @@
 import { z } from 'zod';
+import { normalizeModelRef } from '../providers/known-models.js';
 
-export const PROVIDER_NAMES = ['groq', 'openrouter'] as const;
+export const PROVIDER_NAMES = ['groq', 'openrouter', 'nvidia'] as const;
 export const providerNameSchema = z.enum(PROVIDER_NAMES);
 export type ProviderName = z.infer<typeof providerNameSchema>;
 
+export const MODEL_REF_HINT = `expected "<provider>:<model-id>" (providers: ${PROVIDER_NAMES.join(', ')}) or a model alias, for example "groq:openai/gpt-oss-120b" or "NVD_CHAT_OSS_20_B"`;
+
+/** A `<provider>:<model>` ref or a model alias; {@link resolveSettings} stores the canonical ref. */
 export const modelRefSchema = z
   .string()
-  .regex(
-    /^(groq|openrouter):\S+$/,
-    'expected "<provider>:<model-id>", for example "groq:openai/gpt-oss-120b"',
-  );
+  .refine((v) => normalizeModelRef(v) !== undefined, MODEL_REF_HINT);
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
@@ -78,6 +79,7 @@ export const settingsSchema = z.strictObject({
     .strictObject({
       groq: providerSettingsSchema.optional(),
       openrouter: providerSettingsSchema.optional(),
+      nvidia: providerSettingsSchema.optional(),
     })
     .optional(),
   router: routerSettingsSchema.optional(),
@@ -158,10 +160,13 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     'groq:qwen/qwen3.8-27b',
     'openrouter:qwen/qwen3.8-27b:free',
     'openrouter:nvidia/nemotron-3-super-120b-a12b:free',
+    'nvidia:openai/gpt-oss-20b',
   ],
   providers: {
     groq: { enabled: true, baseUrl: 'https://api.groq.com/openai/v1', rpm: 30 },
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1', rpm: 20 },
+    // NVIDIA's hosted API (build.nvidia.com); point baseUrl at a self-hosted NIM to use that instead.
+    nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1', rpm: 40 },
   },
   router: {
     maxRetries: 2,
@@ -179,15 +184,21 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   disableAllHooks: false,
 };
 
+/** Canonical form of a validated model setting (aliases become `<provider>:<model>`). */
+function canonical(ref: string): string {
+  return normalizeModelRef(ref) ?? ref;
+}
+
 export function resolveSettings(s: Settings): ResolvedSettings {
   const d = DEFAULT_SETTINGS;
   return {
-    model: s.model ?? d.model,
-    smallModel: s.smallModel ?? d.smallModel,
-    fallbackChain: s.fallbackChain ?? d.fallbackChain,
+    model: canonical(s.model ?? d.model),
+    smallModel: canonical(s.smallModel ?? d.smallModel),
+    fallbackChain: (s.fallbackChain ?? d.fallbackChain).map(canonical),
     providers: {
       groq: { ...d.providers.groq, ...s.providers?.groq },
       openrouter: { ...d.providers.openrouter, ...s.providers?.openrouter },
+      nvidia: { ...d.providers.nvidia, ...s.providers?.nvidia },
     },
     router: { ...d.router, ...s.router },
     permissions: { ...d.permissions, ...s.permissions },

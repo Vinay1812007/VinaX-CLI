@@ -75,6 +75,50 @@ describe('config', () => {
   });
 });
 
+describe('NVIDIA upstream', () => {
+  it('is configured from NVIDIA_API_KEY, with an optional NVIDIA_BASE_URL', () => {
+    const c = loadConfig({
+      NVIDIA_API_KEY: 'nvapi-server',
+      VINAX_TOKEN_HASHES: `a:${hashToken('t')}`,
+    });
+    expect(c.upstreams.nvidia).toEqual({
+      name: 'nvidia',
+      apiKey: 'nvapi-server',
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+    });
+    const custom = loadConfig({
+      NVIDIA_API_KEY: 'nvapi-server',
+      NVIDIA_BASE_URL: 'http://nim.local:8000/v1/',
+      VINAX_TOKEN_HASHES: `a:${hashToken('t')}`,
+    });
+    expect(custom.upstreams.nvidia?.baseUrl).toBe('http://nim.local:8000/v1');
+    expect(() => loadConfig({ VINAX_TOKEN_HASHES: `a:${hashToken('t')}` })).toThrow(
+      /NVIDIA_API_KEY/,
+    );
+  });
+
+  it('relays nvidia:<model> requests with the bare model id and the server key', async () => {
+    const nvidia = await mock({
+      apiKeys: ['nvapi-server'],
+      script: { 'openai/gpt-oss-20b': [{ text: 'from nim' }] },
+    });
+    const app = createApp(
+      config({
+        upstreams: { nvidia: { name: 'nvidia', baseUrl: nvidia.url, apiKey: 'nvapi-server' } },
+      }),
+      { log: () => undefined },
+    );
+    const res = await app.request(
+      chat({ model: 'nvidia:openai/gpt-oss-20b', messages, stream: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('from nim');
+    const sent = nvidia.requests.find((r) => r.path.endsWith('/chat/completions'));
+    expect((sent?.body as { model: string }).model).toBe('openai/gpt-oss-20b');
+    expect(sent?.headers.authorization).toBe('Bearer nvapi-server');
+  });
+});
+
 describe('rate limiter', () => {
   it('enforces per-minute and per-day limits per token', () => {
     let t = Date.UTC(2026, 0, 1, 12);

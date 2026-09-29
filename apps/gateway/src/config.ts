@@ -3,6 +3,7 @@ import { parseTokenHashes } from './tokens.js';
 export const UPSTREAMS = {
   groq: { baseUrl: 'https://api.groq.com/openai/v1', keyVar: 'GROQ_API_KEY' },
   openrouter: { baseUrl: 'https://openrouter.ai/api/v1', keyVar: 'OPENROUTER_API_KEY' },
+  nvidia: { baseUrl: 'https://integrate.api.nvidia.com/v1', keyVar: 'NVIDIA_API_KEY' },
 } as const;
 export type UpstreamName = keyof typeof UPSTREAMS;
 
@@ -51,7 +52,9 @@ export function loadConfig(env: Env): GatewayConfig {
     upstreams[name] = { name, apiKey, baseUrl: (override || baseUrl).replace(/\/$/, '') };
   }
   if (Object.keys(upstreams).length === 0)
-    throw new ConfigError('Set GROQ_API_KEY and/or OPENROUTER_API_KEY.');
+    throw new ConfigError(
+      'Set at least one of GROQ_API_KEY, OPENROUTER_API_KEY or NVIDIA_API_KEY.',
+    );
   let tokens: Map<string, string>;
   try {
     tokens = parseTokenHashes(env.VINAX_TOKEN_HASHES ?? '');

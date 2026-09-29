@@ -11,6 +11,8 @@ import {
   saveGatewayLogin,
   SECRET_ENV_VARS,
   updateSettingsFile,
+  withKnownMetadata,
+  type ProviderName,
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
 import type { CliIO } from './io.js';
@@ -25,7 +27,7 @@ import { VERSION } from './version.js';
 export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
   const { cwd, env } = io;
   const scratchSettings = async () => (await loadSettings({ cwd, env })).resolved;
-  const probe = async (provider: 'groq' | 'openrouter', key: string) =>
+  const probe = async (provider: ProviderName, key: string) =>
     createProvider(provider, key, {
       settings: await scratchSettings(),
       ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
@@ -63,7 +65,7 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
       saveKey: async (p, key) => {
         await (await openSecretStore(env)).set(p, key);
       },
-      listModels: async (p, key) => (await probe(p, key)).listModels(),
+      listModels: async (p, key) => withKnownMetadata(p, await (await probe(p, key)).listModels()),
       saveSettings: async (patch) => {
         await updateSettingsFile({ cwd, env, scope: 'user' }, (s) => ({ ...s, ...patch }));
       },

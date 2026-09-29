@@ -4,13 +4,13 @@ title: Overview
 
 # Overview
 
-<p class="lead">VinaX is an open-source coding agent for your terminal. It reads your codebase, edits files, runs commands and checks its own work, and it runs on free-tier models from Groq and OpenRouter.</p>
+<p class="lead">VinaX is your AI coding agent for the terminal. It reads your codebase, edits files, runs commands and checks its own work, on models from Groq, OpenRouter and NVIDIA, with free tiers and automatic fallback.</p>
 
 VinaX works like a teammate in your shell. You describe a task in plain language. VinaX explores the code, proposes changes as diffs, runs your tests, and asks before doing anything risky. The agent loop and every tool run on your machine; only model requests leave it.
 
 ## Get started
 
-You need a free API key from [Groq](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/keys), or both. You can also use a token for someone's [VinaX gateway](/gateway). Choose how to install:
+You need an API key from [Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys) (both have free tiers) or [NVIDIA](https://build.nvidia.com), or several. You can also use a token for someone's [VinaX gateway](/gateway). Choose how to install:
 
 ::::tabs
 == Install script (recommended)
@@ -83,8 +83,15 @@ vinax
 
 The first run walks you through a short setup: a colour theme, your provider, your API keys (each is checked live before it's saved) and a default model. That's all. [Continue with the Quickstart →](/quickstart)
 
+To use NVIDIA's `openai/gpt-oss-20b` straight away:
+
+```bash
+export NVIDIA_API_KEY=nvapi-...
+vinax --model nvidia:openai/gpt-oss-20b   # or by its alias: vinax --model NVD_CHAT_OSS_20_B
+```
+
 :::tip
-[Install and set up](/setup) covers updating, uninstalling and where VinaX keeps its files. If something goes wrong, run `vinax doctor` or see [Troubleshooting](/troubleshooting).
+[Install and set up](/setup) covers updating, uninstalling and where VinaX keeps its files. If something goes wrong, run `vinax health` (or `vinax doctor` for full details) or see [Troubleshooting](/troubleshooting).
 :::
 
 ## What you can do
@@ -166,7 +173,7 @@ vinax -p "summarize src/" --output-format json
 <summary><span class="vx-icon">∞</span>Keep working on free tiers</summary>
 <div class="vx-body">
 
-VinaX tracks each model's rate limits. When one is exhausted it waits briefly or moves down your [fallback chain](/models), and shows a one-line notice. Long conversations are [compacted](/sessions#compaction) automatically so every request stays small.
+VinaX tracks each model's rate limits. When one is exhausted it waits briefly or moves down your [fallback chain](/models), across Groq, OpenRouter and NVIDIA, and shows a one-line notice. `/models` shows the chain and lets you switch models from a searchable picker. Long conversations are [compacted](/sessions#compaction) automatically so every request stays small.
 
 </div>
 </details>
@@ -175,15 +182,16 @@ VinaX tracks each model's rate limits. When one is exhausted it waits briefly or
 
 ## Where to look
 
-| I want to…                               | Go to                                 |
-| ---------------------------------------- | ------------------------------------- |
-| Get through my first task step by step   | [Quickstart](/quickstart)             |
-| Control what VinaX may do without asking | [Permissions](/permissions)           |
-| Pick models and understand rate limits   | [Models and rate limits](/models)     |
-| Run VinaX in scripts or CI               | [Print mode and scripts](/print-mode) |
-| Share keys with a team or class          | [Gateway](/gateway)                   |
-| Add tools from other services            | [MCP servers](/mcp)                   |
-| See every command and flag               | [CLI reference](/cli-reference)       |
+| I want to…                                   | Go to                                 |
+| -------------------------------------------- | ------------------------------------- |
+| Get through my first task step by step       | [Quickstart](/quickstart)             |
+| Control what VinaX may do without asking     | [Permissions](/permissions)           |
+| Pick models and understand rate limits       | [Models and rate limits](/models)     |
+| Use NVIDIA and the `NVD_CHAT_OSS_20_B` alias | [Models: NVIDIA](/models#nvidia)      |
+| Run VinaX in scripts or CI                   | [Print mode and scripts](/print-mode) |
+| Share keys with a team or class              | [Gateway](/gateway)                   |
+| Add tools from other services                | [MCP servers](/mcp)                   |
+| See every command and flag                   | [CLI reference](/cli-reference)       |
 
 ## Next steps
 

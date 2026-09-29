@@ -1,11 +1,11 @@
 # The VinaX gateway
 
-The gateway (`apps/gateway`) is an optional relay for model requests. It keeps shared Groq and
-OpenRouter keys on a server, so people you give a token to can use VinaX without keys of their own.
+The gateway (`apps/gateway`) is an optional relay for model requests. It keeps shared Groq,
+OpenRouter and NVIDIA keys on a server, so people you give a token to can use VinaX without keys of their own.
 
 - **It only relays chat completions.** The agent loop, tools, files and shell commands all stay on
   each user's machine.
-- **It is opt-in.** VinaX talks to Groq and OpenRouter directly with your own keys
+- **It is opt-in.** VinaX talks to Groq, OpenRouter and NVIDIA directly with your own keys
   unless you run `vinax login --gateway`. Even then, a provider you have a key for keeps using it.
 - **It is stateless.** There is no database. Tokens are stored as hashes in an environment variable,
   and rate-limit counters live in memory.
@@ -34,6 +34,7 @@ OpenRouter keys on a server, so people you give a token to can use VinaX without
    | -------------------- | -------------------------------------------------------- |
    | `GROQ_API_KEY`       | a Groq key (at least one provider key is required)       |
    | `OPENROUTER_API_KEY` | an OpenRouter key                                        |
+   | `NVIDIA_API_KEY`     | an NVIDIA key (optional)                                 |
    | `VINAX_TOKEN_HASHES` | the `name:hash` entries from step 1, separated by commas |
 
 4. **Deploy on every green `main` (optional).** The blueprint turns Render's own auto-deploy off.
@@ -62,18 +63,22 @@ again. Free services also get 750 instance-hours a month. VinaX handles the slee
 
 ## Configuration
 
-| Variable                               | Default                                                     | Meaning                                                  |
-| -------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
-| `GROQ_API_KEY`                         | —                                                           | Groq key used for `groq:` models                         |
-| `OPENROUTER_API_KEY`                   | —                                                           | OpenRouter key used for `openrouter:` models             |
-| `VINAX_TOKEN_HASHES`                   | —                                                           | `name:sha256` entries, comma or newline separated        |
-| `RATE_LIMIT_RPM`                       | `20`                                                        | requests per minute per token                            |
-| `RATE_LIMIT_RPD`                       | `500`                                                       | requests per UTC day per token                           |
-| `MAX_BODY_BYTES`                       | `1000000`                                                   | largest accepted request body                            |
-| `DEFAULT_MODELS`                       | `groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free` | tried in order for `"model": "auto"`                     |
-| `UPSTREAM_TIMEOUT_MS`                  | `60000`                                                     | wait for a provider to start answering                   |
-| `PORT`                                 | `8787` (Render sets its own)                                | listen port                                              |
-| `GROQ_BASE_URL`, `OPENROUTER_BASE_URL` | the providers' public APIs                                  | point a provider elsewhere (a proxy, or a mock in tests) |
+| Variable                                                  | Default                                                     | Meaning                                                                     |
+| --------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GROQ_API_KEY`                                            | —                                                           | Groq key used for `groq:` models                                            |
+| `OPENROUTER_API_KEY`                                      | —                                                           | OpenRouter key used for `openrouter:` models                                |
+| `NVIDIA_API_KEY`                                          | —                                                           | NVIDIA key used for `nvidia:` models                                        |
+| `VINAX_TOKEN_HASHES`                                      | —                                                           | `name:sha256` entries, comma or newline separated                           |
+| `RATE_LIMIT_RPM`                                          | `20`                                                        | requests per minute per token                                               |
+| `RATE_LIMIT_RPD`                                          | `500`                                                       | requests per UTC day per token                                              |
+| `MAX_BODY_BYTES`                                          | `1000000`                                                   | largest accepted request body                                               |
+| `DEFAULT_MODELS`                                          | `groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free` | tried in order for `"model": "auto"`                                        |
+| `UPSTREAM_TIMEOUT_MS`                                     | `60000`                                                     | wait for a provider to start answering                                      |
+| `PORT`                                                    | `8787` (Render sets its own)                                | listen port                                                                 |
+| `GROQ_BASE_URL`, `OPENROUTER_BASE_URL`, `NVIDIA_BASE_URL` | the providers' public APIs                                  | point a provider elsewhere (a proxy, a self-hosted NIM, or a mock in tests) |
+
+A gateway without an NVIDIA key simply doesn't serve `nvidia:` models. VinaX notices that its
+model list has no NVIDIA models and skips them quietly instead of warning at every start.
 
 To revoke a token, remove its entry from `VINAX_TOKEN_HASHES`. The service restarts with the new
 list.
@@ -81,13 +86,13 @@ list.
 ## API
 
 The gateway speaks the OpenAI chat-completions API. Model names carry their provider:
-`groq:openai/gpt-oss-120b` or `openrouter:qwen/qwen3.8-27b:free`.
+`groq:openai/gpt-oss-120b`, `openrouter:qwen/qwen3.8-27b:free` or `nvidia:openai/gpt-oss-20b`.
 
-| Endpoint                    | Auth   | Notes                                                                                |
-| --------------------------- | ------ | ------------------------------------------------------------------------------------ |
-| `GET /health`               | none   | `{ status, service, version, providers }`                                            |
-| `GET /v1/models`            | bearer | both providers' model lists, IDs prefixed with the provider; cached 10 min           |
-| `POST /v1/chat/completions` | bearer | streams (SSE) or returns JSON unchanged, including `x-ratelimit-*` and `retry-after` |
+| Endpoint                    | Auth   | Notes                                                                                 |
+| --------------------------- | ------ | ------------------------------------------------------------------------------------- |
+| `GET /health`               | none   | `{ status, service, version, providers }`                                             |
+| `GET /v1/models`            | bearer | every configured provider's model list, IDs prefixed with the provider; cached 10 min |
+| `POST /v1/chat/completions` | bearer | streams (SSE) or returns JSON unchanged, including `x-ratelimit-*` and `retry-after`  |
 
 **Fallback on the gateway.** With `"model": "auto"`, or an extra `"models": [...]` list, the gateway
 tries each model in turn until one starts answering. It moves on for rate limits, provider

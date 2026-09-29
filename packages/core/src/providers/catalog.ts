@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { withKnownMetadata } from './known-models.js';
 import type { ModelInfo, Provider, ProviderName } from './types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,7 +25,10 @@ export interface CatalogResult {
   stale: boolean;
 }
 
-/** `/models` per provider, cached on disk for 24 hours. */
+/**
+ * `/models` per provider, cached on disk for 24 hours, with the context windows VinaX knows
+ * for models whose catalog entry leaves them out.
+ */
 export class ModelCatalog {
   constructor(
     private readonly dir: string,
@@ -60,6 +64,14 @@ export class ModelCatalog {
   async get(
     provider: Provider,
     opts: { refresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<CatalogResult> {
+    const result = await this.fetch(provider, opts);
+    return { ...result, models: withKnownMetadata(provider.name, result.models) };
+  }
+
+  private async fetch(
+    provider: Provider,
+    opts: { refresh?: boolean; signal?: AbortSignal },
   ): Promise<CatalogResult> {
     const cached = await this.readCache(provider.name);
     if (cached && opts.refresh !== true && this.now() - cached.fetchedAt < this.ttlMs)

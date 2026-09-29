@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { parseFrontmatter } from '../commands/custom.js';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { normalizeModelRef } from '../providers/known-models.js';
 import { defineTool, type ToolContext } from '../tools/types.js';
 
 export interface SubagentDef {
@@ -65,10 +66,7 @@ export async function loadSubagents(
         errors.push(`${file}: add a description so VinaX knows when to use this agent`);
         continue;
       }
-      const model =
-        typeof data.model === 'string' && /^(groq|openrouter):\S+$/.test(data.model)
-          ? data.model
-          : undefined;
+      const model = typeof data.model === 'string' ? normalizeModelRef(data.model) : undefined;
       byName.set(name, {
         name,
         description: data.description,

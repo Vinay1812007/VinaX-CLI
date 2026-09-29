@@ -13,7 +13,7 @@ export default defineConfig({
   lastUpdated: true,
   srcExclude: ['README.md', 'PLAN.md'],
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/VinaX-CLI/logo.svg' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/VinaX-CLI/favicon.svg' }],
     ['meta', { name: 'theme-color', content: '#14B8A6' }],
   ],
   markdown: {

@@ -201,7 +201,9 @@ export function createApp(config: GatewayConfig, deps: GatewayDeps = {}): Hono<E
         failures.push(
           cand.provider in UPSTREAMS
             ? `${ref}: this gateway has no ${cand.provider} key`
-            : `${ref}: unknown provider (use groq:<model> or openrouter:<model>)`,
+            : `${ref}: unknown provider (use ${Object.keys(UPSTREAMS)
+                .map((p) => `${p}:<model>`)
+                .join(', ')})`,
         );
         continue;
       }

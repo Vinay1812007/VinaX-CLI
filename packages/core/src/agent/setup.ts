@@ -24,7 +24,7 @@ import {
   type SubagentDef,
   type SubagentRunner,
 } from './subagents.js';
-import { buildSystemPrompt, readGitInfo } from './system-prompt.js';
+import { buildSystemPrompt, readGitInfo, type GitInfo } from './system-prompt.js';
 
 /** Model calls a sub-agent may make for one Task. */
 const SUBAGENT_MAX_TURNS = 30;
@@ -52,6 +52,8 @@ export interface AgentSetup {
   tools: readonly AnyTool[];
   workspace: readonly string[];
   memory: ProjectMemory;
+  /** Git state when the session started, or `undefined` outside a repository. */
+  git: GitInfo | undefined;
   /** Files the model has seen (for Edit/Write freshness checks and `@` attachments). */
   reads: ReadTracker;
   /** Conversation budget in tokens (compaction starts at 85%). */
@@ -237,6 +239,7 @@ export async function createAgentSetup(
     tools,
     workspace,
     memory,
+    git,
     reads,
     contextLimit,
     hooks,

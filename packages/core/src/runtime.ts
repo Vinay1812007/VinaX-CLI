@@ -37,6 +37,8 @@ export interface Runtime {
   /** Model lists fetched at startup (cached 24h); empty for unreachable providers. */
   models: ReadonlyMap<ProviderName, readonly ModelInfo[]>;
   router: Router;
+  /** Configured model refs left out of routing because their provider's catalog lacks them. */
+  skipped: ReadonlySet<string>;
   usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
@@ -65,7 +67,9 @@ export interface RuntimeOptions {
 
 /**
  * Checks every configured model against its provider's cached `/models` list and returns the
- * ones to skip. An unreachable catalog is not an error: the model is simply tried.
+ * ones to skip. Every usable provider's catalog is fetched, in parallel (cached for 24h).
+ * An unreachable catalog is not an error: the model is simply tried. A gateway that lists no
+ * models for a provider does not serve it, so those refs are skipped without a warning.
  */
 async function findUnavailableModels(
   refs: readonly { ref: string; provider: ProviderName; model: string }[],
@@ -73,28 +77,31 @@ async function findUnavailableModels(
   catalog: ModelCatalog,
   timeoutMs: number,
   unreachable: ReadonlySet<ProviderName>,
+  viaGateway: ReadonlySet<ProviderName>,
 ): Promise<{ skip: Set<string>; warnings: string[]; models: Map<ProviderName, ModelInfo[]> }> {
   const skip = new Set<string>();
   const warnings: string[] = [];
-  const known = new Map<ProviderName, Set<string> | undefined>();
   const models = new Map<ProviderName, ModelInfo[]>();
-  for (const { ref, provider: name, model } of refs) {
-    const provider = providers.get(name);
-    if (!provider || unreachable.has(name)) continue;
-    if (!known.has(name)) {
+  // every usable provider, not just the configured ones, so the model picker can list them all
+  const wanted = [...providers.keys()].filter((name) => !unreachable.has(name));
+  await Promise.all(
+    wanted.map(async (name) => {
+      const provider = providers.get(name);
+      if (!provider) return;
       try {
         const result = await catalog.get(provider, { signal: AbortSignal.timeout(timeoutMs) });
-        known.set(name, new Set(result.models.map((m) => m.id)));
         models.set(name, result.models);
       } catch {
-        known.set(name, undefined);
+        // unknown: try the models anyway
       }
-    }
-    const ids = known.get(name);
-    if (ids && !ids.has(model)) {
-      skip.add(ref);
-      warnings.push(`${ref} is not in ${providerLabel(name)}'s model list; skipping it.`);
-    }
+    }),
+  );
+  for (const { ref, provider: name, model } of refs) {
+    const list = models.get(name);
+    if (list === undefined || list.some((m) => m.id === model)) continue;
+    skip.add(ref);
+    if (list.length === 0 && viaGateway.has(name)) continue;
+    warnings.push(`${ref} is not in ${providerLabel(name)}'s model list; skipping it.`);
   }
   return { skip, warnings, models };
 }
@@ -143,6 +150,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     catalog,
     opts.catalogTimeoutMs ?? 10_000,
     unreachable,
+    viaGateway,
   );
 
   logger.debug('runtime', {
@@ -201,6 +209,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     catalog,
     models,
     router: new Router({ providers, ledger, settings: resolved, logger, skip, usage }),
+    skipped: skip,
     warnings: [...settings.warnings, ...startupNotes, ...warnings],
   };
 }

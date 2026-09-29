@@ -4,15 +4,21 @@ import type { Env } from './config/paths.js';
 import { openSecretStore, SECRET_ENV_VARS } from './config/secrets.js';
 import { providerLabel } from './providers/errors.js';
 import { GatewayClient } from './providers/gateway.js';
+import { loadMcpConfig } from './mcp/config.js';
+import type { McpServerState } from './mcp/manager.js';
 import { PROVIDER_NAMES } from './providers/types.js';
 import type { Runtime } from './runtime.js';
 import { ripgrepStatus } from './tools/search-tools.js';
 import { detectShell } from './tools/shell.js';
 
+export type DoctorGroup = 'runtime' | 'providers' | 'tools' | 'integrations';
+
 export interface DoctorCheck {
   name: string;
-  status: 'ok' | 'warn' | 'fail';
+  /** `skip`: optional and not set up (e.g. a provider you do not use). */
+  status: 'ok' | 'warn' | 'fail' | 'skip';
   detail: string;
+  group: DoctorGroup;
 }
 
 export interface DoctorOptions {
@@ -21,6 +27,8 @@ export interface DoctorOptions {
   version: string;
   /** When given, keys are checked live and model availability is reported. */
   runtime?: Runtime;
+  /** Live MCP server states (interactive sessions); otherwise the MCP config is only read. */
+  mcp?: readonly Pick<McpServerState, 'name' | 'status' | 'error' | 'tools'>[];
   terminal: { isTTY: boolean; columns: number | undefined };
 }
 
@@ -44,11 +52,12 @@ async function keychainAvailable(): Promise<boolean> {
   }
 }
 
-/** Checks the installation, settings, keys, search, shell, terminal and gateway. */
+/** Checks the installation, settings, keys, search, shell, terminal, gateway and MCP. */
 export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
+  let group: DoctorGroup = 'runtime';
   const add = (name: string, status: DoctorCheck['status'], detail: string): void => {
-    checks.push({ name, status, detail });
+    checks.push({ name, status, detail, group });
   };
 
   const bun = (process.versions as Record<string, string | undefined>).bun;
@@ -77,35 +86,36 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
     add('Settings', 'fail', err instanceof SettingsError ? err.message : String(err));
   }
 
+  group = 'providers';
   const store = await openSecretStore(opts.env);
   const gatewayToken = gatewayUrl === undefined ? undefined : await store.get('gateway');
   const viaGateway = gatewayToken !== undefined;
-  let anyKey = false;
-  for (const name of PROVIDER_NAMES) {
-    const secret = await store.get(name);
-    if (!secret) {
-      add(
-        `${providerLabel(name)} key`,
-        viaGateway ? 'ok' : 'warn',
-        viaGateway
-          ? 'not set — requests go through the VinaX gateway'
-          : `not set (set ${SECRET_ENV_VARS[name]} or run: vinax config set-key ${name})`,
-      );
-      continue;
-    }
-    anyKey = true;
-    const provider = opts.runtime?.providers.get(name);
-    if (!provider) {
-      add(`${providerLabel(name)} key`, 'ok', `found (${secret.source})`);
-      continue;
-    }
-    const check = await provider.validateKey(AbortSignal.timeout(10_000));
-    add(
-      `${providerLabel(name)} key`,
-      check.ok ? 'ok' : check.rejected ? 'fail' : 'warn',
-      check.ok ? `valid (${secret.source})` : check.reason,
-    );
-  }
+  const secrets = await Promise.all(PROVIDER_NAMES.map((name) => store.get(name)));
+  const anyKey = secrets.some((s) => s !== undefined);
+  // live key checks run in parallel: each can take a network round trip
+  const results = await Promise.all(
+    PROVIDER_NAMES.map(async (name, i) => {
+      const secret = secrets[i];
+      const label = `${providerLabel(name)} key`;
+      if (!secret) {
+        const how = `set ${SECRET_ENV_VARS[name]} or run: vinax config set-key ${name}`;
+        return viaGateway
+          ? ([label, 'ok', 'not set — requests go through the VinaX gateway'] as const)
+          : anyKey
+            ? ([label, 'skip', `not set (optional: ${how})`] as const)
+            : ([label, 'warn', `not set (${how})`] as const);
+      }
+      const provider = opts.runtime?.providers.get(name);
+      if (!provider) return [label, 'ok', `found (${secret.source})`] as const;
+      const check = await provider.validateKey(AbortSignal.timeout(10_000));
+      return [
+        label,
+        check.ok ? 'ok' : check.rejected ? 'fail' : 'warn',
+        check.ok ? `valid (${secret.source})` : check.reason,
+      ] as const;
+    }),
+  );
+  for (const [name, status, detail] of results) add(name, status, detail);
   if (!anyKey && !viaGateway) {
     add(
       'API keys',
@@ -124,6 +134,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
     );
   }
 
+  group = 'tools';
   const rg = await ripgrepStatus();
   add(
     'Search (Grep)',
@@ -149,6 +160,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
       : 'OS keychain unavailable; keys are kept in ~/.vinax/credentials.json (mode 0600)',
   );
 
+  group = 'runtime';
   const colors =
     opts.env.NO_COLOR !== undefined && opts.env.NO_COLOR !== ''
       ? 'NO_COLOR set'
@@ -162,6 +174,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
       ? `${String(opts.terminal.columns ?? '?')} columns, ${colors}, TERM=${opts.env.TERM ?? 'unset'}${opts.env.TERM_PROGRAM === undefined ? '' : ` (${opts.env.TERM_PROGRAM})`}`
       : 'not a terminal (fine for vinax -p)',
   );
+  group = 'integrations';
   if (gatewayUrl === undefined) {
     add('Gateway', 'ok', 'not used — requests go straight to the providers with your own keys');
   } else if (!viaGateway) {
@@ -180,5 +193,42 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorCheck[]> {
         : `${gatewayUrl} did not answer (${probe.reason}); it may be asleep, and the first request wakes it`,
     );
   }
+  await checkMcp(opts, add);
   return checks;
+}
+
+async function checkMcp(
+  opts: DoctorOptions,
+  add: (name: string, status: DoctorCheck['status'], detail: string) => void,
+): Promise<void> {
+  if (opts.mcp !== undefined) {
+    if (opts.mcp.length === 0) {
+      add('MCP', 'skip', 'no servers configured');
+      return;
+    }
+    const connected = opts.mcp.filter((s) => s.status === 'connected');
+    const failed = opts.mcp.filter((s) => s.status === 'failed');
+    const waiting = opts.mcp.filter((s) => s.status === 'needs-approval');
+    const parts = [
+      `${String(connected.length)}/${String(opts.mcp.length)} connected`,
+      ...(failed.length === 0 ? [] : [`failed: ${failed.map((s) => s.name).join(', ')}`]),
+      ...(waiting.length === 0
+        ? []
+        : [`awaiting approval: ${waiting.map((s) => s.name).join(', ')} (see /mcp)`]),
+    ];
+    add('MCP', failed.length > 0 ? 'warn' : 'ok', parts.join(' · '));
+    return;
+  }
+  const { servers, errors } = await loadMcpConfig(opts.cwd, opts.env);
+  if (errors.length > 0) {
+    add('MCP', 'warn', errors.join('; '));
+    return;
+  }
+  add(
+    'MCP',
+    servers.length === 0 ? 'skip' : 'ok',
+    servers.length === 0
+      ? 'no servers configured'
+      : `${String(servers.length)} configured: ${servers.map((s) => `${s.name} (${s.scope})`).join(', ')}`,
+  );
 }
