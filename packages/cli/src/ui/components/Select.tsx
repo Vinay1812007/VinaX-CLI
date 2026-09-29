@@ -6,6 +6,14 @@ export interface SelectItem<T> {
   label: string;
   value: T;
   hint?: string;
+  /** Heading the item is listed under (searchable pickers group consecutive items). */
+  group?: string;
+  /** Marks the active choice (e.g. the current model) with ●. */
+  current?: boolean;
+  /** Shown dimmed and cannot be chosen; `hint` should say why. */
+  disabled?: boolean;
+  /** Extra words the search matches (aliases, provider names). */
+  keywords?: readonly string[];
 }
 
 interface Props<T> {

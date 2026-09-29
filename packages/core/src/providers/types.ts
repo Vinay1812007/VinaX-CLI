@@ -1,4 +1,5 @@
-import { PROVIDER_NAMES, type ProviderName } from '../config/schema.js';
+import { MODEL_REF_HINT, PROVIDER_NAMES, type ProviderName } from '../config/schema.js';
+import { normalizeModelRef } from './known-models.js';
 
 export { PROVIDER_NAMES, type ProviderName };
 
@@ -27,16 +28,15 @@ export interface ModelRef {
   model: string;
 }
 
+/** Parses `<provider>:<model>`, a provider domain (`nvidia.com:…`) or a model alias. */
 export function parseModelRef(ref: string): ModelRef {
-  const idx = ref.indexOf(':');
-  const provider = ref.slice(0, idx);
-  const model = ref.slice(idx + 1);
-  if (idx <= 0 || model === '' || !isProviderName(provider)) {
-    throw new Error(
-      `Invalid model "${ref}": expected "<provider>:<model-id>", for example "groq:openai/gpt-oss-120b"`,
-    );
+  const canonical = normalizeModelRef(ref);
+  const idx = canonical?.indexOf(':') ?? -1;
+  const provider = canonical?.slice(0, idx) ?? '';
+  if (canonical === undefined || !isProviderName(provider)) {
+    throw new Error(`Invalid model "${ref}": ${MODEL_REF_HINT}`);
   }
-  return { provider, model };
+  return { provider, model: canonical.slice(idx + 1) };
 }
 
 function isProviderName(value: string): value is ProviderName {

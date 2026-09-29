@@ -1,4 +1,4 @@
-import type { ToolDisplay } from '@vinax/core';
+import type { FailureReport, ToolDisplay } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
 
 export type TranscriptItem =
@@ -17,7 +17,13 @@ export type TranscriptItem =
       ok: boolean;
       summary: string;
       display: ToolDisplay | undefined;
-    };
+      /** How long the tool ran (added in newer versions). */
+      durationMs?: number;
+    }
+  /** A failed turn, explained: what failed, why, and what to try. */
+  | { id: number; kind: 'error'; report: FailureReport }
+  /** End of a turn that used tools: "Updated 3 files · 7 tool calls · 12s". */
+  | { id: number; kind: 'summary'; text: string };
 
 export interface ToolRecord {
   name: string;
@@ -27,7 +33,16 @@ export interface ToolRecord {
   output: string;
 }
 
-const KINDS = new Set(['user', 'assistant', 'notice', 'panel', 'shell', 'tool']);
+const KINDS = new Set([
+  'user',
+  'assistant',
+  'notice',
+  'panel',
+  'shell',
+  'tool',
+  'error',
+  'summary',
+]);
 
 /** Transcript items saved in a session (view entries), validated loosely for replay. */
 export function restoreItems(views: readonly unknown[]): TranscriptItem[] {

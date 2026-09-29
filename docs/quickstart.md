@@ -6,7 +6,7 @@
 
 - A terminal on macOS, Linux or Windows.
 - A project to work in. Any git repository will do.
-- A free API key from [Groq](https://console.groq.com/keys) (fastest) and/or [OpenRouter](https://openrouter.ai/keys). You can use a [gateway token](/gateway) instead of keys.
+- A free API key from [Groq](https://console.groq.com/keys) (fastest) and/or [OpenRouter](https://openrouter.ai/keys), or an NVIDIA key from [build.nvidia.com](https://build.nvidia.com). You can use a [gateway token](/gateway) instead of keys.
 
 ## Step 1: Install
 
@@ -47,14 +47,14 @@ vinax
 The first run asks four things:
 
 1. **A colour theme:** dark, light, or colour-blind friendly. A live preview shows each one.
-2. **A provider:** Groq, OpenRouter, both (recommended), or a VinaX gateway.
+2. **A provider:** Groq, OpenRouter, NVIDIA, Groq + OpenRouter (recommended), or a VinaX gateway.
 3. **Your API keys.** Each is checked with the provider before it's saved to your OS keychain.
 4. **A default model**, from the provider's live model list.
 
 Next, VinaX asks whether you trust the files in this folder. Answer yes for projects you know.
 
 :::tip Prefer environment variables?
-`GROQ_API_KEY` and `OPENROUTER_API_KEY` always take precedence over stored keys, and setup picks them up automatically.
+`GROQ_API_KEY`, `OPENROUTER_API_KEY` and `NVIDIA_API_KEY` always take precedence over stored keys, and setup picks them up automatically. For example: `export NVIDIA_API_KEY=nvapi-...` then `vinax --model NVD_CHAT_OSS_20_B`.
 :::
 
 ## Step 3: Ask about the code
@@ -93,7 +93,9 @@ Edits are shown as diffs before you approve them. After the fix, VinaX re-runs t
       4 -   return sum / (values.length - 1);
       4 +   return sum / values.length;
 <span class="accent">▸</span> Bash npm test
-  <span class="dim">└ Exit 0 · 9 lines · 0.3s</span></pre>
+  <span class="dim">└ Exit 0 · 9 lines · 0.3s</span>
+<span class="accent">▸</span> Done
+  <span class="dim">└ Updated 1 file · 3 tool calls · 8.4s</span></pre>
 
 :::info Changed your mind?
 Press **Esc** at any time to stop. Press **Esc Esc** on an empty prompt to [rewind](/permissions#rewind) to an earlier prompt and restore the files VinaX changed.
@@ -109,6 +111,8 @@ Press **Esc** at any time to stop. Press **Esc Esc** on an empty prompt to [rewi
 | `!git status`      | Run a shell command yourself and share its output |
 | `#always use pnpm` | Save a note to project memory                     |
 | `/init`            | Write a starter `VINAX.md` for this project       |
+| `/models`          | See providers, models, aliases and fallback order |
+| `/health`          | Check keys, models, gateway, MCP and tools        |
 
 ## Next steps
 

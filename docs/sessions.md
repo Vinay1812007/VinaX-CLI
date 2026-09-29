@@ -16,6 +16,14 @@ Every conversation is saved in `~/.vinax/projects/<folder>/sessions/` as JSON li
 
 Both flags work with `-p` as well. `--output-format json` reports the `session_id`.
 
+The resume picker (`vinax -r` and `/resume`) lists the most recent conversations first, grouped under **Today**, **Yesterday**, **This week** and **Older**. Each shows its title, how long ago it was used, how many prompts it has and, if you switched with `/model`, that model. Type to search titles and first prompts.
+
+A model you pick with `/model` is saved with the session and used again when you resume it, unless you pass `--model`. Older VinaX versions ignore this entry, so session files stay compatible.
+
+## Git context
+
+In a git repository, VinaX tells the model where things stand when the session starts: the branch, how far it is ahead of or behind its upstream, how many files are staged, unstaged and untracked, a short status (at most 20 lines) and the last five commits. Every list is capped, so a large working tree can't flood the context. The model runs git itself for the current state, and VinaX's safeguards for risky git commands (force-push, `reset --hard`, `clean`) still apply. This helps with requests like "review my changes", "commit these changes" or "explain this diff".
+
 ## Compaction
 
 Free-tier models have small per-minute token budgets, so VinaX works within a conversation budget: `context.maxTokens`, 24K tokens by default, capped by the model's own window. The footer shows how much is used.

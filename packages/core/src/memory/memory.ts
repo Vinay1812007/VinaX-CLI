@@ -12,6 +12,8 @@ export interface MemoryFile {
   scope: MemoryScope;
   /** Content with `@imports` expanded. */
   content: string;
+  /** Files pulled in through `@imports` (absolute paths). */
+  imports?: readonly string[];
 }
 
 /** Instruction file names, in the order they are read within one folder. */
@@ -39,6 +41,8 @@ export function expandImports(
   fromDir: string,
   depth = 0,
   seen: Set<string> = new Set(),
+  /** Collects every file that was imported. */
+  found?: string[],
 ): string {
   if (depth >= MAX_IMPORT_DEPTH) return content;
   let inFence = false;
@@ -62,11 +66,13 @@ export function expandImports(
                   if (seen.has(target)) return match;
                   const text = readText(target);
                   if (text === undefined) return match;
+                  found?.push(target);
                   const nested = expandImports(
                     text,
                     path.dirname(target),
                     depth + 1,
                     new Set([...seen, target]),
+                    found,
                   );
                   return `${lead}${nested.trim()}`;
                 },
@@ -75,6 +81,13 @@ export function expandImports(
         .join('');
     })
     .join('\n');
+}
+
+/** Expanded content plus the list of imported files. */
+function expand(text: string, dir: string): { content: string; imports: string[] } {
+  const imports: string[] = [];
+  const content = expandImports(text, dir, 0, new Set(), imports);
+  return { content, imports: [...new Set(imports)] };
 }
 
 function findRepoRoot(cwd: string): string | undefined {
@@ -105,7 +118,7 @@ export class ProjectMemory {
       files.push({
         path: userFile,
         scope: 'user',
-        content: expandImports(user, path.dirname(userFile)),
+        ...expand(user, path.dirname(userFile)),
       });
     const root = findRepoRoot(cwd) ?? cwd;
     const chain: string[] = [];
@@ -119,8 +132,7 @@ export class ProjectMemory {
       for (const name of MEMORY_FILE_NAMES) {
         const file = path.join(dir, name);
         const text = readText(file);
-        if (text !== undefined)
-          files.push({ path: file, scope: 'project', content: expandImports(text, dir) });
+        if (text !== undefined) files.push({ path: file, scope: 'project', ...expand(text, dir) });
       }
     }
     return memory;
@@ -143,8 +155,7 @@ export class ProjectMemory {
       for (const name of MEMORY_FILE_NAMES) {
         const p = path.join(dir, name);
         const text = readText(p);
-        if (text !== undefined)
-          found.push({ path: p, scope: 'nested', content: expandImports(text, dir) });
+        if (text !== undefined) found.push({ path: p, scope: 'nested', ...expand(text, dir) });
       }
     }
     this.files.push(...found);
@@ -173,8 +184,7 @@ export class ProjectMemory {
     this.files.push(...fresh.files);
     for (const f of nested) {
       const text = readText(f.path);
-      if (text !== undefined)
-        this.files.push({ ...f, content: expandImports(text, path.dirname(f.path)) });
+      if (text !== undefined) this.files.push({ ...f, ...expand(text, path.dirname(f.path)) });
     }
   }
 

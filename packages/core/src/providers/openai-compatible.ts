@@ -23,18 +23,23 @@ export interface OpenAICompatibleOptions {
   ledger: RateLimitLedger;
   logger: Logger;
   defaultHeaders?: Record<string, string>;
-  /** Authenticated GET used to validate a key (`/models` is public on some providers). */
-  keyCheckPath: string;
+  /** How to prove a key works (`/models` is public on some providers). */
+  keyCheck: KeyCheckMethod;
   now?: () => number;
   /** Set when requests go through the VinaX gateway, which names models `<provider>:<id>`. */
   gateway?: GatewayClient;
 }
+
+/** An authenticated GET, or a one-token completion when the provider has no such endpoint. */
+export type KeyCheckMethod = { path: string } | { completionModel: string };
 
 const catalogEntrySchema = z.looseObject({
   id: z.string(),
   active: z.boolean().optional(),
   context_window: z.number().optional(),
   context_length: z.number().optional(),
+  /** vLLM-based servers (self-hosted NVIDIA NIM) report the context window here. */
+  max_model_len: z.number().optional(),
   supported_parameters: z.array(z.string()).optional(),
   pricing: z.looseObject({ prompt: z.string(), completion: z.string() }).optional(),
 });
@@ -69,13 +74,13 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
     m.pricing !== undefined && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0;
   return {
     id: m.id,
-    contextWindow: m.context_window ?? m.context_length,
+    contextWindow: m.context_window ?? m.context_length ?? m.max_model_len,
     supportsTools: m.supported_parameters?.includes('tools'),
     free: m.id.endsWith(':free') || zeroPrice,
   };
 }
 
-/** One OpenAI-compatible endpoint (Groq, OpenRouter) driven through the official `openai` SDK. */
+/** One OpenAI-compatible endpoint (Groq, OpenRouter, NVIDIA), driven by the `openai` SDK. */
 export class OpenAICompatibleProvider implements Provider {
   readonly name: ProviderName;
   private readonly client: OpenAI;
@@ -113,9 +118,15 @@ export class OpenAICompatibleProvider implements Provider {
   private async getJson(
     pathname: string,
     signal?: AbortSignal,
+    post?: unknown,
   ): Promise<{ status: number; body: unknown }> {
     const res = await fetch(`${this.opts.baseURL.replace(/\/$/, '')}${pathname}`, {
-      headers: { Authorization: `Bearer ${this.opts.apiKey}`, ...this.opts.defaultHeaders },
+      headers: {
+        Authorization: `Bearer ${this.opts.apiKey}`,
+        ...(post === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...this.opts.defaultHeaders,
+      },
+      ...(post === undefined ? {} : { method: 'POST', body: JSON.stringify(post) }),
       signal: signal ?? AbortSignal.timeout(this.opts.timeoutMs),
     });
     const text = await res.text();
@@ -143,7 +154,7 @@ export class OpenAICompatibleProvider implements Provider {
   }
 
   async accountInfo(signal?: AbortSignal): Promise<Record<string, string> | undefined> {
-    if (this.opts.keyCheckPath !== '/key') return undefined;
+    if (!('path' in this.opts.keyCheck) || this.opts.keyCheck.path !== '/key') return undefined;
     try {
       const { status, body } = await this.getJson('/key', signal);
       if (status !== 200 || typeof body !== 'object' || body === null) return undefined;
@@ -163,7 +174,15 @@ export class OpenAICompatibleProvider implements Provider {
   async validateKey(signal?: AbortSignal): Promise<KeyCheck> {
     try {
       await this.wakeGateway(signal);
-      const { status } = await this.getJson(this.opts.keyCheckPath, signal);
+      const check = this.opts.keyCheck;
+      const { status } =
+        'path' in check
+          ? await this.getJson(check.path, signal)
+          : await this.getJson('/chat/completions', signal, {
+              model: this.wireModel(check.completionModel),
+              messages: [{ role: 'user', content: 'ping' }],
+              max_tokens: 1,
+            });
       if (status === 200) return { ok: true };
       if (status === 401 || status === 403)
         return { ok: false, rejected: true, reason: 'the key was rejected' };

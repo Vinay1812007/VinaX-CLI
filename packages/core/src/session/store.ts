@@ -13,6 +13,8 @@ export type SessionEntry =
   /** Conversation compacted: the message list is replaced wholesale. */
   | { type: 'reset'; messages: ChatMessage[]; keepMarks?: boolean }
   | { type: 'title'; title: string }
+  /** The session switched model (older VinaX versions ignore this entry). */
+  | { type: 'model'; model: string }
   /** A file's content before `turn` changed it; `blob` is a content hash, `null` = did not exist. */
   | { type: 'checkpoint'; turn: number; file: string; blob: string | null }
   | { type: 'checkpoint_drop'; fromTurn: number }
@@ -30,6 +32,8 @@ export interface LoadedSession {
   cwd: string;
   createdAt: string;
   title: string | undefined;
+  /** Last model chosen with /model in this session. */
+  model: string | undefined;
   messages: ChatMessage[];
   marks: TurnMark[];
   /** turn → file → content before the turn (`null` = file did not exist) */
@@ -41,6 +45,8 @@ export interface SessionSummary {
   id: string;
   title: string | undefined;
   firstPrompt: string | undefined;
+  /** Last model the session used or chose, when recorded. */
+  model: string | undefined;
   createdAt: string;
   updatedAt: Date;
   turns: number;
@@ -150,10 +156,12 @@ export class SessionStore {
       const turns = entries.filter((e) => e.type === 'turn');
       if (!meta || turns.length === 0) continue;
       const titles = entries.filter((e) => e.type === 'title');
+      const models = entries.filter((e) => e.type === 'model');
       out.push({
         id: meta.id,
         title: titles.at(-1)?.title,
         firstPrompt: turns[0]?.prompt,
+        model: models.at(-1)?.model,
         createdAt: meta.createdAt,
         updatedAt: stat.mtime,
         turns: turns.length,
@@ -176,6 +184,7 @@ export class SessionStore {
       cwd: meta.cwd,
       createdAt: meta.createdAt,
       title: undefined,
+      model: undefined,
       messages: [],
       marks: [],
       checkpoints: new Map(),
@@ -199,6 +208,9 @@ export class SessionStore {
           break;
         case 'title':
           session.title = e.title;
+          break;
+        case 'model':
+          session.model = e.model;
           break;
         case 'checkpoint': {
           const files = session.checkpoints.get(e.turn) ?? new Map<string, string | null>();

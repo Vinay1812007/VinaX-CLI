@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64" width="280" height="64" role="img" aria-label="VinaX">
+  <title>VinaX</title>
+  <style>
+    .word { fill: #0B1117; font: 700 38px 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif; letter-spacing: -0.5px; }
+    .x { fill: #0D9488; }
+    @media (prefers-color-scheme: dark) {
+      .word { fill: #E6EDF3; }
+      .x { fill: #2DD4BF; }
+    }
+  </style>
+  <rect width="64" height="64" rx="14" fill="#0B1117"/>
+  <path d="M12 20 L22 44 L32 20" fill="none" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M35 20 L52 44 M52 20 L35 44" fill="none" stroke="#5EEAD4" stroke-width="5.5" stroke-linecap="round"/>
+  <text x="80" y="45" class="word">Vina<tspan class="x">X</tspan></text>
+</svg>

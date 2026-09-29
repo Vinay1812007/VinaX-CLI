@@ -9,6 +9,7 @@ export type SecretSource = 'env' | 'keychain' | 'file';
 export const SECRET_ENV_VARS: Record<SecretName, string> = {
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
   gateway: 'VINAX_GATEWAY_TOKEN',
 };
 

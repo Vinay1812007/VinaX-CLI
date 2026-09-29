@@ -1,4 +1,4 @@
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
 import { useEffect, useState } from 'react';
 import { formatDuration, formatTokens } from '../format.js';
 import { useTheme } from '../theme.js';
@@ -23,6 +23,8 @@ interface Props {
   waiting?: string | undefined;
   /** What is happening instead of the rotating verb, e.g. "Running Bash". */
   activity?: string | undefined;
+  /** Stages this turn went through so far, e.g. ["Inspecting repository", "Editing"]. */
+  trail?: readonly string[];
   now?: () => number;
 }
 
@@ -31,6 +33,7 @@ export function ActivityIndicator({
   outputChars,
   waiting,
   activity,
+  trail = [],
   now = Date.now,
 }: Props) {
   const theme = useTheme();
@@ -53,12 +56,20 @@ export function ActivityIndicator({
     'esc to interrupt',
   ];
   return (
-    <Text>
-      <Text color={theme.accent}>{FRAMES[tick % FRAMES.length]} </Text>
-      <Text color={waiting === undefined ? theme.accent : theme.warning}>
-        {waiting ?? `${activity ?? verb}…`}
+    <Box flexDirection="column">
+      <Text>
+        <Text color={theme.accent}>{FRAMES[tick % FRAMES.length]} </Text>
+        <Text color={waiting === undefined ? theme.accent : theme.warning}>
+          {waiting ?? `${activity ?? verb}…`}
+        </Text>
+        <Text color={theme.muted}> ({details.join(' · ')})</Text>
       </Text>
-      <Text color={theme.muted}> ({details.join(' · ')})</Text>
-    </Text>
+      {trail.length < 2 ? null : (
+        <Text color={theme.muted} wrap="truncate-start">
+          {'  '}
+          {trail.join(' → ')}
+        </Text>
+      )}
+    </Box>
   );
 }

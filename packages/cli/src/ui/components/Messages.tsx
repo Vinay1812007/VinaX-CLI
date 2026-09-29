@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import { useMemo } from 'react';
+import { CATEGORY_LABELS, providerLabel, type FailureReport } from '@vinax/core';
 import { renderMarkdown } from '../markdown.js';
 import { useTheme } from '../theme.js';
 
@@ -115,6 +116,78 @@ export function ShellEntry({
       {exitCode !== undefined && exitCode !== 0 ? (
         <Text color={theme.error}> exit code {exitCode}</Text>
       ) : null}
+    </Box>
+  );
+}
+
+/** A failed turn: what failed, per model, why, and what to try next. */
+export function ErrorCard({ report, width }: { report: FailureReport; width: number }) {
+  const theme = useTheme();
+  return (
+    <Box
+      flexDirection="column"
+      marginTop={1}
+      borderStyle="round"
+      borderColor={theme.error}
+      paddingX={1}
+      width={Math.min(width, 100)}
+    >
+      <Text color={theme.error} bold>
+        ✖ {report.title}
+      </Text>
+      {report.lines.map((l, i) => (
+        <Box
+          key={`${l.provider}:${l.model}:${String(i)}`}
+          flexDirection="column"
+          marginTop={i === 0 ? 1 : 0}
+        >
+          <Text wrap="truncate-end">
+            <Text bold>{providerLabel(l.provider)}</Text>
+            <Text color={theme.muted}> · {l.model}</Text>
+            <Text color={theme.warning}> — {CATEGORY_LABELS[l.category]}</Text>
+          </Text>
+          <Text color={theme.muted} wrap="wrap">
+            {'  '}
+            {l.reason}
+          </Text>
+        </Box>
+      ))}
+      {report.reason === undefined ? null : (
+        <Box marginTop={1}>
+          <Text wrap="wrap">
+            <Text color={theme.muted}>Reason: </Text>
+            {report.reason}
+          </Text>
+        </Box>
+      )}
+      {report.actions.length === 0 ? null : (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.muted}>Try</Text>
+          {report.actions.map((a) => (
+            <Text key={a} wrap="wrap">
+              <Text color={theme.accent}>› </Text>
+              {a}
+            </Text>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** The closing line of a turn that used tools. */
+export function TurnSummary({ text }: { text: string }) {
+  const theme = useTheme();
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={theme.success}>▸ </Text>
+        <Text bold>Done</Text>
+      </Text>
+      <Text color={theme.muted} wrap="truncate-end">
+        {'  └ '}
+        {text}
+      </Text>
     </Box>
   );
 }

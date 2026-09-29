@@ -23,7 +23,12 @@ export interface CommandContext {
     prompt: string,
     opts?: { display?: string; allowRules?: readonly string[]; model?: string },
   ) => void;
-  pick: <T>(title: string, items: readonly SelectItem<T>[]) => Promise<T | undefined>;
+  /** `searchable` adds type-to-filter search and group headings (for long lists). */
+  pick: <T>(
+    title: string,
+    items: readonly SelectItem<T>[],
+    opts?: { searchable?: boolean },
+  ) => Promise<T | undefined>;
   ask: (
     title: string,
     placeholder: string,

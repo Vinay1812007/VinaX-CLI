@@ -1,7 +1,13 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
-import { modelRefSchema, PERMISSION_MODES, SettingsError, type PermissionMode } from '@vinax/core';
+import {
+  MODEL_REF_HINT,
+  normalizeModelRef,
+  PERMISSION_MODES,
+  SettingsError,
+  type PermissionMode,
+} from '@vinax/core';
 import { configCommand } from './config-command.js';
-import { doctorCommand } from './doctor-command.js';
+import { doctorCommand, healthCommand } from './doctor-command.js';
 import { loginCommand, logoutCommand } from './login-command.js';
 import { mcpCommand } from './mcp-command.js';
 import { cleanupOldBinary, detectInstall, runUpdate } from './update.js';
@@ -69,11 +75,11 @@ function sessionOptions(prompt: string | undefined, o: RootOptions): SessionOpti
   };
 }
 
+/** Accepts `<provider>:<model>`, a provider domain or an alias; returns the canonical ref. */
 function parseModel(value: string): string {
-  const parsed = modelRefSchema.safeParse(value);
-  if (!parsed.success)
-    throw new InvalidArgumentError(parsed.error.issues[0]?.message ?? 'invalid model');
-  return parsed.data;
+  const ref = normalizeModelRef(value);
+  if (ref === undefined) throw new InvalidArgumentError(MODEL_REF_HINT);
+  return ref;
 }
 
 /** Runs the CLI and resolves to the process exit code. */
@@ -88,7 +94,7 @@ export async function main(
   };
 
   const program = new Command('vinax')
-    .description('VinaX: an agentic coding assistant for your terminal')
+    .description('VinaX: your AI coding agent for the terminal')
     .version(VERSION, '-v, --version', 'print the version')
     .helpOption('-h, --help', 'show help')
     .argument('[prompt]', 'initial prompt')
@@ -100,7 +106,7 @@ export async function main(
     )
     .option(
       '--model <provider:model>',
-      'model to use first, e.g. groq:openai/gpt-oss-120b',
+      'model to use first, e.g. groq:openai/gpt-oss-120b, nvidia:openai/gpt-oss-20b or an alias like NVD_CHAT_OSS_20_B',
       parseModel,
     )
     .addOption(
@@ -140,6 +146,7 @@ export async function main(
 
   program.addCommand(configCommand(io, setExit).exitOverride());
   program.addCommand(doctorCommand(io, setExit).exitOverride());
+  program.addCommand(healthCommand(io, setExit).exitOverride());
   program.addCommand(mcpCommand(io, setExit).exitOverride());
   program.addCommand(loginCommand(io, setExit));
   program.addCommand(logoutCommand(io, setExit));

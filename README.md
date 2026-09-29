@@ -1,20 +1,27 @@
+<p align="center">
+  <img src="brand/vinax-wordmark.svg" alt="VinaX" width="360">
+</p>
+
+<p align="center"><strong>VinaX is your AI coding agent for the terminal.</strong></p>
+
 # VinaX CLI
 
-VinaX (`vinax`) is an open-source agentic coding assistant for the terminal, powered by free-tier
-models from **Groq** and **OpenRouter**.
+VinaX (`vinax`) is an open-source AI coding agent for the terminal. It runs on models from
+**Groq**, **OpenRouter** and **NVIDIA**, with free tiers and automatic fallback between them.
 
 > **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
 > mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
-> sub-agents and WebFetch. It runs on Groq and OpenRouter free tiers with automatic fallback, or
+> sub-agents and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
 > through an optional shared [gateway](docs/gateway.md).
 >
 > 📖 **Documentation: https://vinay1812007.github.io/VinaX-CLI/**
 
 ## Install
 
-You need a free API key from [Groq](https://console.groq.com/keys) and/or
-[OpenRouter](https://openrouter.ai/keys), or a token for someone's [VinaX gateway](#gateway).
+You need an API key from [Groq](https://console.groq.com/keys),
+[OpenRouter](https://openrouter.ai/keys) (both have free tiers) and/or
+[NVIDIA](https://build.nvidia.com), or a token for someone's [VinaX gateway](#gateway).
 
 **Standalone binary** (no Node.js needed; macOS, Linux and Windows on x64 and arm64):
 
@@ -66,6 +73,7 @@ On first run VinaX walks you through setup. You can also log in from the shell:
 
 ```sh
 vinax login groq                     # prompts for the key without echoing it, then checks it
+vinax login nvidia                   # NVIDIA (build.nvidia.com)
 vinax login --gateway https://…      # use a VinaX gateway instead (asks for your token)
 vinax logout groq                    # or: vinax logout --gateway
 ```
@@ -75,7 +83,10 @@ Environment variables always take precedence over stored keys:
 ```sh
 export GROQ_API_KEY=gsk_...
 export OPENROUTER_API_KEY=sk-or-...
+export NVIDIA_API_KEY=nvapi-...
 ```
+
+Keys never go in settings files.
 
 Or store them. `set-key` checks the key live against the provider before saving it to the OS keychain
 (falling back to `~/.vinax/credentials.json`, mode 0600):
@@ -86,6 +97,36 @@ echo "$KEY" | vinax config set-key openrouter
 vinax config keys                  # shows masked keys and where each one comes from
 vinax config remove-key groq
 ```
+
+Check everything at once with `vinax health` (a grouped, one-line-per-check summary that exits 1
+on failure) or `vinax doctor` (full details).
+
+## NVIDIA
+
+VinaX supports NVIDIA's hosted API as a first-class provider, with the same routing and fallback
+as Groq and OpenRouter.
+
+| Provider              | Model                | Alias               |
+| --------------------- | -------------------- | ------------------- |
+| NVIDIA (`nvidia.com`) | `openai/gpt-oss-20b` | `NVD_CHAT_OSS_20_B` |
+
+```sh
+export NVIDIA_API_KEY=nvapi-...
+vinax --model nvidia:openai/gpt-oss-20b
+vinax --model NVD_CHAT_OSS_20_B            # the same model by its alias (case-insensitive)
+vinax config set model NVD_CHAT_OSS_20_B   # make it the default
+```
+
+- `nvidia.com:openai/gpt-oss-20b` works too. Aliases are accepted anywhere a model ref is: `--model`,
+  `model`/`smallModel`/`fallbackChain` in settings, `/model`, and custom command and sub-agent
+  `model` frontmatter.
+- The API is `https://integrate.api.nvidia.com/v1` by default. Point
+  `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead; `providers.nvidia.rpm`
+  (default 40) sets the local request rate.
+- NVIDIA's `/models` list is public, so keys are checked with a one-token completion. The catalog
+  lists ids only, so VinaX supplies the 128K context window for the models it knows.
+- The default fallback chain ends with `nvidia:openai/gpt-oss-20b`; it's skipped until you add an
+  NVIDIA key.
 
 ## Interactive mode
 
@@ -99,10 +140,34 @@ your API keys (each is checked live before it's saved) and a default model. The 
 use a folder, VinaX asks whether you trust the files in it. The answer covers that folder and
 every folder inside it.
 
+The welcome panel shows where you are and what VinaX will use:
+
+```
+╭──────────────────────────────────────────────────────────────╮
+│ ╲  ╱ ╲╱  VinaX v0.1.0                                        │
+│  ╲╱  ╱╲  AI coding agent for the terminal                    │
+│                                                              │
+│ cwd      ~/code/app ⎇ main                                   │
+│ model    openai/gpt-oss-20b · NVIDIA · NVD_CHAT_OSS_20_B     │
+│ session  new session                                         │
+│ memory   ✓ VINAX.md  ✓ AGENTS.md                             │
+│                                                              │
+│ / commands  @ files  ! shell  # memory  ? shortcuts          │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+It lists memory files by name only (never their contents). Narrow windows drop the mark,
+`TERM=dumb` gets an ASCII mark, and `NO_COLOR` turns colour off.
+
 Answers stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
-While a reply is streaming, the activity line shows elapsed time, an approximate token count and
-`esc to interrupt`. The footer shows the current mode, the model that answered, how much of the
-context budget is used, and any fallback or rate-limit notice.
+While a reply is streaming, the activity line shows what VinaX is doing (Inspecting repository,
+Planning, Editing, Running tests…), elapsed time, an approximate token count and
+`esc to interrupt`, with a trail of the turn's stages such as
+`Inspecting repository → Editing → Running tests`. The footer shows the current mode, the model
+that answered, how much of the context budget is used, and any fallback or rate-limit notice.
+When a turn fails, an error card names each model tried, the kind of failure (authentication,
+missing key, rate limit, temporary provider error, network, model not available…) and what to try
+next.
 
 | Key                                                 | Action                                                         |
 | --------------------------------------------------- | -------------------------------------------------------------- |
@@ -135,7 +200,13 @@ one-line result underneath:
   └ Changed +1 −1 lines
       4 -   return sum / (values.length - 1);
       4 +   return sum / values.length;
+▸ Bash node --test
+  └ Exit 0 · 9 lines · 0.1s
+▸ Done
+  └ Updated 1 file · 3 tool calls · 6.2s
 ```
+
+`⊘` marks a call you denied or declined (or a hook blocked), and `✖` a tool that failed.
 
 | Tool                 | What it does                                                                                                                                                                                                                                                         |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -213,20 +284,22 @@ Commands containing `$(…)` or backticks always ask.
 
 Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run).
 
-| Command                           | What it does                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------ |
-| `/help`                           | Commands and shortcuts                                                         |
-| `/clear`                          | Start a new conversation (the old one stays available in `/resume`)            |
-| `/compact [focus]`                | Summarize the conversation to free up context                                  |
-| `/model [provider:model]`         | Switch the model for this session (with a picker)                              |
-| `/resume`, `/rewind`              | Continue an earlier conversation; go back to an earlier prompt                 |
-| `/init`, `/memory`                | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                     |
-| `/status`, `/usage`               | Session, remaining rate limits, OpenRouter quota; requests and tokens today    |
-| `/doctor`                         | Checks Node, settings, keys (live), ripgrep, shell, git, keychain and terminal |
-| `/login`, `/logout`               | Add, replace or remove a provider key without leaving the session              |
-| `/config`, `/permissions`         | Show the effective settings and permission rules                               |
-| `/theme`, `/vim`                  | Change the colour theme; toggle vim key bindings (saved)                       |
-| `/export [file]`, `/bug`, `/exit` | Save the conversation as Markdown; open a pre-filled GitHub issue; quit        |
+| Command                            | What it does                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `/help`                            | Commands and shortcuts                                                                                                    |
+| `/clear`                           | Start a new conversation (the old one stays available in `/resume`)                                                       |
+| `/compact [focus]`                 | Summarize the conversation to free up context                                                                             |
+| `/model [provider:model \| alias]` | Switch the model for this session (searchable picker, grouped by provider)                                                |
+| `/models`                          | Providers, current model and alias, fallback order, aliases; then switch                                                  |
+| `/resume`, `/rewind`               | Continue an earlier conversation; go back to an earlier prompt                                                            |
+| `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                                                                |
+| `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; requests and tokens today                                               |
+| `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
+| `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
+| `/login`, `/logout`                | Add, replace or remove a provider key without leaving the session                                                         |
+| `/config`, `/permissions`          | Show the effective settings and permission rules                                                                          |
+| `/theme`, `/vim`                   | Change the colour theme; toggle vim key bindings (saved)                                                                  |
+| `/export [file]`, `/bug`, `/exit`  | Save the conversation as Markdown; open a pre-filled GitHub issue; quit                                                   |
 
 **Prefixes:**
 
@@ -281,7 +354,13 @@ after the first answer.
 | `-c, --continue`    | Continue the most recent conversation in this folder |
 | `-r, --resume [id]` | Pick a conversation to resume (or pass its id)       |
 
-Both work with `-p` too, and `--output-format json` reports the `session_id`.
+Both work with `-p` too, and `--output-format json` reports the `session_id`. The resume picker
+is searchable and grouped into Today, Yesterday, This week and Older, with each session's age,
+prompt count and the model picked with `/model`, which is also restored when you resume.
+
+**Git context.** In a git repository the model starts with the branch, upstream ahead/behind,
+counts of staged, unstaged and untracked files, a short status and the last five commits (all
+capped), which helps with "review my changes", "commit these changes" and "explain this diff".
 
 **Compaction.** VinaX works within a conversation budget: `context.maxTokens`, 24K tokens by
 default, capped by the model's own window. The status line shows how much is used. At 85%,
@@ -387,7 +466,7 @@ vinax -p "summarize src/" --output-format stream-json --max-turns 10
 | ----------------------------------------- | ----------------------------------------------------------------------- |
 | `-p, --print`                             | Run once without the UI. Piped stdin is added to the prompt as context. |
 | `--output-format text\|json\|stream-json` | `json` prints one result object; `stream-json` prints NDJSON events.    |
-| `--model <provider:model>`                | Try this model first, ahead of the configured chain.                    |
+| `--model <provider:model \| alias>`       | Try this model first, ahead of the configured chain.                    |
 | `--permission-mode <mode>`                | `default`, `acceptEdits` or `plan`.                                     |
 | `--allowedTools <rules>`                  | Allow without asking, e.g. `"Bash(npm test:*),Edit"`.                   |
 | `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`.                                 |
@@ -409,6 +488,9 @@ the `--allowedTools` rule that would allow it, and the model carries on without 
 - a final `result`, with `subtype`, `is_error`, `result`, `model`, `usage`, `num_turns`,
   `tool_calls`, `fallbacks` and `duration_ms`
 
+When a request fails, stderr explains each model tried, the kind of failure and what to try next;
+`--output-format json` keeps the raw `error` string.
+
 **Exit codes:** `0` success · `1` failure (no keys, bad settings, every model failed,
 `--max-turns` reached) · `2` usage error · `130` interrupted with Ctrl+C.
 
@@ -418,11 +500,15 @@ VinaX never hardcodes a model list. Default models live in settings, and each on
 against the provider's live `/models` catalog (cached for 24h in `~/.vinax/cache/`). Missing models
 are skipped with a warning.
 
-| Setting         | Default                                                                                                            |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `model`         | `groq:openai/gpt-oss-120b`                                                                                         |
-| `smallModel`    | `groq:openai/gpt-oss-20b` (titles, summaries, compaction)                                                          |
-| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` |
+| Setting         | Default                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `model`         | `groq:openai/gpt-oss-120b`                                                                                                                       |
+| `smallModel`    | `groq:openai/gpt-oss-20b` (titles, summaries, compaction)                                                                                        |
+| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:openai/gpt-oss-20b` |
+
+The model used first is `--model` if given, else the model picked with `/model` in the session,
+else the `model` setting; the fallback chain follows. `/models` shows the order and whether each
+entry is ready, has no key or was skipped.
 
 Before each request the router checks what the model has left: its local requests-per-minute
 window, and the token and request budgets reported in the provider's rate-limit headers. Then it
@@ -480,7 +566,7 @@ theme.
 
 ## Gateway
 
-The gateway is an **optional**, small server that holds shared Groq/OpenRouter keys and relays
+The gateway is an **optional**, small server that holds shared Groq/OpenRouter/NVIDIA keys and relays
 chat completions, so a team or class can use VinaX without everyone creating keys. The agent and
 all tools still run on your machine; only model requests go through the gateway.
 
@@ -510,6 +596,7 @@ pnpm build:binaries darwin-arm64   # standalone binaries in dist-bin/ (needs Bun
 | Package            | Purpose                                                                            |
 | ------------------ | ---------------------------------------------------------------------------------- |
 | `packages/core`    | UI-free: settings, secrets, providers, router, agent loop, tools, permissions, MCP |
+| `brand/`           | VinaX logo assets: the VX mark (colour and mono) and the wordmark                  |
 | `packages/cli`     | The `vinax` executable: Ink UI, commands, print mode (bundles core)                |
 | `packages/testkit` | Scriptable mock OpenAI-compatible and MCP servers used by the tests                |
 | `apps/gateway`     | The optional Hono gateway deployed to Render                                       |

@@ -2,7 +2,7 @@ import type { ResolvedSettings } from '../config/schema.js';
 import type { SecretStore } from '../config/secrets.js';
 import type { Logger } from '../log/logger.js';
 import { GatewayClient } from './gateway.js';
-import { OpenAICompatibleProvider } from './openai-compatible.js';
+import { OpenAICompatibleProvider, type KeyCheckMethod } from './openai-compatible.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import { PROVIDER_NAMES, type Provider, type ProviderName } from './types.js';
 
@@ -10,14 +10,17 @@ export const PROJECT_URL = 'https://github.com/Vinay1812007/VinaX-CLI';
 
 const PER_PROVIDER: Record<
   ProviderName,
-  { keyCheckPath: string; headers?: Record<string, string> }
+  { keyCheck: KeyCheckMethod; headers?: Record<string, string> }
 > = {
-  groq: { keyCheckPath: '/models' },
+  groq: { keyCheck: { path: '/models' } },
   // OpenRouter's /models is public, so /key is the call that actually proves the key works.
   openrouter: {
-    keyCheckPath: '/key',
+    keyCheck: { path: '/key' },
     headers: { 'HTTP-Referer': PROJECT_URL, 'X-Title': 'VinaX CLI' },
   },
+  // NVIDIA's /models is public too and it has no key-info endpoint, so a one-token completion
+  // is the cheapest request that needs a valid key.
+  nvidia: { keyCheck: { completionModel: 'openai/gpt-oss-20b' } },
 };
 
 export function createProvider(
@@ -34,7 +37,7 @@ export function createProvider(
     timeoutMs: deps.settings.router.requestTimeoutMs,
     ledger: deps.ledger,
     logger: deps.logger,
-    keyCheckPath: extra.keyCheckPath,
+    keyCheck: extra.keyCheck,
     ...(extra.headers ? { defaultHeaders: extra.headers } : {}),
   });
 }
@@ -53,7 +56,7 @@ export function createGatewayProvider(
     timeoutMs: Math.max(deps.settings.router.requestTimeoutMs, gateway.timeoutMs),
     ledger: deps.ledger,
     logger: deps.logger,
-    keyCheckPath: '/models',
+    keyCheck: { path: '/models' },
     gateway,
   });
 }

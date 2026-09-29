@@ -30,7 +30,11 @@ export class ProviderError extends Error {
   }
 }
 
-const LABEL: Record<ProviderName, string> = { groq: 'Groq', openrouter: 'OpenRouter' };
+const LABEL: Record<ProviderName, string> = {
+  groq: 'Groq',
+  openrouter: 'OpenRouter',
+  nvidia: 'NVIDIA',
+};
 
 export function providerLabel(name: ProviderName): string {
   return LABEL[name];

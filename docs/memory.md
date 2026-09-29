@@ -14,6 +14,8 @@ VinaX reads instruction files at the start of every session and sends them with 
 
 `AGENTS.md` is read too, so a repository set up for other coding agents works as is.
 
+The welcome panel lists the memory in use, for example `✓ VINAX.md  ✓ AGENTS.md  ✓ VINAX.md (personal)  ✓ 1 imported file`. It shows file names only, never their contents. `/status` lists the files as well.
+
 ## Create and edit memory
 
 - `/init` analyzes the project and writes a starter `VINAX.md`: how to build, test and lint, plus the layout and conventions.

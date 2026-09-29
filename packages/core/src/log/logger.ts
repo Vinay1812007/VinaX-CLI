@@ -4,6 +4,7 @@ import path from 'node:path';
 const KEY_PATTERNS: readonly RegExp[] = [
   /gsk_[A-Za-z0-9]{8,}/g, // Groq
   /sk-or-[A-Za-z0-9-]{8,}/g, // OpenRouter
+  /nvapi-[A-Za-z0-9_-]{8,}/g, // NVIDIA
   /sk-[A-Za-z0-9_-]{16,}/g, // generic OpenAI-style
   /(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi,
 ];

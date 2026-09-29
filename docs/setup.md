@@ -66,17 +66,27 @@ Setup on first run handles this. To change keys later:
 ```bash
 vinax login groq                  # prompts for the key without echoing it, then checks it
 vinax login openrouter
+vinax login nvidia                # NVIDIA (build.nvidia.com); checked with a one-token request
 vinax login --gateway https://your-gateway.onrender.com   # use a VinaX gateway instead
 vinax logout groq                 # or: vinax logout --gateway
 ```
 
 Inside a session, `/login` and `/logout` do the same. Keys resolve in this order:
 
-1. Environment variables: `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `VINAX_GATEWAY_TOKEN`
+1. Environment variables: `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `VINAX_GATEWAY_TOKEN`
 2. The OS keychain (macOS Keychain, Windows Credential Manager, libsecret)
 3. `~/.vinax/credentials.json`, mode 0600
 
-`vinax config keys` shows each key, masked, and where it comes from.
+`vinax config keys` shows each key, masked, and where it comes from. Keys never go in settings files.
+
+## Check your setup
+
+```bash
+vinax health     # one line per check, grouped; exits 1 if something is broken
+vinax doctor     # the same checks with full details
+```
+
+`vinax health` groups its checks under Runtime, Providers & models, Tools and Integrations (gateway and MCP). `✔` is fine, `⚠` a warning, `✖` a failure, and `○` something optional you haven't set up, such as a provider you don't use. Inside a session, `/health` and `/doctor` do the same.
 
 ## Update
 
@@ -125,7 +135,7 @@ To also remove settings, sessions and stored keys, delete `~/.vinax`. On macOS, 
 | `.vinax/settings.local.json`  | Your personal settings for one project (git-ignored)       |
 | `~/.vinax/projects/<folder>/` | Conversations, checkpoints and prompt history, per project |
 | `~/.vinax/state.json`         | Onboarding, trusted folders, approved MCP servers          |
-| `~/.vinax/cache/`             | Model lists (refreshed every 24 hours)                     |
+| `~/.vinax/cache/`             | Model lists, per provider (refreshed every 24 hours)       |
 | `~/.vinax/logs/`              | Debug logs from `--verbose`, with keys redacted            |
 
 `VINAX_HOME` moves `~/.vinax` somewhere else.

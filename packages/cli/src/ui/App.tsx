@@ -8,6 +8,7 @@ import { Onboarding, type OnboardingDeps } from './components/Onboarding.js';
 import { PickerOverlay } from './components/Overlays.js';
 import { TrustPrompt } from './components/TrustPrompt.js';
 import { colorDisabled, resolveTheme, ThemeContext } from './theme.js';
+import { sessionItems } from './sessions.js';
 import { restoreItems, type TranscriptItem } from './transcript.js';
 
 export interface AppDeps {
@@ -178,11 +179,8 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
       body = (
         <PickerOverlay
           title="Resume which conversation? (Esc starts a new one)"
-          items={phase.sessions.map((s) => ({
-            label: s.title ?? (s.firstPrompt ?? '(untitled)').slice(0, 60),
-            value: s.id,
-            hint: `${s.updatedAt.toISOString().slice(0, 16).replace('T', ' ')} · ${String(s.turns)} prompt${s.turns === 1 ? '' : 's'}`,
-          }))}
+          items={sessionItems(phase.sessions)}
+          searchable
           onDone={(id) => {
             void enterChat(
               runtime,

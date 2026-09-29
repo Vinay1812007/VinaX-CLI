@@ -5,6 +5,7 @@ import {
   FileIndex,
   formatModelRef,
   generateTitle,
+  modelAlias,
   parseModelRef,
   projectDataDir,
   PromptHistory,
@@ -26,6 +27,7 @@ import {
 import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
 import { formatTokens, truncate } from '../format.js';
+import { extendTrail, phaseFor, turnSummary, type Phase } from '../phases.js';
 import { useTheme } from '../theme.js';
 import {
   splitStable,
@@ -37,7 +39,15 @@ import { usePromptEditor, type Submission } from '../use-prompt-editor.js';
 import { useRefState } from '../use-ref-state.js';
 import { useSuggestions } from '../use-suggestions.js';
 import { ActivityIndicator } from './ActivityIndicator.js';
-import { AssistantMarkdown, Notice, Panel, ShellEntry, UserMessage } from './Messages.js';
+import {
+  AssistantMarkdown,
+  ErrorCard,
+  Notice,
+  Panel,
+  ShellEntry,
+  TurnSummary,
+  UserMessage,
+} from './Messages.js';
 import { AskOverlay, PickerOverlay } from './Overlays.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { PlanPrompt } from './PlanPrompt.js';
@@ -72,6 +82,8 @@ interface Streaming {
   waiting: string | undefined;
   /** Replaces the rotating verb, e.g. "Compacting the conversation". */
   label?: string;
+  /** Stages of this turn so far (Inspecting repository → Editing → Running tests). */
+  trail?: Phase[];
 }
 
 interface Running {
@@ -93,6 +105,7 @@ type Overlay =
       kind: 'picker';
       title: string;
       items: readonly SelectItem<unknown>[];
+      searchable: boolean;
       resolve: (v: unknown) => void;
     }
   | {
@@ -299,6 +312,7 @@ export function ChatScreen(props: ChatScreenProps) {
     const fallbacks: string[] = [];
     const tools: ToolRecord[] = [];
     const labels = new Map<string, string>();
+    const toolStarts = new Map<string, number>();
     let model: string | undefined;
     setNotice(undefined);
     setStreaming({ startedAt, tail: '', chars: 0, committed: false, waiting: undefined });
@@ -321,12 +335,16 @@ export function ChatScreen(props: ChatScreenProps) {
           );
           return;
         }
-        case 'tool_call':
+        case 'tool_call': {
           commitTail();
           committedRef.current = false;
           labels.set(ev.id, ev.label);
+          toolStarts.set(ev.id, now());
+          const phase = phaseFor(ev.name, ev.label);
+          setStreaming((s) => s && { ...s, trail: extendTrail(s.trail ?? [], phase) });
           setRunning((r) => [...r, { id: ev.id, name: ev.name, label: ev.label, output: '' }]);
           return;
+        }
         case 'tool_progress':
           setRunning((r) =>
             r.map((t) =>
@@ -338,6 +356,7 @@ export function ChatScreen(props: ChatScreenProps) {
           return;
         case 'tool_result': {
           const label = labels.get(ev.id) ?? '';
+          const began = toolStarts.get(ev.id);
           setRunning((r) => r.filter((t) => t.id !== ev.id));
           push({
             kind: 'tool',
@@ -346,6 +365,7 @@ export function ChatScreen(props: ChatScreenProps) {
             ok: ev.ok,
             summary: ev.summary,
             display: ev.display,
+            ...(began === undefined ? {} : { durationMs: now() - began }),
           });
           tools.push({ name: ev.name, label, ok: ev.ok, summary: ev.summary, output: ev.content });
           return;
@@ -427,12 +447,17 @@ export function ChatScreen(props: ChatScreenProps) {
         level: 'info',
         text: 'Stopped: you declined the action. Tell VinaX what to do instead.',
       });
+    } else if (outcome.status === 'failed' && outcome.report !== undefined) {
+      push({ kind: 'error', report: outcome.report });
     } else if (outcome.status === 'failed' || outcome.status === 'max_turns') {
       push({
         kind: 'notice',
         level: outcome.status === 'failed' ? 'error' : 'warning',
         text: outcome.error ?? 'The request failed.',
       });
+    }
+    if (outcome.status === 'done' && tools.length > 0) {
+      push({ kind: 'summary', text: turnSummary(tools, now() - startedAt) });
     }
     setStreaming(undefined);
     setTurns((t) => [
@@ -489,12 +514,14 @@ export function ChatScreen(props: ChatScreenProps) {
   const pick = <T,>(
     pickTitle: string,
     pickItems: readonly SelectItem<T>[],
+    pickOpts: { searchable?: boolean } = {},
   ): Promise<T | undefined> =>
     new Promise((resolve) => {
       setOverlay({
         kind: 'picker',
         title: pickTitle,
         items: pickItems,
+        searchable: pickOpts.searchable === true,
         resolve: (v) => {
           setOverlay(undefined);
           resolve(v as T | undefined);
@@ -807,8 +834,17 @@ export function ChatScreen(props: ChatScreenProps) {
             cwd={runtime.cwd}
             model={modelRef.model}
             provider={`${providerLabel(modelRef.provider)}${runtime.viaGateway.has(modelRef.provider) ? ' (VinaX gateway)' : ''}`}
+            alias={modelAlias(formatModelRef(modelRef))}
+            branch={setup.git?.branch}
+            session={
+              (props.restored ?? []).length > 0
+                ? `resumed · ${props.title ?? 'untitled session'}`
+                : 'new session'
+            }
+            memory={setup.memory.files}
             tips={tips}
             width={width}
+            env={runtime.env}
           />
         );
       case 'user':
@@ -844,9 +880,14 @@ export function ChatScreen(props: ChatScreenProps) {
             ok={item.ok}
             summary={item.summary}
             display={item.display}
+            durationMs={item.durationMs}
             width={width}
           />
         );
+      case 'error':
+        return <ErrorCard key={item.id} report={item.report} width={width} />;
+      case 'summary':
+        return <TurnSummary key={item.id} text={item.text} />;
     }
   };
 
@@ -899,8 +940,9 @@ export function ChatScreen(props: ChatScreenProps) {
             waiting={streaming.waiting}
             activity={
               streaming.label ??
-              (running[0] === undefined ? undefined : `Running ${running[0].name}`)
+              (running[0] === undefined ? undefined : phaseFor(running[0].name, running[0].label))
             }
+            trail={streaming.trail ?? []}
             now={now}
           />
         </Box>
@@ -938,7 +980,12 @@ export function ChatScreen(props: ChatScreenProps) {
         />
       ) : null}
       {overlay?.kind === 'picker' ? (
-        <PickerOverlay title={overlay.title} items={overlay.items} onDone={overlay.resolve} />
+        <PickerOverlay
+          title={overlay.title}
+          items={overlay.items}
+          searchable={overlay.searchable}
+          onDone={overlay.resolve}
+        />
       ) : null}
       {overlay?.kind === 'ask' ? (
         <AskOverlay

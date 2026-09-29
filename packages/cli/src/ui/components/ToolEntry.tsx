@@ -2,6 +2,7 @@ import { Box, Text } from 'ink';
 import { useEffect, useState } from 'react';
 import type { ToolDisplay } from '@vinax/core';
 import { truncate } from '../format.js';
+import { toolOutcome, withDuration } from '../phases.js';
 import { renderMarkdown } from '../markdown.js';
 import { useTheme } from '../theme.js';
 import { DiffView } from './DiffView.js';
@@ -36,6 +37,7 @@ export function ToolEntry({
   ok,
   summary,
   display,
+  durationMs,
   width,
 }: {
   name: string;
@@ -43,21 +45,26 @@ export function ToolEntry({
   ok: boolean;
   summary: string;
   display: ToolDisplay | undefined;
+  durationMs?: number | undefined;
   width: number;
 }) {
   const theme = useTheme();
+  // a denied or declined call is the user's decision, not a tool error: show it differently
+  const outcome = toolOutcome(ok, summary);
+  const color =
+    outcome === 'ok' ? theme.success : outcome === 'blocked' ? theme.warning : theme.error;
   return (
     <Box flexDirection="column" marginTop={1}>
       <Header
         name={name}
         label={label}
-        color={ok ? theme.success : theme.error}
-        glyph="▸"
+        color={color}
+        glyph={outcome === 'ok' ? '▸' : outcome === 'blocked' ? '⊘' : '✖'}
         width={width}
       />
-      <Text color={ok ? theme.muted : theme.error} wrap="truncate-end">
+      <Text color={outcome === 'ok' ? theme.muted : color} wrap="truncate-end">
         {'  └ '}
-        {summary}
+        {withDuration(summary, durationMs)}
       </Text>
       {display?.kind === 'diff' ? (
         <Box paddingLeft={4}>

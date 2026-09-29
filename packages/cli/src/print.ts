@@ -1,4 +1,5 @@
 import {
+  formatFailureReport,
   attachMentions,
   createRuntime,
   providerLabel,
@@ -193,16 +194,19 @@ class Output {
         duration_ms: durationMs,
       });
     }
-    if (failed)
-      this.io.stderr.write(`${paint(this.io.stderr, 'red', `✖ ${error}`, this.io.env)}\n`);
+    if (failed) {
+      // the report names each model, the kind of failure and what to try; JSON keeps `error`
+      const text = outcome?.report === undefined ? error : formatFailureReport(outcome.report);
+      this.io.stderr.write(`${paint(this.io.stderr, 'red', `✖ ${text}`, this.io.env)}\n`);
+    }
   }
 }
 
 function noKeysMessage(): string {
   return [
     'No API key found for any provider.',
-    `  Set ${SECRET_ENV_VARS.groq} or ${SECRET_ENV_VARS.openrouter},`,
-    '  or store one with: vinax config set-key groq',
+    `  Set ${SECRET_ENV_VARS.groq}, ${SECRET_ENV_VARS.openrouter} or ${SECRET_ENV_VARS.nvidia},`,
+    '  or store one with: vinax config set-key <groq|openrouter|nvidia>',
   ].join('\n');
 }
 

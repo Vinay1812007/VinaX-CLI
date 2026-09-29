@@ -76,7 +76,7 @@ export function parseRateLimitHeaders(
       },
     };
   }
-  // OpenRouter: X-RateLimit-Reset is an epoch timestamp in milliseconds.
+  // OpenRouter (and NVIDIA, when it sends them): X-RateLimit-Reset is an epoch timestamp in ms.
   return {
     requests: {
       limit: num(headers, 'x-ratelimit-limit'),

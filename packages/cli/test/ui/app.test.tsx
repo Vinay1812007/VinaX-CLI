@@ -163,7 +163,7 @@ describe('onboarding', () => {
     const { deps, saved } = fakeOnboarding();
     const { frame, type } = mountApp(deps);
     await waitFor(() => frame().includes('Choose a colour theme'), 'theme step');
-    await type('\r', '4');
+    await type('\r', '5');
     await waitFor(() => frame().includes('Connect to a VinaX gateway'), 'gateway step');
     expect(frame()).toContain('setup 3/4');
     await type('https://gw.example.com/', '\r');

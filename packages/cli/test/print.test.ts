@@ -107,10 +107,17 @@ describe('vinax -p', () => {
     });
     const r = await h.run(['-p', 'hi', '--output-format', 'json']);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain('✖ Every model in the fallback chain failed:');
-    expect(r.stderr).toContain('groq:main-model: Groq 404: model not found');
+    expect(r.stderr).toContain('✖ Every model in the fallback chain failed');
     expect(r.stderr).toContain(
-      'openrouter:free-model:free: OpenRouter 401: No auth credentials found',
+      '• Groq · main-model — model not available: HTTP 404: model not found',
+    );
+    expect(r.stderr).toContain(
+      '• OpenRouter · free-model:free — authentication failed: HTTP 401: No auth credentials found',
+    );
+    expect(r.stderr).toContain('Try: pick an available model with /model or /models');
+    // JSON output keeps the raw message
+    expect((JSON.parse(r.stdout) as { error: string }).error).toContain(
+      'groq:main-model: Groq 404: model not found',
     );
     expect(JSON.parse(r.stdout)).toMatchObject({ subtype: 'error', is_error: true });
   });
@@ -136,7 +143,8 @@ describe('vinax -p', () => {
     const r = await h.run(['-p', 'hi']);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('No API key found for any provider.');
-    expect(r.stderr).toContain('vinax config set-key groq');
+    expect(r.stderr).toContain('vinax config set-key <groq|openrouter|nvidia>');
+    expect(r.stderr).toContain('NVIDIA_API_KEY');
   });
 
   it('exits 2 on usage errors', async () => {

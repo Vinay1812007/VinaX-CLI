@@ -50,6 +50,8 @@ export async function openSession(
   if (loaded) {
     setup.agent.restore(loaded);
     setup.checkpoints.load(loaded.checkpoints);
+    // a model picked with /model sticks to the session, unless --model overrides it
+    if (loaded.model !== undefined && opts.model === undefined) setup.agent.setModel(loaded.model);
   }
   const started = await setup.sessionStart(
     loaded ? 'resume' : choice.kind === 'new' && opts.cleared === true ? 'clear' : 'startup',
