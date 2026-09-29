@@ -141,7 +141,7 @@ describe('ChatScreen', () => {
     expect(frame()).toContain('v9.9.9');
     expect(frame()).toContain('main-model · Groq');
     expect(frame()).toContain('new session');
-    expect(frame()).toContain('╲  ╱ ╲╱');
+    expect(frame()).toContain('▀▀▀     ▀▀▀ ▀▀▀');
     expect(frame()).toContain('a tip');
     await type('hi there', KEYS.enter);
     await waitFor(
@@ -766,5 +766,17 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(frame()).toContain('Groq · main-model — authentication failed');
     expect(frame()).toContain('OpenRouter · free-model:free — model not available');
     expect(frame()).toContain('› check the Groq key');
+  });
+  it('plays /snake, saves the best score, and shows /changelog', async () => {
+    const { frame, type, harness } = await mount();
+    await type('/snake', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Press an arrow key (or WASD) to start'), 'snake');
+    expect(frame()).not.toContain('Ask VinaX anything');
+    await type(KEYS.esc);
+    await waitFor(() => frame().includes('Snake: 0 points (best 0).'), 'score notice');
+    const { AppStateStore } = await import('@vinax/core');
+    expect((await new AppStateStore(harness.env).read()).snakeBest).toBe(0);
+    await type('/changelog', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes("What's new in VinaX"), 'changelog panel');
   });
 });

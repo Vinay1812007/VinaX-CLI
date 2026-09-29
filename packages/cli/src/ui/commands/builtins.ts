@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  AppStateStore,
   conversationMarkdown,
   createProvider,
   formatModelRef,
@@ -29,7 +30,8 @@ import {
   type ProviderName,
 } from '@vinax/core';
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
-import { detectInstall } from '../../update.js';
+import { compareVersions, detectInstall, latestRelease } from '../../update.js';
+import { notesMarkdown, readChangelog, releaseNotes, releaseUrl } from '../../updates.js';
 import { VERSION } from '../../version.js';
 import { gatewayLacks, modelSelectItems, providerSummaries } from '../model-items.js';
 import { sessionItems } from '../sessions.js';
@@ -513,6 +515,70 @@ const health: SlashCommand = {
   },
 };
 
+const snake: SlashCommand = {
+  name: 'snake',
+  aliases: ['game'],
+  description: 'Play Snake, Nokia-style, in colour',
+  source: 'builtin',
+  async run(ctx) {
+    const store = new AppStateStore(ctx.runtime.env);
+    const best = (await store.read()).snakeBest;
+    const score = await ctx.playSnake(best);
+    if (score > best) await store.update((s) => ({ ...s, snakeBest: score }));
+    ctx.notice(
+      'info',
+      score > best && score > 0
+        ? `Snake: ${String(score)} points, a new best!`
+        : `Snake: ${String(score)} points (best ${String(Math.max(best, score))}).`,
+    );
+  },
+};
+
+const update: SlashCommand = {
+  name: 'update',
+  description: 'Check for a newer VinaX and show how to update',
+  source: 'builtin',
+  async run(ctx) {
+    const release = await ctx.busy('Checking for updates', () => latestRelease(ctx.runtime.env));
+    if (!release) return;
+    const install = detectInstall();
+    const newer = compareVersions(release.version, VERSION) > 0;
+    const how =
+      install.kind === 'npm'
+        ? '`vinax update` (runs `npm install -g @sirimillavinay/vinax@latest`)'
+        : install.kind === 'binary'
+          ? '`vinax update` (downloads the new binary and checks its SHA-256)'
+          : '`git pull && pnpm install && pnpm build` in your VinaX checkout';
+    ctx.panel(
+      'Updates',
+      [
+        `- Installed: **v${VERSION}** · ${installLabel()}`,
+        `- Latest: **v${release.version}** ${newer ? '— an update is available' : '— you are up to date ✔'}`,
+        '',
+        ...(newer ? [`Update with ${how}, then restart VinaX.`, ''] : []),
+        `Release notes: ${releaseUrl(release.version)} · \`/changelog\` shows recent changes.`,
+      ].join('\n'),
+    );
+  },
+};
+
+const changelog: SlashCommand = {
+  name: 'changelog',
+  aliases: ['whats-new'],
+  description: "What's new in recent VinaX releases",
+  source: 'builtin',
+  async run(ctx) {
+    const text = await readChangelog();
+    const notes = text === undefined ? [] : releaseNotes(text, undefined, VERSION, 14);
+    ctx.panel(
+      `What's new in VinaX v${VERSION}`,
+      notes.length === 0
+        ? `Release notes: ${releaseUrl(VERSION)}`
+        : `${notesMarkdown(notes)}\n\nAll releases: ${PROJECT_URL}/releases`,
+    );
+  },
+};
+
 function installLabel(): string {
   const install = detectInstall();
   switch (install.kind) {
@@ -622,6 +688,9 @@ async function loginGateway(ctx: CommandContext): Promise<void> {
   }
   await saveGatewayLogin(url, token, { cwd: ctx.runtime.cwd, env: ctx.runtime.env });
   ctx.runtime.setGateway(url, token);
+  await ctx.busy('Loading model lists from the gateway', (signal) =>
+    Promise.all([...ctx.runtime.viaGateway].map((p) => ctx.runtime.refreshCatalog(p, signal))),
+  );
   const via = [...ctx.runtime.viaGateway].map(providerLabel);
   ctx.notice(
     check.ok ? 'info' : 'warning',
@@ -660,6 +729,10 @@ const login: SlashCommand = {
     }
     const where = await (await openSecretStore(ctx.runtime.env)).set(provider, key);
     ctx.runtime.setProviderKey(provider, key);
+    // the old list may have come from a gateway that did not serve this provider
+    await ctx.busy(`Loading ${providerLabel(provider)} models`, (signal) =>
+      ctx.runtime.refreshCatalog(provider, signal),
+    );
     ctx.notice(
       check.ok ? 'info' : 'warning',
       `Saved the ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}${check.ok ? '' : ` (could not verify it: ${check.reason})`}.`,
@@ -912,6 +985,9 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   doctor,
   health,
   about,
+  update,
+  changelog,
+  snake,
   login,
   logout,
   theme,

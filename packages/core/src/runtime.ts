@@ -42,6 +42,11 @@ export interface Runtime {
   usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
+  /**
+   * Re-fetches a provider's model list (after /login or connecting a gateway) and updates
+   * which configured models are skipped. Failures keep the previous list.
+   */
+  refreshCatalog(name: ProviderName, signal?: AbortSignal): Promise<void>;
   /** Stops using a provider key, or the gateway (after /logout). */
   removeProvider(name: SecretName): void;
   /** The VinaX gateway, when the user logged in to one. */
@@ -176,6 +181,30 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     cwd: opts.cwd,
     env,
     usage,
+    async refreshCatalog(name, signal) {
+      const provider = providers.get(name);
+      if (!provider) return;
+      let list: ModelInfo[];
+      try {
+        list = (
+          await catalog.get(provider, {
+            refresh: true,
+            signal: signal ?? AbortSignal.timeout(opts.catalogTimeoutMs ?? 10_000),
+          })
+        ).models;
+      } catch {
+        return;
+      }
+      models.set(name, list);
+      for (const r of configured) {
+        if (r.provider !== name) continue;
+        // an empty list through a gateway means the gateway does not serve this provider
+        const missing =
+          list.length > 0 ? !list.some((m) => m.id === r.model) : viaGateway.has(name);
+        if (missing) skip.add(r.ref);
+        else skip.delete(r.ref);
+      }
+    },
     setProviderKey(name, key) {
       providers.set(name, createProvider(name, key, deps));
       viaGateway.delete(name);

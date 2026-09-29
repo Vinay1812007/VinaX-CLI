@@ -8,6 +8,10 @@ const stateSchema = z.object({
   trustedDirs: z.array(z.string()).default([]),
   /** Project MCP servers the user allowed to start, per project folder. */
   approvedMcp: z.record(z.string(), z.array(z.string())).default({}),
+  /** The VinaX version that last ran, to show what's new after an upgrade. */
+  lastVersion: z.string().optional(),
+  /** Best score in /snake. */
+  snakeBest: z.number().int().min(0).default(0),
 });
 
 export type AppState = z.infer<typeof stateSchema>;

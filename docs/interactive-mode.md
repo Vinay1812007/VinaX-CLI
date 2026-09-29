@@ -12,8 +12,14 @@ vinax -c                   # continue the last conversation here
 
 VinaX opens with a welcome panel:
 
-<pre class="vx-terminal"><span class="accent">╲  ╱ ╲╱</span>  VinaX <span class="dim">v0.1.0</span>
-<span class="accent"> ╲╱  ╱╲</span>  <span class="dim">AI coding agent for the terminal</span>
+<pre class="vx-terminal"><span style="color:#FF9933">▀▀▀     ▀▀▀ ▀▀▀                     ▀▀▀     ▀▀▀</span>
+<span style="color:#FF9933">▀▀▀     ▀▀▀                          ▀▀▀   ▀▀▀ </span>
+<span style="color:#FF9933"> ▀▀▀   ▀▀▀  ▀▀▀ ▀▀▀▀▀▀▀▀   ▀▀▀▀▀▀▀▀   ▀▀▀ ▀▀▀  </span>
+<span style="color:#F8FAFC"> ▀▀▀   ▀▀▀  ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀    ▀▀▀▀▀   </span>
+<span style="color:#F8FAFC">  ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀ </span><span style="color:#1D4ED8">✺</span><span style="color:#F8FAFC"> ▀▀▀   ▀▀▀ ▀▀▀  </span>
+<span style="color:#3CB043">   ▀▀▀▀▀    ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀  ▀▀▀   ▀▀▀ </span>
+<span style="color:#3CB043">    ▀▀▀     ▀▀▀ ▀▀▀   ▀▀▀  ▀▀▀▀▀▀▀▀ ▀▀▀     ▀▀▀</span>
+VinaX <span class="dim">v0.3.0 · AI coding agent for the terminal</span>
 
 <span class="dim">cwd</span>      ~/code/app <span class="dim">⎇ main</span>
 <span class="dim">model</span>    openai/gpt-oss-20b <span class="dim">· NVIDIA · NVD_CHAT_OSS_20_B</span>
@@ -22,7 +28,9 @@ VinaX opens with a welcome panel:
 
 <span class="accent">/</span> <span class="dim">commands</span>  <span class="accent">@</span> <span class="dim">files</span>  <span class="accent">!</span> <span class="dim">shell</span>  <span class="accent">#</span> <span class="dim">memory</span>  <span class="accent">?</span> <span class="dim">shortcuts</span></pre>
 
-It shows the VinaX mark and version, the folder and git branch, the model with its provider and alias, whether this is a new or resumed session, and which [memory](/memory) files are in use (names only, never their contents). In windows narrower than 40 columns the mark and the shortcut row are left out; on `TERM=dumb` the mark is drawn in plain ASCII; with `NO_COLOR` nothing is coloured.
+It shows the VinaX logo (striped saffron, white and green letters with a blue chakra in the "a") and version, the folder and git branch, the model with its provider and alias, whether this is a new or resumed session, and which [memory](/memory) files are in use (names only, never their contents). In windows narrower than 51 columns the logo becomes a one-line tricolor **VinaX** and the shortcut row is left out; on `TERM=dumb` the logo is drawn in plain ASCII; with `NO_COLOR` nothing is coloured.
+
+After you upgrade, the first session shows a **What's new** panel with the release notes since the version you had. When a newer release is out, a notice says so and how to update. The check runs at most once a day, never in CI, and `VINAX_NO_UPDATE_CHECK=1` turns it off. `/update` and `/changelog` show the same on demand.
 
 - **Answers** stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
 - **Tool calls** appear as one line each (`▸ Edit src/app.ts`), with a one-line result underneath. `⊘` marks a call that was denied, declined or blocked by a hook (your decision), and `✖` a tool that failed. Slow tools show how long they took.

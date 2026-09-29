@@ -41,6 +41,8 @@ export interface CommandContext {
   setTheme: (theme: ThemeName) => void;
   setEditorMode: (mode: EditorMode) => void;
   editorMode: () => EditorMode;
+  /** Opens the Snake game; resolves with the score when the player leaves. */
+  playSnake: (best: number) => Promise<number>;
   /** Starts a fresh conversation (new session). */
   clear: () => void;
   resume: (id: string) => void;

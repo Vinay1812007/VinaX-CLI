@@ -1,6 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="VinaX">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 324 324" width="324" height="324" role="img" aria-label="VinaX">
   <title>VinaX</title>
-  <rect width="64" height="64" rx="14" fill="#0B1117"/>
-  <path d="M12 20 L22 44 L32 20" fill="none" stroke="#14B8A6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M35 20 L52 44 M52 20 L35 44" fill="none" stroke="#5EEAD4" stroke-width="5.5" stroke-linecap="round"/>
+  <rect width="324" height="324" rx="40" fill="#0A0A0A"/>
+  <rect x="24" y="99" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="24" y="108" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="120" y="99" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="120" y="108" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="168" y="99" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="168" y="108" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="264" y="99" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="264" y="108" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="24" y="117" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="24" y="126" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="120" y="117" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="120" y="126" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="180" y="117" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="180" y="126" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="252" y="117" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="252" y="126" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="36" y="135" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="36" y="144" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="108" y="135" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="108" y="144" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="192" y="135" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="192" y="144" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="240" y="135" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="240" y="144" width="35" height="7.5" rx="1" fill="#FF9933"/>
+  <rect x="36" y="153" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="36" y="162" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="108" y="153" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="108" y="162" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="204" y="153" width="59" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="204" y="162" width="59" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="48" y="171" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="48" y="180" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="96" y="171" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="96" y="180" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="192" y="171" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="192" y="180" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="240" y="171" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="240" y="180" width="35" height="7.5" rx="1" fill="#F8FAFC"/>
+  <rect x="60" y="189" width="59" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="60" y="198" width="59" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="180" y="189" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="180" y="198" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="252" y="189" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="252" y="198" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="72" y="207" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="72" y="216" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="168" y="207" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="168" y="216" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="264" y="207" width="35" height="7.5" rx="1" fill="#3CB043"/>
+  <rect x="264" y="216" width="35" height="7.5" rx="1" fill="#3CB043"/>
 </svg>

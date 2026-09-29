@@ -22,6 +22,9 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/doctor`                          | Check the installation, keys, search, shell, git, keychain and terminal   |
 | `/health`                          | A concise, grouped health summary (full details: `/doctor`)               |
 | `/about`                           | Version, runtime, install type, model, gateway, MCP and platform          |
+| `/update`                          | Installed vs latest version, and how to update this install               |
+| `/changelog`, `/whats-new`         | Release notes for recent versions                                         |
+| `/snake`, `/game`                  | Play Snake, Nokia-style, in colour                                        |
 | `/login`, `/logout`                | Add or remove a provider key, or connect or disconnect a gateway          |
 | `/config`                          | Show the effective settings and where each comes from                     |
 | `/permissions`                     | Show the permission mode and rules                                        |
@@ -38,6 +41,8 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 - **`/model`** opens a picker you can search by typing: models are grouped by provider, `●` marks the current one, and models you can't use yet are dimmed with the reason. `/model NVD_CHAT_OSS_20_B` or `/model nvidia:openai/gpt-oss-20b` switches directly. The choice is saved with the session. See [Models](/models#browsing-and-switching-models).
 - **`/models`** shows every provider and whether it is set up, the current model and alias, the fallback order with each entry's status, and the aliases, then offers the picker.
 - **`/health`** runs the `/doctor` checks and shows one line each, grouped under Runtime, Providers & models, Tools and Integrations: `✔` ok, `⚠` warning, `✖` failure, `○` optional and not set up.
+- **`/snake`** opens a colour, Nokia-style Snake. Steer with the arrow keys, WASD or hjkl; `P` pauses, `R` restarts after a game over, `Esc` or `Q` returns to the prompt. Walls and your own tail end the game, every five meals raises the speed level (1–9), and a blinking bonus critter appears now and then for extra points. Your best score is saved.
+- **`/update`** checks GitHub Releases and shows your installed version, the latest one, and the exact update command for how VinaX was installed (`vinax update`, npm, or `git pull` for a source checkout).
 - **`/about`** shows the VinaX version, runtime, installation type, current provider and model, gateway, MCP servers, platform, architecture and the repository URL.
 
 ## Prefixes

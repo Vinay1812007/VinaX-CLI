@@ -450,3 +450,68 @@ describe('NVIDIA runtime', () => {
     );
   });
 });
+
+describe('stale empty catalogs', () => {
+  const fake = (lists: ModelInfo[][]): Provider & { calls: number } => {
+    const p = {
+      name: 'nvidia' as const,
+      calls: 0,
+      listModels: () => Promise.resolve(lists[Math.min(p.calls++, lists.length - 1)] ?? []),
+      validateKey: () => Promise.resolve({ ok: true as const }),
+      stream: () => {
+        throw new Error('unused');
+      },
+    };
+    return p;
+  };
+  const m = (id: string): ModelInfo => ({
+    id,
+    contextWindow: undefined,
+    supportsTools: undefined,
+    free: false,
+  });
+
+  it('never caches an empty model list', async () => {
+    const dir = await tmp();
+    const provider = fake([[], [m('openai/gpt-oss-20b')]]);
+    const catalog = new ModelCatalog(dir);
+    expect((await catalog.get(provider)).models).toEqual([]);
+    // the empty answer was not kept, so the next call asks again and gets the real list
+    expect((await catalog.get(provider)).models.map((x) => x.id)).toEqual(['openai/gpt-oss-20b']);
+    expect(provider.calls).toBe(2);
+    await catalog.get(provider);
+    expect(provider.calls).toBe(2);
+  });
+
+  it('ignores an empty list cached by an older version', async () => {
+    const dir = await tmp();
+    await fs.writeFile(
+      path.join(dir, 'models-nvidia.json'),
+      JSON.stringify({ fetchedAt: Date.now(), models: [] }),
+    );
+    const provider = fake([[m('openai/gpt-oss-20b')]]);
+    expect((await new ModelCatalog(dir).get(provider)).models).toHaveLength(1);
+  });
+
+  it('refreshes the catalog and the skip list after a key is added', async () => {
+    const home = await tmp();
+    const nvidia = await mock({ apiKeys: ['nvapi-good'], models: [{ id: 'openai/gpt-oss-20b' }] });
+    await fs.writeFile(
+      path.join(home, 'settings.json'),
+      JSON.stringify({
+        model: 'nvidia:openai/gpt-oss-20b',
+        smallModel: 'nvidia:openai/gpt-oss-20b',
+        fallbackChain: [],
+        providers: { nvidia: { baseUrl: nvidia.url } },
+      }),
+    );
+    const env = { ...systemEnv(), VINAX_HOME: home, VINAX_SECRETS_BACKEND: 'file' };
+    const runtime = await createRuntime({ cwd: home, env });
+    expect(runtime.providers.has('nvidia')).toBe(false);
+    expect(runtime.models.get('nvidia')).toBeUndefined();
+    runtime.setProviderKey('nvidia', 'nvapi-good');
+    await runtime.refreshCatalog('nvidia');
+    expect(runtime.models.get('nvidia')?.map((x) => x.id)).toEqual(['openai/gpt-oss-20b']);
+    expect(runtime.skipped.has('nvidia:openai/gpt-oss-20b')).toBe(false);
+  });
+});

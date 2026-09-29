@@ -24,6 +24,7 @@ import {
   type ThemeName,
   type TodoItem,
 } from '@vinax/core';
+import type { Announcement } from '../../updates.js';
 import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
 import { formatTokens, truncate } from '../format.js';
@@ -55,6 +56,7 @@ import { PromptBox } from './PromptBox.js';
 import { RewindPicker, type RewindChoice } from './RewindPicker.js';
 import type { SelectItem } from './Select.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
+import { SnakeGame } from './SnakeGame.js';
 import { StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
@@ -99,6 +101,7 @@ type Pending =
 
 type Overlay =
   | { kind: 'shortcuts' }
+  | { kind: 'snake'; best: number; resolve: (score: number) => void }
   | { kind: 'details' }
   | { kind: 'rewind' }
   | {
@@ -133,6 +136,8 @@ export interface ChatScreenProps {
   title?: string | undefined;
   startupNotices?: readonly string[];
   initialPrompt?: string | undefined;
+  /** Loaded after the first paint: what's new, update available. */
+  announcements?: (() => Promise<Announcement[]>) | undefined;
   editorMode: EditorMode;
   onExit: (code: number) => void;
   onClear: () => void;
@@ -608,6 +613,17 @@ export function ChatScreen(props: ChatScreenProps) {
         refreshContext();
       }
     },
+    playSnake: (best) =>
+      new Promise<number>((resolve) => {
+        setOverlay({
+          kind: 'snake',
+          best,
+          resolve: (score) => {
+            setOverlay(undefined);
+            resolve(score);
+          },
+        });
+      }),
     mode: () => modeRef.current,
     setMode,
     setTheme: props.onTheme,
@@ -692,6 +708,15 @@ export function ChatScreen(props: ChatScreenProps) {
 
   useEffect(() => {
     refreshContext();
+    void props
+      .announcements?.()
+      .then((list) => {
+        for (const a of list) {
+          if (a.kind === 'panel') push({ kind: 'panel', title: a.title, markdown: a.markdown });
+          else push({ kind: 'notice', level: a.level, text: a.text });
+        }
+      })
+      .catch(() => undefined);
     if (initialPrompt !== undefined && initialPrompt.trim() !== '') {
       void handleSubmitRef.current({ prompt: initialPrompt, display: initialPrompt });
     }
@@ -748,7 +773,8 @@ export function ChatScreen(props: ChatScreenProps) {
       pendingRef.current !== undefined ||
       ov?.kind === 'rewind' ||
       ov?.kind === 'picker' ||
-      ov?.kind === 'ask'
+      ov?.kind === 'ask' ||
+      ov?.kind === 'snake'
     )
       return;
     if (key.ctrl && input === 'd') {
@@ -909,7 +935,8 @@ export function ChatScreen(props: ChatScreenProps) {
     pending === undefined &&
     overlay?.kind !== 'rewind' &&
     overlay?.kind !== 'picker' &&
-    overlay?.kind !== 'ask';
+    overlay?.kind !== 'ask' &&
+    overlay?.kind !== 'snake';
   return (
     <Box flexDirection="column">
       <Static items={items}>{renderItem}</Static>
@@ -959,6 +986,9 @@ export function ChatScreen(props: ChatScreenProps) {
         </Box>
       ) : null}
       {overlay?.kind === 'shortcuts' ? <ShortcutsHelp /> : null}
+      {overlay?.kind === 'snake' ? (
+        <SnakeGame columns={width} rows={rows} best={overlay.best} onExit={overlay.resolve} />
+      ) : null}
       {overlay?.kind === 'details' ? (
         <TurnDetails
           turns={turns}
