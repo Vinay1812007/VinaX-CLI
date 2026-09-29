@@ -258,6 +258,25 @@ describe('model picker items', () => {
   });
 });
 
+describe('providers a gateway does not serve', () => {
+  it('explains that the gateway lacks the provider instead of "not in catalog"', () => {
+    const runtime = fakeRuntime({
+      providers: ['groq', 'nvidia'],
+      models: { groq: [info('openai/gpt-oss-120b', 131_072)], nvidia: [] },
+      skipped: ['nvidia:openai/gpt-oss-20b'],
+      viaGateway: ['groq', 'nvidia'],
+    });
+    const nvidia = modelSelectItems(runtime, 'groq:openai/gpt-oss-120b').find((i) =>
+      i.value.startsWith('nvidia:'),
+    );
+    expect(nvidia).toMatchObject({
+      disabled: true,
+      hint: 'NVD_CHAT_OSS_20_B · 131K ctx · add your own key with /login',
+      group: 'NVIDIA · nvidia.com · not served by your VinaX gateway',
+    });
+  });
+});
+
 describe('agent progress', () => {
   it('maps tools to phases and keeps a short trail', () => {
     expect(phaseFor('Grep', 'foo')).toBe('Inspecting repository');
