@@ -116,6 +116,16 @@ export class PermissionEngine {
     };
   }
 
+  /** Removes a rule (all sources); true when one was removed. */
+  removeRule(raw: string, effect: RuleEffect): boolean {
+    const before = this.rules.length;
+    for (let i = this.rules.length - 1; i >= 0; i--) {
+      const r = this.rules[i];
+      if (r?.raw === raw && r.effect === effect) this.rules.splice(i, 1);
+    }
+    return this.rules.length < before;
+  }
+
   /** Every rule in force, for /permissions. */
   listRules(): readonly PermissionRule[] {
     return this.rules;
@@ -208,13 +218,25 @@ export class PermissionEngine {
           ? { kind: 'allow', reason: 'Reading inside the project' }
           : { kind: 'ask', reason: 'This reads outside the project folder.', ...withSuggestion };
       case 'edit':
-        return mode === 'acceptEdits' && inside
+        return (mode === 'acceptEdits' || mode === 'auto') && inside
           ? { kind: 'allow', reason: 'Auto-accepting edits' }
           : { kind: 'ask', reason: 'File changes need your approval.', ...withSuggestion };
       case 'network':
-        return { kind: 'ask', reason: 'Network access needs your approval.', ...withSuggestion };
-      default:
-        return { kind: 'ask', reason: 'Running commands needs your approval.', ...withSuggestion };
+        return mode === 'auto' && !call.name.startsWith('mcp__')
+          ? { kind: 'allow', reason: 'Auto mode' }
+          : { kind: 'ask', reason: 'Network access needs your approval.', ...withSuggestion };
+      default: {
+        // Auto mode still asks for commands run from outside the project and for MCP tools,
+        // which are third-party code.
+        const auto =
+          mode === 'auto' &&
+          inside &&
+          !call.name.startsWith('mcp__') &&
+          inWorkspace(this.opts.shellCwd(), this.opts.workspace);
+        return auto
+          ? { kind: 'allow', reason: 'Auto mode' }
+          : { kind: 'ask', reason: 'Running commands needs your approval.', ...withSuggestion };
+      }
     }
   }
 }

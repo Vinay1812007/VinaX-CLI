@@ -32,6 +32,8 @@ export interface ModelRow {
   label: string | undefined;
   contextWindow: number | undefined;
   supportsTools: boolean | undefined;
+  /** Accepts images. */
+  vision: boolean;
   status: ModelStatus;
   current: boolean;
 }
@@ -56,7 +58,7 @@ export function providerSummaries(runtime: Runtime): ProviderSummary[] {
 
 function row(
   provider: ProviderName,
-  info: Pick<ModelInfo, 'id' | 'contextWindow' | 'supportsTools'>,
+  info: Pick<ModelInfo, 'id' | 'contextWindow' | 'supportsTools' | 'vision'>,
   status: ModelStatus,
   current: string,
 ): ModelRow {
@@ -70,6 +72,7 @@ function row(
     label: known?.label,
     contextWindow: info.contextWindow ?? known?.contextWindow,
     supportsTools: info.supportsTools,
+    vision: info.vision ?? known?.vision ?? false,
     status,
     current: ref === current,
   };
@@ -98,6 +101,9 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
     const noGateway = gatewayLacks(runtime, provider);
     for (const k of KNOWN_MODELS.filter((m) => m.provider === provider)) {
       const inCatalog = catalog?.find((m) => m.id === k.model);
+      // a known model the provider no longer lists is only worth showing if it has an alias
+      if (configured && catalog !== undefined && inCatalog === undefined && k.alias === undefined)
+        continue;
       const status: ModelStatus = !configured
         ? 'no_key'
         : noGateway
@@ -175,6 +181,7 @@ export function modelHint(r: ModelRow): string {
   return [
     r.alias,
     r.contextWindow === undefined ? undefined : `${formatTokens(r.contextWindow)} ctx`,
+    r.vision ? 'vision' : undefined,
     r.supportsTools === false ? 'text tools' : undefined,
     STATUS_HINT[r.status],
   ]

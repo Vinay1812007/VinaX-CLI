@@ -5,6 +5,7 @@ import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
 import { McpManager } from '../mcp/manager.js';
 import { ProjectMemory } from '../memory/memory.js';
 import { PermissionEngine } from '../permissions/engine.js';
+import { KNOWN_MODELS, knownModel } from '../providers/known-models.js';
 import { parseModelRef, type ModelRef } from '../providers/types.js';
 import type { Runtime } from '../runtime.js';
 import type { SessionRecorder } from '../session/store.js';
@@ -16,6 +17,12 @@ import { detectShell, ShellSession } from '../tools/shell.js';
 import { TodoStore } from '../tools/todo.js';
 import type { AnyTool } from '../tools/types.js';
 import { createWebFetchTool } from '../tools/webfetch.js';
+import {
+  createSkillTool,
+  loadSkills,
+  skillsPromptSection,
+  type SkillDef,
+} from '../skills/skills.js';
 import { Agent } from './agent.js';
 import { CheckpointStore } from './checkpoints.js';
 import {
@@ -61,6 +68,8 @@ export interface AgentSetup {
   hooks: HookRunner;
   mcp: McpManager;
   subagents: readonly SubagentDef[];
+  /** Installed skills (SKILL.md folders). */
+  skills: readonly SkillDef[];
   /** Problems loading MCP config or sub-agent files. */
   warnings: string[];
   /** Runs SessionStart hooks; their output is added to the conversation as context. */
@@ -69,6 +78,53 @@ export interface AgentSetup {
   approveMcpServer: (name: string) => Promise<void>;
   /** Stops background jobs and MCP servers. */
   close: () => Promise<void>;
+}
+
+/**
+ * The model that answers prompts with images when the main one cannot: the `visionModel`
+ * setting, else a vision model from the fallback chain, one VinaX knows, or one a provider's
+ * catalog lists (free first), preferring providers you have your own key for over the gateway.
+ */
+export function pickVisionModel(
+  runtime: Runtime,
+  supportsVision: (ref: ModelRef) => boolean,
+): string | undefined {
+  return pickVisionModels(runtime, supportsVision)[0];
+}
+
+/** Every usable vision model, best first (see {@link pickVisionModel}). */
+export function pickVisionModels(
+  runtime: Runtime,
+  supportsVision: (ref: ModelRef) => boolean,
+): string[] {
+  const settings = runtime.settings.resolved;
+  const usable = (ref: string): boolean => {
+    const r = parseModelRef(ref);
+    if (!runtime.providers.has(r.provider) || runtime.skipped.has(ref)) return false;
+    const list = runtime.models.get(r.provider);
+    return list === undefined || list.some((m) => m.id === r.model);
+  };
+  const candidates: string[] = [
+    ...(settings.visionModel === undefined ? [] : [settings.visionModel]),
+    ...[settings.model, ...settings.fallbackChain].filter((ref) =>
+      supportsVision(parseModelRef(ref)),
+    ),
+    ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => `${k.provider}:${k.model}`),
+  ];
+  for (const [provider, list] of runtime.models) {
+    const free = list.filter((m) => m.vision === true && m.free);
+    const paid = list.filter((m) => m.vision === true && !m.free);
+    candidates.push(...[...free, ...paid].map((m) => `${provider}:${m.id}`));
+  }
+  const ok = [...new Set(candidates)].filter((ref) => ref === settings.visionModel || usable(ref));
+  // Images make big requests, so providers reached with your own key come before the gateway.
+  const direct = ok.filter((ref) => !runtime.viaGateway.has(parseModelRef(ref).provider));
+  const gateway = ok.filter((ref) => runtime.viaGateway.has(parseModelRef(ref).provider));
+  const ordered = [...direct, ...gateway];
+  // the setting, when given, always leads
+  return settings.visionModel === undefined
+    ? ordered
+    : [settings.visionModel, ...ordered.filter((r) => r !== settings.visionModel)];
 }
 
 /** Wires tools, permissions, hooks, MCP, sub-agents, checkpoints and the system prompt. */
@@ -111,21 +167,38 @@ export async function createAgentSetup(
     }),
   });
 
+  const { skills, errors: skillErrors } = await loadSkills(cwd, env);
+  warnings.push(...skillErrors);
+  const skillsSection = skillsPromptSection(skills);
   const tools: AnyTool[] = [
     ...createToolset({ shell: shellInfo, todos }),
     createWebFetchTool(runtime.router),
+    ...(skills.length === 0 ? [] : [createSkillTool(skills)]),
   ];
   const context = { cwd, workspace, shell, reads };
   const basePrompt = (mode: PermissionMode, toolInstructions?: string): string => {
     currentMode = mode;
     return buildSystemPrompt(
-      { cwd, shell: shellInfo.label, date, git, memory: memory.text() },
+      {
+        cwd,
+        shell: shellInfo.label,
+        date,
+        git,
+        memory: memory.text(),
+        ...(skillsSection === undefined ? {} : { skills: skillsSection }),
+      },
       mode,
       toolInstructions,
     );
   };
   const supportsTools = (ref: ModelRef): boolean | undefined =>
-    runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.supportsTools;
+    runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.supportsTools ??
+    (knownModel(ref.provider, ref.model)?.tools === false ? false : undefined);
+  const supportsVision = (ref: ModelRef): boolean =>
+    runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.vision ??
+    knownModel(ref.provider, ref.model)?.vision ??
+    false;
+  const visionModels = (): string[] => pickVisionModels(runtime, supportsVision);
   const onPathTouched = (file: string): string | undefined => {
     const found = memory.discover(file);
     if (found.length === 0) return undefined;
@@ -222,12 +295,16 @@ export async function createAgentSetup(
     context,
     systemPrompt: basePrompt,
     supportsTools,
+    supportsVision,
+    visionModels,
+    defaultModel: () => settings.model,
     onPathTouched,
     hooks,
     ...(settings.context.autoCompact ? { contextLimit } : {}),
     ...(opts.recorder === undefined ? {} : { recorder: opts.recorder }),
     ...(opts.maxTurns === undefined ? {} : { maxTurns: opts.maxTurns }),
     ...(opts.model === undefined ? {} : { model: opts.model }),
+    ...(settings.reasoningEffort === undefined ? {} : { effort: settings.reasoningEffort }),
   });
 
   return {
@@ -245,6 +322,7 @@ export async function createAgentSetup(
     hooks,
     mcp,
     subagents,
+    skills,
     warnings,
     async sessionStart(source) {
       const r = await hooks.run('SessionStart', { source });

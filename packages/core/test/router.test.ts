@@ -118,6 +118,8 @@ const summarize = (events: RouterEvent[]): string[] =>
         return `tool ${e.name ?? ''}${e.argsChunk ?? ''}`;
       case 'status':
         return `status ${e.text}`;
+      case 'reasoning':
+        return `reasoning ${e.text}`;
     }
   });
 

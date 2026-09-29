@@ -10,9 +10,19 @@ export interface ToolCall {
   arguments: string;
 }
 
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+/** An image sent with a user message (base64, no data: prefix). */
+export interface ImageAttachment {
+  mediaType: ImageMediaType;
+  data: string;
+  /** File name, for the transcript and for models that cannot see images. */
+  name?: string;
+}
+
 export type ChatMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; images?: ImageAttachment[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | { role: 'tool'; toolCallId: string; name: string; content: string };
 
@@ -53,6 +63,8 @@ export interface ModelInfo {
   /** `undefined` when the provider's catalog does not say. */
   supportsTools: boolean | undefined;
   free: boolean;
+  /** Accepts images, when the catalog says so (OpenRouter's `input_modalities`). */
+  vision?: boolean;
 }
 
 export interface Usage {
@@ -60,8 +72,14 @@ export interface Usage {
   completionTokens: number;
 }
 
+/** How hard a reasoning model thinks before answering (gpt-oss and similar). */
+export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export type StreamDelta =
   | { type: 'text'; text: string }
+  /** The model's reasoning (not part of the answer), where the provider streams it. */
+  | { type: 'reasoning'; text: string }
   | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
   | { type: 'usage'; usage: Usage }
   /** Progress that is not model output, e.g. waiting for the gateway to wake (empty clears it). */
@@ -72,6 +90,8 @@ export interface ChatRequest {
   messages: readonly ChatMessage[];
   tools?: readonly ToolSpec[];
   maxTokens?: number;
+  /** Sent only when set; providers that reject it get the request again without it. */
+  reasoningEffort?: ReasoningEffort;
   signal: AbortSignal;
 }
 

@@ -14,6 +14,7 @@ export function conversationMarkdown(
   for (const m of messages) {
     if (m.role === 'user') {
       out.push('## You', '', m.content.trim(), '');
+      for (const img of m.images ?? []) out.push(`_[image: ${img.name ?? img.mediaType}]_`, '');
     } else if (m.role === 'assistant') {
       out.push('## VinaX', '');
       if (m.content.trim() !== '') out.push(m.content.trim(), '');

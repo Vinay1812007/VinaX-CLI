@@ -52,6 +52,8 @@ function kindForStatus(status: number | undefined): ProviderErrorKind {
 
 const TOOL_FORMAT =
   /tool_use_failed|failed to call a function|support tool use|tool calling|tools? (is|are) not supported/i;
+/** vLLM vision models whose chat template drops the image when tools are present. */
+const IMAGE_WITH_TOOLS = /number of image tokens \(0\) must be the same as the number of images/i;
 
 function describe(err: { error: unknown; message: string }): string {
   const body = err.error as { message?: unknown } | undefined;
@@ -84,8 +86,9 @@ export function toProviderError(err: unknown, provider: ProviderName, now: numbe
     const retryAfterMs = headers ? retryAfterFrom(headers, now) : undefined;
     const body = err.error as { code?: unknown } | undefined;
     const toolFormat =
-      (status === 400 || status === 404 || status === 422) &&
-      (body?.code === 'tool_use_failed' || TOOL_FORMAT.test(describe(err)));
+      ((status === 400 || status === 404 || status === 422) &&
+        (body?.code === 'tool_use_failed' || TOOL_FORMAT.test(describe(err)))) ||
+      IMAGE_WITH_TOOLS.test(describe(err));
     return new ProviderError(
       toolFormat ? 'tool_format' : kindForStatus(status),
       `${label}${status === undefined ? '' : ` ${status}`}: ${describe(err)}`,

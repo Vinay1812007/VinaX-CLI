@@ -11,6 +11,8 @@ export interface MockTurn {
   headers?: Record<string, string>;
   /** Streamed as SSE content deltas, one chunk per array entry. */
   text?: string | string[];
+  /** Streamed before the text as `delta.reasoning` chunks (like Groq and OpenRouter). */
+  reasoning?: string[];
   /** Native tool calls, streamed after the text with their arguments split across two deltas. */
   toolCalls?: { id?: string; name: string; arguments: string }[];
   /** JSON error body for non-200 replies. */
@@ -35,7 +37,12 @@ export interface MockServerOptions {
   /** Queues of replies keyed by model id; `*` serves any model without its own queue. */
   script?: Record<string, MockTurn[]>;
   /** Served from `GET /v1/models`. When omitted, `/models` returns 404. */
-  models?: { id: string; context_window?: number; supported_parameters?: string[] }[];
+  models?: {
+    id: string;
+    context_window?: number;
+    supported_parameters?: string[];
+    architecture?: { input_modalities?: string[] };
+  }[];
   /** Keys accepted as `Authorization: Bearer <key>`. Empty means any key. */
   apiKeys?: string[];
   /** Serves an unauthenticated `GET /health` like the VinaX gateway: 200 while it returns true, else 503. */
@@ -97,6 +104,7 @@ async function reply(res: http.ServerResponse, model: string, turn: MockTurn): P
   });
   const parts = turn.text === undefined ? [] : Array.isArray(turn.text) ? turn.text : [turn.text];
   sse(res, chunk(model, { role: 'assistant', content: '' }));
+  for (const r of turn.reasoning ?? []) sse(res, chunk(model, { reasoning: r }));
   for (const [i, part] of parts.entries()) {
     if (turn.breakAfterChunks !== undefined && i >= turn.breakAfterChunks) {
       res.socket?.destroy();

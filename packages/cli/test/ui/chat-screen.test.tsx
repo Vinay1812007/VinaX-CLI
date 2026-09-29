@@ -15,6 +15,8 @@ const KEYS = {
   shiftEnter: '\x1b[13;2u',
   esc: '\x1b',
   up: '\x1b[A',
+  down: '\x1b[B',
+  right: '\x1b[C',
   shiftTab: '\x1b[Z',
   ctrlC: '\x03',
   ctrlR: '\x12',
@@ -96,7 +98,7 @@ async function mount(
       await sleep(20);
     }
   };
-  await waitFor(() => frame().includes('Ask VinaX anything'), 'prompt box');
+  await waitFor(() => frame().includes('Try "'), 'prompt box');
   const cwd = h.cwd;
   const read = (rel: string) => fs.readFile(path.join(cwd, rel), 'utf8');
   return {
@@ -149,7 +151,7 @@ describe('ChatScreen', () => {
       'answer',
     );
     const out = frame();
-    expect(out).toContain('› hi there');
+    expect(out).toContain('> hi there');
     expect(out).toContain('◆ Hello');
     expect(out).toContain('Some bold text.');
     expect(out).toContain('• one');
@@ -162,7 +164,7 @@ describe('ChatScreen', () => {
       groq: { script: { 'main-model': [{ text: 'ok' }] } },
     });
     await type('line1\\', KEYS.enter, 'line2', KEYS.shiftEnter, 'line3');
-    expect(frame()).toContain('› line1');
+    expect(frame()).toContain('> line1');
     expect(frame()).toContain('  line3');
     const big = Array.from({ length: 30 }, (_, i) => `row ${String(i)}`).join('\n');
     await type(' ', KEYS.paste(big));
@@ -181,14 +183,14 @@ describe('ChatScreen', () => {
     await type('fix the tests', KEYS.enter);
     await waitFor(() => frame().includes('second answer'), 'second answer');
     await type(KEYS.up);
-    expect(frame()).toContain('› fix the tests');
+    expect(frame()).toContain('> fix the tests');
     await type(KEYS.up);
-    expect(frame()).toContain('› explain closures');
+    expect(frame()).toContain('> explain closures');
     await type(KEYS.ctrlC, KEYS.ctrlR, 'fix');
     expect(frame()).toContain('search history: fix');
     expect(frame()).toContain('→ fix the tests');
     await type(KEYS.enter);
-    expect(frame()).toContain('› fix the tests');
+    expect(frame()).toContain('> fix the tests');
   });
 
   it('interrupts with Esc and keeps the partial answer', async () => {
@@ -237,21 +239,34 @@ describe('ChatScreen', () => {
 
   it('cycles modes, shows shortcuts, and exits on a double Ctrl+C', async () => {
     const { frame, type, onExit } = await mount();
-    expect(frame()).toContain('default mode');
+    expect(frame()).toContain('manual mode on');
     await type(KEYS.shiftTab);
-    expect(frame()).toContain('auto-accept edits');
+    expect(frame()).toContain('accept edits on');
     await type(KEYS.shiftTab);
-    expect(frame()).toContain('plan mode');
+    expect(frame()).toContain('plan mode on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('⏵⏵ auto mode on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('manual mode on');
     await type('?');
     expect(frame()).toContain('Keyboard shortcuts');
     await type(KEYS.esc);
     expect(frame()).not.toContain('Keyboard shortcuts');
     await type('draft', KEYS.ctrlC);
-    expect(frame()).not.toContain('› draft');
+    expect(frame()).not.toContain('> draft');
     expect(frame()).toContain('Press Ctrl+C again to exit');
     expect(onExit).not.toHaveBeenCalled();
     await type(KEYS.ctrlC);
-    expect(onExit).toHaveBeenCalledWith(0);
+    await waitFor(() => onExit.mock.calls.length > 0, 'exit');
+    const [code, summary] = onExit.mock.calls[0] as [
+      number,
+      { sessionId: string; prompts: number },
+    ];
+    expect(code).toBe(0);
+    expect(summary.prompts).toBe(0);
+    expect(summary.sessionId).toMatch(/^\d{8}-\d{6}-[0-9a-f]{6}$/);
+    // like Claude Code, the prompt box is gone from the last frame
+    expect(frame()).not.toContain('manual mode on');
   });
 
   it('sends an initial prompt passed on the command line', async () => {
@@ -260,7 +275,7 @@ describe('ChatScreen', () => {
       { initialPrompt: 'kick off' },
     );
     await waitFor(() => frame().includes('started'), 'initial answer');
-    expect(frame()).toContain('› kick off');
+    expect(frame()).toContain('> kick off');
   });
 });
 
@@ -314,7 +329,7 @@ describe('ChatScreen agent', () => {
     expect(promptFrame).toContain('+ hello VinaX');
     expect(promptFrame).toContain('Yes, and auto-accept edits');
     expect(promptFrame).toContain("Yes, and don't ask again for Edit(**) this session");
-    expect(promptFrame).not.toContain('Ask VinaX anything');
+    expect(promptFrame).not.toContain('Try "');
     await type('1');
     await waitFor(() => frame().includes('Done.'), 'answer');
     expect(await read('a.txt')).toBe('hello VinaX\n');
@@ -422,13 +437,13 @@ describe('ChatScreen agent', () => {
       },
     });
     await type(KEYS.shiftTab, KEYS.shiftTab);
-    expect(frame()).toContain('plan mode');
+    expect(frame()).toContain('plan mode on');
     await type('make a plan', KEYS.enter);
     await waitFor(() => frame().includes('Go ahead with this plan?'), 'plan prompt');
     expect(frame()).toContain('1. Change a.txt');
     await type('1');
     await waitFor(() => frame().includes('Starting now.'), 'answer');
-    expect(frame()).toContain('auto-accept edits');
+    expect(frame()).toContain('accept edits on');
     const first = harness.groq.requests.find((r) => r.path === '/v1/chat/completions')?.body as {
       tools: { function: { name: string } }[];
     };
@@ -465,7 +480,7 @@ describe('ChatScreen agent', () => {
     await type(KEYS.enter);
     await waitFor(() => frame().includes('Rewound the conversation and 1 file'), 'rewound');
     expect(await read('a.txt')).toBe('original\n');
-    expect(frame()).toContain('› rewrite a.txt');
+    expect(frame()).toContain('> rewrite a.txt');
   });
 });
 
@@ -499,7 +514,7 @@ describe('ChatScreen workflow (M4)', () => {
     await waitFor(() => frame().includes('Review a file (project)'), 'custom command in menu');
     await type(TAB, 'src/a.ts', KEYS.enter);
     await waitFor(() => frame().includes('Reviewed.'), 'answer');
-    expect(frame()).toContain('› /review src/a.ts');
+    expect(frame()).toContain('> /review src/a.ts');
     expect(lastRequest(harness)?.messages.at(-1)?.content).toBe('Review src/a.ts carefully.');
   });
 
@@ -511,7 +526,7 @@ describe('ChatScreen workflow (M4)', () => {
     await type('what is in @ap');
     await waitFor(() => frame().includes('@src/app.ts'), 'file suggestion');
     await type(TAB);
-    expect(frame()).toContain('› what is in @src/app.ts');
+    expect(frame()).toContain('> what is in @src/app.ts');
     await type(KEYS.enter);
     await waitFor(() => frame().includes('It exports answer.'), 'answer');
     const sent = lastRequest(harness)?.messages.at(-1)?.content ?? '';
@@ -616,11 +631,11 @@ describe('ChatScreen workflow (M4)', () => {
     await type('hello world', KEYS.esc);
     expect(frame()).toContain('-- NORMAL --');
     await type('b', 'd', 'w');
-    expect(frame()).toContain('› hello ');
+    expect(frame()).toContain('> hello ');
     await type('u');
-    expect(frame()).toContain('› hello world');
+    expect(frame()).toContain('> hello world');
     await type('d', 'd');
-    expect(frame()).toContain('Ask VinaX anything');
+    expect(frame()).toContain('Try "');
   });
 });
 
@@ -770,13 +785,98 @@ describe('ChatScreen extensibility (M5)', () => {
   it('plays /snake, saves the best score, and shows /changelog', async () => {
     const { frame, type, harness } = await mount();
     await type('/snake', KEYS.esc, KEYS.enter);
-    await waitFor(() => frame().includes('Press an arrow key (or WASD) to start'), 'snake');
-    expect(frame()).not.toContain('Ask VinaX anything');
+    await waitFor(() => frame().includes('↑↓ choose · Enter select'), 'snake');
+    expect(frame()).not.toContain('Try "');
     await type(KEYS.esc);
     await waitFor(() => frame().includes('Snake: 0 points (best 0).'), 'score notice');
     const { AppStateStore } = await import('@vinax/core');
     expect((await new AppStateStore(harness.env).read()).snakeBest).toBe(0);
     await type('/changelog', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes("What's new in VinaX"), 'changelog panel');
+  });
+  it('sets reasoning effort with /effort and sends it to the model', async () => {
+    const { frame, type, harness } = await mount({
+      groq: {
+        script: { 'main-model': [{ reasoning: ['let me think'], text: 'thought it through' }] },
+      },
+    });
+    await type('/effort high', KEYS.enter);
+    await waitFor(() => frame().includes('Effort set to high ▰▰▰'), 'effort notice');
+    expect(frame()).toContain('● high');
+    await type('ponder', KEYS.enter);
+    await waitFor(() => frame().includes('thought it through'), 'answer');
+    expect(frame()).toMatch(/✻ Thought for \d+s/);
+    const body = agentRequests(harness).at(-1)?.body as { reasoning_effort?: string };
+    expect(body.reasoning_effort).toBe('high');
+    const saved = JSON.parse(
+      await fs.readFile(path.join(harness.home, 'settings.json'), 'utf8'),
+    ) as { reasoningEffort?: string };
+    expect(saved.reasoningEffort).toBe('high');
+  });
+
+  it('changes settings in the /settings panel', async () => {
+    const { frame, type, harness } = await mount();
+    await type('/settings', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Default permission mode'), 'settings panel');
+    expect(frame()).toContain('❯ Model');
+    // down to "Reasoning effort", then change it
+    await type(KEYS.down, KEYS.right);
+    await waitFor(() => frame().includes('✓ Saved Reasoning effort: low'), 'saved');
+    await type(KEYS.esc);
+    await waitFor(() => frame().includes('Try "'), 'closed');
+    const saved = JSON.parse(
+      await fs.readFile(path.join(harness.home, 'settings.json'), 'utf8'),
+    ) as { reasoningEffort?: string };
+    expect(saved.reasoningEffort).toBe('low');
+  });
+
+  it('adds a permission rule from /permissions', async () => {
+    const { frame, type, harness } = await mount();
+    await type('/permissions', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('What would you like to do?'), 'menu');
+    expect(frame()).toContain('Mode: ⏸ manual mode on');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('New allow rule'), 'rule input');
+    await type('Bash(npm test:*)', KEYS.enter);
+    await waitFor(() => frame().includes('Save the rule where?'), 'scope');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('Added allow rule Bash(npm test:*)'), 'added');
+    const local = JSON.parse(
+      await fs.readFile(path.join(harness.cwd, '.vinax', 'settings.local.json'), 'utf8'),
+    ) as { permissions: { allow: string[] } };
+    expect(local.permissions.allow).toEqual(['Bash(npm test:*)']);
+  });
+
+  it('lists skills with /skills', async () => {
+    const { frame, type } = await mount({
+      files: {
+        '.vinax/skills/changelog/SKILL.md':
+          '---\nname: changelog\ndescription: Write changelog entries\n---\nBe brief.',
+      },
+    });
+    await type('/skills', KEYS.esc, KEYS.enter);
+    await waitFor(
+      () => frame().includes('changelog (project) — Write changelog entries'),
+      'skills',
+    );
+  });
+
+  it('attaches an image given as a path and says when no model can see it', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const { frame, type, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'I only got the name' }] } },
+    });
+    await fs.writeFile(path.join(harness.cwd, 'shot.png'), png);
+    await type('what is in @shot.png', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('I only got the name'), 'answer');
+    expect(frame()).toContain('> what is in [Image #1]');
+    expect(frame()).toContain('Attached [Image #1] shot.png');
+    expect(frame().replace(/\s+/g, ' ')).toContain('No vision-capable model is available');
+    const body = JSON.stringify(agentRequests(harness).at(-1)?.body);
+    expect(body).toContain('this model cannot see images');
+    expect(body).not.toContain('image_url');
   });
 });

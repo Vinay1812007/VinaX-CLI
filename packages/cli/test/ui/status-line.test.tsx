@@ -19,8 +19,17 @@ describe('StatusLine', () => {
   it('shows mode, cycle hint, model and context on a wide terminal', () => {
     const out = line(100);
     expect(out.split('\n')).toHaveLength(1);
-    expect(out).toContain('● default mode (shift+tab to cycle)');
+    expect(out).toContain('⏸ manual mode on (shift+tab to cycle) · ? for shortcuts');
     expect(out).toContain('groq:openai/gpt-oss-120b · 5% context');
+  });
+
+  it('labels every mode like Claude Code and shows the effort', () => {
+    expect(line(100, { mode: 'acceptEdits' })).toContain('⏵⏵ accept edits on');
+    expect(line(100, { mode: 'plan' })).toContain('⏸ plan mode on');
+    expect(line(100, { mode: 'auto' })).toContain('⏵⏵ auto mode on');
+    const withEffort = line(100, { effort: 'high' });
+    expect(withEffort.split('\n')).toHaveLength(1);
+    expect(withEffort).toContain('groq:openai/gpt-oss-120b · ● high · 5% context');
   });
 
   it('stays on one line when narrow by dropping the hint, then shortening the model', () => {

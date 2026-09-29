@@ -1,6 +1,7 @@
 import { Box, Text, useApp, useStdout } from 'ink';
 import { useEffect, useState } from 'react';
 import type { AppStateStore, Env, Runtime, SessionSummary, ThemeName } from '@vinax/core';
+import type { ExitSummary } from '../exit-summary.js';
 import type { OpenedSession, SessionChoice } from '../session.js';
 import type { Announcement } from '../updates.js';
 import type { SlashCommand } from './commands/types.js';
@@ -42,7 +43,7 @@ export interface AppProps {
   tips: readonly string[];
   start: StartChoice;
   initialPrompt?: string | undefined;
-  onExit: (code: number) => void;
+  onExit: (code: number, summary?: ExitSummary) => void;
 }
 
 interface ChatState {
@@ -71,8 +72,9 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
   const [themeName, setThemeName] = useState<ThemeName>('dark');
   const theme = resolveTheme(themeName, env);
 
-  const quit = (code: number): void => {
-    onExit(code);
+  const quit = (code: number, summary?: ExitSummary): void => {
+    if (summary === undefined) onExit(code);
+    else onExit(code, summary);
     exit();
   };
 

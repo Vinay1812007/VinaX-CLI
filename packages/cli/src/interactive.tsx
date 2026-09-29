@@ -21,6 +21,7 @@ import { App, type AppDeps, type StartChoice } from './ui/App.js';
 import { loadCommands } from './ui/commands/registry.js';
 import { cliSettings, type SessionOptions } from './session-options.js';
 import { pickTips } from './ui/tips.js';
+import { writeExitSummary, type ExitSummary } from './exit-summary.js';
 import { startupAnnouncements } from './updates.js';
 import { VERSION } from './version.js';
 
@@ -80,7 +81,13 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
       },
       defaultModel: opts.model ?? 'groq:openai/gpt-oss-120b',
     },
-    announcements: () => startupAnnouncements({ current: VERSION, env }),
+    announcements: async () => {
+      const { updateCheck } = await scratchSettings();
+      return startupAnnouncements({
+        current: VERSION,
+        env: updateCheck ? env : { ...env, VINAX_NO_UPDATE_CHECK: '1' },
+      });
+    },
   };
 }
 
@@ -99,6 +106,7 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
     return EXIT.usage;
   }
   let code: number = EXIT.ok;
+  let summary: ExitSummary | undefined;
   const instance = render(
     <App
       deps={createAppDeps(opts, io)}
@@ -108,8 +116,9 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
       tips={pickTips(3)}
       start={startChoice(opts)}
       initialPrompt={opts.prompt}
-      onExit={(c) => {
+      onExit={(c, s) => {
         code = c;
+        summary = s;
       }}
     />,
     {
@@ -120,5 +129,6 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
     },
   );
   await instance.waitUntilExit();
+  if (summary !== undefined) writeExitSummary(io, summary);
   return code;
 }

@@ -7,6 +7,7 @@ import type {
   ThemeName,
 } from '@vinax/core';
 import type { SelectItem } from '../components/Select.js';
+import type { SettingRow } from '../components/SettingsPanel.js';
 
 /** What a slash command can do to the running session. */
 export interface CommandContext {
@@ -41,6 +42,15 @@ export interface CommandContext {
   setTheme: (theme: ThemeName) => void;
   setEditorMode: (mode: EditorMode) => void;
   editorMode: () => EditorMode;
+  /**
+   * Opens a settings panel; `onChange` saves each change as it happens. Resolves when it closes,
+   * with the key of an action row if one was chosen.
+   */
+  editSettings: (
+    title: string,
+    rows: readonly SettingRow[],
+    onChange: (key: string, value: string) => Promise<readonly SettingRow[] | undefined>,
+  ) => Promise<string | undefined>;
   /** Opens the Snake game; resolves with the score when the player leaves. */
   playSnake: (best: number) => Promise<number>;
   /** Starts a fresh conversation (new session). */

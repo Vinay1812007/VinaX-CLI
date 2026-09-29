@@ -86,20 +86,17 @@ describe('sessions in the app', () => {
       },
     });
     const { frame, type } = await mountApp(h, { kind: 'new' });
-    await waitFor(() => frame().includes('Ask VinaX anything'), 'chat');
+    await waitFor(() => frame().includes('Try "'), 'chat');
     await type('first prompt', '\r');
     await waitFor(() => frame().includes('answer one'), 'first answer');
     await type('/clear', '\x1b', '\r');
-    await waitFor(
-      () => !frame().includes('answer one') && frame().includes('Ask VinaX anything'),
-      'cleared',
-    );
+    await waitFor(() => !frame().includes('answer one') && frame().includes('Try "'), 'cleared');
     await type('/resume', '\x1b', '\r');
     await waitFor(() => frame().includes('Resume which conversation?'), 'resume picker');
     expect(frame()).toContain('First chat');
     await type('\r');
     await waitFor(() => frame().includes('Resumed “First chat”'), 'resumed');
-    expect(frame()).toContain('› first prompt');
+    expect(frame()).toContain('> first prompt');
     expect(frame()).toContain('answer one');
     await type('second prompt', '\r');
     await waitFor(() => frame().includes('answer two'), 'second answer');
@@ -116,13 +113,13 @@ describe('sessions in the app', () => {
   it('continues the latest session with -c', async () => {
     h = await createHarness({ groq: { script: { 'main-model': [{ text: 'earlier answer' }] } } });
     const first = await mountApp(h, { kind: 'new' });
-    await waitFor(() => first.frame().includes('Ask VinaX anything'), 'chat');
+    await waitFor(() => first.frame().includes('Try "'), 'chat');
     await first.type('remember this', '\r');
     await waitFor(() => first.frame().includes('earlier answer'), 'answer');
     app?.unmount();
     const second = await mountApp(h, { kind: 'continue' });
     await waitFor(() => second.frame().includes('Resumed'), 'continued');
-    expect(second.frame()).toContain('› remember this');
+    expect(second.frame()).toContain('> remember this');
     expect(second.frame()).toContain('earlier answer');
   });
 });

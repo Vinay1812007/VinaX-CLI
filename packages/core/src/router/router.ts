@@ -16,6 +16,7 @@ import {
   type ModelRef,
   type Provider,
   type ProviderName,
+  type ReasoningEffort,
   type ToolSpec,
   type Usage,
 } from '../providers/types.js';
@@ -32,6 +33,8 @@ export type RouterEvent =
   /** Progress from the provider that is not output (an empty text clears it). */
   | { type: 'status'; ref: ModelRef; text: string }
   | { type: 'text'; text: string }
+  /** Reasoning the model streams before answering; not output, so fallback stays possible. */
+  | { type: 'reasoning'; ref: ModelRef; text: string }
   | { type: 'tool_call_delta'; index: number; id?: string; name?: string; argsChunk?: string }
   | { type: 'done'; ref: ModelRef; usage: Usage | undefined };
 
@@ -85,8 +88,12 @@ export interface RouteRequest {
   purpose?: 'main' | 'small';
   /** Overrides the head of the chain (e.g. `--model`). */
   model?: string;
+  /** Replaces the settings' fallback chain for this request (e.g. other vision models). */
+  fallbacks?: readonly string[];
   /** Try only the head of the chain (for cheap extras like titles that must not spend fallbacks). */
   noFallback?: boolean;
+  /** Reasoning effort for models that support it. */
+  reasoningEffort?: ReasoningEffort;
   /** Builds the request per model; defaults to `messages` with no tools. */
   prepare?: (ref: ModelRef) => PreparedRequest;
   /**
@@ -128,16 +135,19 @@ export class Router {
     this.logger = deps.logger ?? noopLogger;
   }
 
-  chain(purpose: 'main' | 'small' = 'main', override?: string): ModelRef[] {
+  chain(
+    purpose: 'main' | 'small' = 'main',
+    override?: string,
+    fallbacks: readonly string[] = this.deps.settings.fallbackChain,
+  ): ModelRef[] {
     const s = this.deps.settings;
     const head = override ?? s.model;
-    const refs =
-      purpose === 'small' ? [s.smallModel, head, ...s.fallbackChain] : [head, ...s.fallbackChain];
+    const refs = purpose === 'small' ? [s.smallModel, head, ...fallbacks] : [head, ...fallbacks];
     const unique = [...new Set(refs)].filter((r) => !(this.deps.skip?.has(r) ?? false));
     return unique.map(parseModelRef);
   }
 
-  private retryDelay(err: ProviderError, attempt: number): number | undefined {
+  private retryDelay(err: ProviderError, attempt: number, isLast: boolean): number | undefined {
     const { maxRetries, baseDelayMs, maxDelayMs, maxWaitMs } = this.deps.settings.router;
     if (attempt >= maxRetries) return undefined;
     switch (err.kind) {
@@ -145,8 +155,11 @@ export class Router {
         if (err.retryAfterMs !== undefined)
           return err.retryAfterMs <= maxWaitMs ? err.retryAfterMs : undefined;
         return backoffDelay(attempt, { baseMs: baseDelayMs, maxMs: maxDelayMs }, this.random);
-      case 'server':
       case 'timeout':
+        // A model that did not answer in time rarely does on a retry: move on when we can.
+        if (!isLast) return undefined;
+        return backoffDelay(attempt, { baseMs: baseDelayMs, maxMs: maxDelayMs }, this.random);
+      case 'server':
       case 'network':
         return backoffDelay(attempt, { baseMs: baseDelayMs, maxMs: maxDelayMs }, this.random);
       default:
@@ -160,8 +173,9 @@ export class Router {
     const failures: LinkFailure[] = [];
     let pendingFallback: LinkFailure | undefined;
 
-    const chain = this.chain(req.purpose, req.model);
-    for (const ref of req.noFallback === true ? chain.slice(0, 1) : chain) {
+    const full = this.chain(req.purpose, req.model, req.fallbacks);
+    const chain = req.noFallback === true ? full.slice(0, 1) : full;
+    for (const [linkIndex, ref] of chain.entries()) {
       const provider = providers.get(ref.provider);
       if (!provider) {
         failures.push({
@@ -214,6 +228,7 @@ export class Router {
             signal: req.signal,
             ...(prepared.tools === undefined ? {} : { tools: prepared.tools }),
             ...(req.maxTokens === undefined ? {} : { maxTokens: req.maxTokens }),
+            ...(req.reasoningEffort === undefined ? {} : { reasoningEffort: req.reasoningEffort }),
           });
           for await (const d of deltas) {
             if (d.type === 'usage') {
@@ -222,6 +237,10 @@ export class Router {
             }
             if (d.type === 'status') {
               yield { type: 'status', ref, text: d.text };
+              continue;
+            }
+            if (d.type === 'reasoning') {
+              yield { type: 'reasoning', ref, text: d.text };
               continue;
             }
             emitted = true;
@@ -250,7 +269,7 @@ export class Router {
             attempt--;
             continue;
           }
-          const delay = this.retryDelay(err, attempt);
+          const delay = this.retryDelay(err, attempt, linkIndex === chain.length - 1);
           this.logger.debug('router.failure', {
             ref: formatModelRef(ref),
             kind: err.kind,

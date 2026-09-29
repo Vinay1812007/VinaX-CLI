@@ -60,6 +60,7 @@ export default defineConfig({
           { text: 'Hooks', link: '/hooks' },
           { text: 'MCP servers', link: '/mcp' },
           { text: 'Sub-agents', link: '/sub-agents' },
+          { text: 'Skills', link: '/skills' },
         ],
       },
       {

@@ -25,13 +25,25 @@ These always ask, whatever your rules or mode say:
 
 ## Modes
 
-Shift+Tab cycles the modes. `--permission-mode` sets one at start.
+The footer shows the current mode. Shift+Tab cycles them in this order; `--permission-mode` sets one at start and `permissions.defaultMode` in [settings](/settings) sets the default.
 
-| Mode          | Behaviour                                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `default`     | Asks before edits and commands                                                                                               |
-| `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                      |
-| `plan`        | Read-only. VinaX researches, then presents a plan for you to approve (with or without auto-accept) or send back with changes |
+| Footer               | Mode          | Behaviour                                                                                                                    |
+| -------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `⏸ manual mode on`   | `default`     | Asks before edits, commands and web access                                                                                   |
+| `⏵⏵ accept edits on` | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                      |
+| `⏸ plan mode on`     | `plan`        | Read-only. VinaX researches, then presents a plan for you to approve (with or without auto-accept) or send back with changes |
+| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project run without asking                                                         |
+
+Auto mode is for letting VinaX work through a task on its own. It still stops and asks for:
+
+- everything in the "always asked" list above (dangerous commands such as `rm -rf`, force-pushes and `sudo`)
+- anything matching an ask rule; deny rules still refuse
+- paths outside the project, and commands whose shell is currently in a folder outside the project
+- MCP tools, which are third-party code
+
+```bash
+vinax --permission-mode auto
+```
 
 ## Rules
 
@@ -56,7 +68,15 @@ Rules live in [settings](/settings) under `permissions.allow`, `ask` and `deny`,
 | `WebFetch(domain:github.com)`        | A domain and its subdomains                                       |
 | `mcp__github__*`                     | Every tool from one MCP server                                    |
 
-A compound command such as `a && b | c` is allowed only when **every** part matches an allow rule. Commands containing `$(…)` or backticks always ask. `/permissions` lists the rules in effect and where each came from.
+A compound command such as `a && b | c` is allowed only when **every** part matches an allow rule. Commands containing `$(…)` or backticks always ask.
+
+### Managing rules with `/permissions`
+
+`/permissions` (also `/allowed-tools`) shows the mode and every rule in effect under Allow, Ask and Deny, with where each came from. Then it offers to:
+
+- **Add an allow, ask or deny rule.** The rule is checked, saved where you choose (this project only for you in `.vinax/settings.local.json`, this project shared in `.vinax/settings.json`, or all your projects in `~/.vinax/settings.json`) and applied straight away.
+- **Remove a rule**, picked from a searchable list. It is removed from the session and from your settings files.
+- **Change the permission mode** for this session.
 
 ## Rewind
 

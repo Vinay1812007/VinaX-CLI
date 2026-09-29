@@ -29,7 +29,7 @@ services:
       - key: RATE_LIMIT_RPD
         value: '500'
       - key: MAX_BODY_BYTES
-        value: '1000000'
+        value: '8000000'
       # Tried in order when a client asks for "model": "auto".
       - key: DEFAULT_MODELS
         value: groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free

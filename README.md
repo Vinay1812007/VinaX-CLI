@@ -12,7 +12,7 @@ VinaX (`vinax`) is an open-source AI coding agent for the terminal. It runs on m
 > **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
 > mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
-> sub-agents and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
+> sub-agents, skills, images and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
 > through an optional shared [gateway](docs/gateway.md).
 >
 > 📖 **Documentation: https://vinay1812007.github.io/VinaX-CLI/**
@@ -168,12 +168,18 @@ one-line tricolor **VinaX** instead, `TERM=dumb` gets an ASCII logo, and `NO_COL
 colour off. After an upgrade the first session shows **what's new**, and when a newer release
 is out VinaX says so (checked at most once a day; set `VINAX_NO_UPDATE_CHECK=1` to turn it off).
 
+The prompt box works like Claude Code's: a grey box with a `>` prompt and a rotating
+`Try "…"` example (`!` with a pink border for shell commands, `#` with a blue one for memory
+notes). Underneath, the footer shows the permission mode, `⏸ manual mode on`, `⏵⏵ accept edits on`,
+`⏸ plan mode on` or `⏵⏵ auto mode on` (Shift+Tab cycles them), then the model that answered, the
+[reasoning effort](docs/models.md#reasoning-effort) and how much of the context budget is used.
+
 Answers stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
-While a reply is streaming, the activity line shows what VinaX is doing (Inspecting repository,
-Planning, Editing, Running tests…), elapsed time, an approximate token count and
-`esc to interrupt`, with a trail of the turn's stages such as
-`Inspecting repository → Editing → Running tests`. The footer shows the current mode, the model
-that answered, how much of the context budget is used, and any fallback or rate-limit notice.
+While a reply is streaming, a pulsing `✻` spinner with a shimmer shows what VinaX is doing
+(Thinking, Inspecting repository, Planning, Editing, Running tests…), elapsed time, an
+approximate token count, the effort and `esc to interrupt`, with a trail of the turn's stages such
+as `Inspecting repository → Editing → Running tests`. While the model reasons, its latest thought
+shows in a dim line, and `✻ Thought for 4s` stays in the transcript.
 When a turn fails, an error card names each model tried, the kind of failure (authentication,
 missing key, rate limit, temporary provider error, network, model not available…) and what to try
 next.
@@ -184,14 +190,31 @@ next.
 | `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line (`Shift+Enter` needs a terminal that reports it)      |
 | `↑` / `↓`                                           | Move between lines, then walk this project's history           |
 | `Ctrl+R`                                            | Search prompt history (press again for older matches)          |
+| `Shift+Tab`                                         | Cycle ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto            |
 | `Esc`                                               | Stop the current reply; what was written is kept               |
 | `Esc Esc`                                           | Clear the prompt; on an empty prompt, open the rewind picker   |
-| `Shift+Tab`                                         | Cycle default → auto-accept edits → plan mode                  |
+| `Ctrl+V`                                            | Paste an image from the clipboard                              |
+| `Option/Alt+←` `→`, `Ctrl+A` `Ctrl+E`               | Word left/right, line start/end                                |
+| `Option/Alt+Backspace` `Ctrl+W`, `Alt+D`            | Delete the word before / after the cursor                      |
+| `Ctrl+U` `Ctrl+K`, `Ctrl+Y`, `Ctrl+_`               | Delete to line start/end, paste it back, undo                  |
 | `Ctrl+O`                                            | Turn details: model, tokens, time, fallbacks, live rate limits |
+| `Ctrl+L`                                            | Redraw the screen                                              |
 | `?` (empty prompt)                                  | Show all shortcuts                                             |
-| `Ctrl+A` `Ctrl+E` `Ctrl+W` `Ctrl+U` `Ctrl+K`        | Line start/end, delete word/to start/to end                    |
 | `Ctrl+C`                                            | Clear the prompt; press again within 2s to exit                |
 | `Ctrl+D`                                            | Exit (on an empty prompt)                                      |
+
+**Images.** Drag an image file into the terminal, type or paste its path, use `@shot.png`, or
+copy a screenshot and press `Ctrl+V`. It becomes an `[Image #1]` chip, and that turn goes to a
+[vision-capable model](docs/models.md#vision-models) automatically when yours is text-only (as
+gpt-oss is). NVIDIA's Llama 3.2 Vision models and OpenRouter's image-capable models are picked
+automatically, or set `visionModel`.
+
+**Copying.** Select text with the mouse as usual; VinaX doesn't capture the mouse, so your
+terminal's selection keeps working. `/copy` copies the last answer, and `/copy 2` its second
+code block.
+
+**Leaving.** `/exit` (or Ctrl+C twice) hides the prompt and prints the session id, the
+`vinax --resume <id>` command to continue it, time, tokens, files changed and the models used.
 
 Pastes of 8 or more lines (or 800+ characters) collapse into `[Pasted text #1 +42 lines]`, and the
 full text is sent. Prompt history is stored per project in `~/.vinax/projects/<folder>/`.
@@ -262,11 +285,15 @@ Some actions **always** ask, even with allow rules or auto-accept on:
 
 **Modes** (Shift+Tab, or `--permission-mode`):
 
-| Mode          | Behaviour                                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `default`     | Asks before edits and commands                                                                                     |
-| `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                            |
-| `plan`        | Read-only. VinaX researches, then presents a plan. You approve it (with or without auto-accept) or ask for changes |
+| Footer               | Mode          | Behaviour                                                                                                                                                          |
+| -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `⏸ manual mode on`   | `default`     | Asks before edits and commands                                                                                                                                     |
+| `⏵⏵ accept edits on` | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                                                            |
+| `⏸ plan mode on`     | `plan`        | Read-only. VinaX researches, then presents a plan. You approve it (with or without auto-accept) or ask for changes                                                 |
+| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project run without asking. Dangerous commands, ask and deny rules, anything outside the project and MCP tools still ask |
+
+`/permissions` shows the rules and lets you add or remove allow, ask and deny rules, or change the
+mode, without editing JSON.
 
 **Rules** live in settings under `permissions.allow`, `ask` and `deny`, or are passed with
 `--allowedTools` and `--disallowedTools`. Deny always wins.
@@ -306,17 +333,21 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
 | `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
 | `/update`, `/changelog`            | Check for a newer release and how to update; what's new in recent releases                                                |
-| `/snake`                           | Play Snake, Nokia-style, in colour (arrows/WASD, P pause, R restart, Esc quit; best score is saved)                       |
+| `/snake`                           | Snake II, Nokia 3310-style, in colour: levels 1–9, six mazes, bonus critters, top scores per level and maze               |
+| `/effort`                          | Reasoning effort for models such as gpt-oss: auto, low, medium, high                                                      |
+| `/copy [n]`                        | Copy the last answer, or its nth code block, to the clipboard                                                             |
+| `/skills`                          | Skills (`SKILL.md` folders) VinaX loads for specific tasks                                                                |
 | `/login`, `/logout`                | Add, replace or remove a provider key without leaving the session                                                         |
-| `/config`, `/permissions`          | Show the effective settings and permission rules                                                                          |
+| `/settings`, `/permissions`        | Settings panel (model, effort, mode, theme, editor, updates, tips); view, add and remove permission rules                 |
 | `/theme`, `/vim`                   | Change the colour theme; toggle vim key bindings (saved)                                                                  |
 | `/export [file]`, `/bug`, `/exit`  | Save the conversation as Markdown; open a pre-filled GitHub issue; quit                                                   |
 
 **Prefixes:**
 
 - `@path` attaches a file or folder. The file's contents go to the model, and the file counts
-  as read, so it can be edited straight away. Type `@` for fuzzy file completion (`.gitignore`
-  is respected).
+  as read, so it can be edited straight away. Typing `@` lists the folder at once, and further
+  typing searches the project (fast even in your home folder; `.gitignore` is respected).
+  `@shot.png` attaches an image.
 - `!command` runs a shell command immediately, with no model call. Its output joins the
   conversation, so you can ask about it next.
 - `#note` appends a note to project or personal memory.
@@ -464,6 +495,21 @@ You are a careful code reviewer. Report problems with file paths and line number
 `tools` limits what it may use (`mcp__github__*` style wildcards work) and `model` picks its model;
 both are optional. `/agents` lists them.
 
+### Skills
+
+A skill is a folder with a `SKILL.md` in `.vinax/skills/`, `.claude/skills/` or `~/.vinax/skills/`.
+VinaX shows the model each skill's name and description, and the model loads the full instructions
+with the Skill tool when a task needs them. `/skills` lists them. See [Skills](docs/skills.md).
+
+```markdown
+---
+name: release-notes
+description: Write release notes from the git log in our house style
+---
+
+Group commits into Added, Changed and Fixed; one line per user-visible change.
+```
+
 ## Print mode
 
 ```sh
@@ -569,8 +615,9 @@ Example `~/.vinax/settings.json`:
 }
 ```
 
-`theme` (`dark`, `light` or `colorblind`), `editorMode` (`normal` or `vim`), `context`
-(`maxTokens`, `autoCompact`) and `gateway` (`url`, `timeoutMs`) are settings too. `vinax doctor` runs the `/doctor` checks from your
+`/settings` changes the common ones in a panel. `theme` (`dark`, `light` or `colorblind`),
+`editorMode` (`normal` or `vim`), `reasoningEffort`, `visionModel`, `updateCheck`, `showTips`,
+`context` (`maxTokens`, `autoCompact`) and `gateway` (`url`, `timeoutMs`) are settings too. `vinax doctor` runs the `/doctor` checks from your
 shell. `VINAX_HOME` relocates `~/.vinax`.
 `VINAX_SECRETS_BACKEND=file` skips the OS keychain. `NO_COLOR` turns off all colour, whatever the
 theme.
