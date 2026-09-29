@@ -38,6 +38,13 @@ export {
 } from './agent/subagents.js';
 export { HookRunner, matcherMatches, type HookResult } from './hooks/runner.js';
 export {
+  createSkillTool,
+  loadSkills,
+  skillDirs,
+  skillsPromptSection,
+  type SkillDef,
+} from './skills/skills.js';
+export {
   expandEnvVars,
   loadMcpConfig,
   mcpConfigPath,
@@ -77,7 +84,22 @@ export {
 } from './session/store.js';
 export { generateTitle } from './session/title.js';
 export { UsageTracker, type DayUsage, type UsageCounts } from './state/usage.js';
-export { createAgentSetup, type AgentSetup, type AgentSetupOptions } from './agent/setup.js';
+export {
+  createAgentSetup,
+  pickVisionModel,
+  pickVisionModels,
+  type AgentSetup,
+  type AgentSetupOptions,
+} from './agent/setup.js';
+export {
+  clipboardImageFile,
+  extractImages,
+  findImagePaths,
+  loadImage,
+  looksLikeImagePath,
+  MAX_IMAGE_BYTES,
+  sniffImageType,
+} from './files/images.js';
 export {
   buildSystemPrompt,
   gitSection,
@@ -180,13 +202,17 @@ export {
   formatModelRef,
   parseModelRef,
   PROVIDER_NAMES,
+  REASONING_EFFORTS,
   type ChatMessage,
   type ChatRequest,
+  type ImageAttachment,
+  type ImageMediaType,
   type KeyCheck,
   type ModelInfo,
   type ModelRef,
   type Provider,
   type ProviderName,
+  type ReasoningEffort,
   type StreamDelta,
   type ToolCall,
   type ToolSpec,

@@ -72,7 +72,8 @@ export function loadConfig(env: Env): GatewayConfig {
     tokens,
     rpm: int(env, 'RATE_LIMIT_RPM', 20),
     rpd: int(env, 'RATE_LIMIT_RPD', 500),
-    maxBodyBytes: int(env, 'MAX_BODY_BYTES', 1_000_000),
+    // room for a few images (base64) in a request
+    maxBodyBytes: int(env, 'MAX_BODY_BYTES', 8_000_000),
     defaultModels: (
       env.DEFAULT_MODELS ?? 'groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free'
     )

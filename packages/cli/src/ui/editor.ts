@@ -90,6 +90,19 @@ export function deleteWordBack(s: EditorState): EditorState {
   return { value: s.value.slice(0, to) + s.value.slice(s.cursor), cursor: to };
 }
 
+/** Option/Alt+D: delete from the cursor to the end of the word. */
+export function deleteWordAfter(s: EditorState): EditorState {
+  const to = wordRight(s).cursor;
+  return { value: s.value.slice(0, s.cursor) + s.value.slice(to), cursor: s.cursor };
+}
+
+/** The text a kill command removed (for Ctrl+Y), or '' when nothing was removed. */
+export function killed(before: EditorState, after: EditorState): string {
+  if (after.value.length >= before.value.length) return '';
+  const start = Math.min(before.cursor, after.cursor);
+  return before.value.slice(start, start + before.value.length - after.value.length);
+}
+
 /** Ctrl+K: delete to the end of the line. */
 export function killToLineEnd(s: EditorState): EditorState {
   const end = lineEndIndex(s.value, s.cursor);

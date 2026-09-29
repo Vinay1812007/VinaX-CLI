@@ -8,7 +8,7 @@ export function UserMessage({ text }: { text: string }) {
   const theme = useTheme();
   return (
     <Box marginTop={1}>
-      <Text color={theme.muted}>› </Text>
+      <Text color={theme.muted}>&gt; </Text>
       <Text color={theme.muted} wrap="wrap">
         {text}
       </Text>
@@ -187,6 +187,19 @@ export function TurnSummary({ text }: { text: string }) {
       <Text color={theme.muted} wrap="truncate-end">
         {'  └ '}
         {text}
+      </Text>
+    </Box>
+  );
+}
+
+/** Left behind after the model reasoned: "✻ Thought for 4s". */
+export function ThoughtLine({ durationMs }: { durationMs: number }) {
+  const theme = useTheme();
+  const secs = Math.max(1, Math.round(durationMs / 1000));
+  return (
+    <Box marginTop={1}>
+      <Text color={theme.muted} italic>
+        ✻ Thought for {secs}s
       </Text>
     </Box>
   );

@@ -2,7 +2,10 @@ import { Box, Static, Text, useApp, useInput, usePaste, useWindowSize } from 'in
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachMentions,
+  clipboardImageFile,
+  extractImages,
   FileIndex,
+  loadImage,
   formatModelRef,
   generateTitle,
   modelAlias,
@@ -15,6 +18,7 @@ import {
   type AgentHost,
   type AgentSetup,
   type EditorMode,
+  type ImageAttachment,
   type PermissionAnswer,
   type PermissionMode,
   type PermissionRequest,
@@ -25,9 +29,10 @@ import {
   type TodoItem,
 } from '@vinax/core';
 import type { Announcement } from '../../updates.js';
+import type { ExitSummary } from '../../exit-summary.js';
 import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
-import { formatTokens, truncate } from '../format.js';
+import { formatBytes, formatTokens, truncate } from '../format.js';
 import { extendTrail, phaseFor, turnSummary, type Phase } from '../phases.js';
 import { useTheme } from '../theme.js';
 import {
@@ -46,6 +51,7 @@ import {
   Notice,
   Panel,
   ShellEntry,
+  ThoughtLine,
   TurnSummary,
   UserMessage,
 } from './Messages.js';
@@ -56,15 +62,23 @@ import { PromptBox } from './PromptBox.js';
 import { RewindPicker, type RewindChoice } from './RewindPicker.js';
 import type { SelectItem } from './Select.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
+import { SettingsPanel, type SettingRow } from './SettingsPanel.js';
 import { SnakeGame } from './SnakeGame.js';
-import { StatusLine, type StatusNotice } from './StatusLine.js';
+import { MODE_CYCLE, StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
 import { RunningTool, ToolEntry } from './ToolEntry.js';
 import { TurnDetails } from './TurnDetails.js';
 import { Welcome } from './Welcome.js';
 
-const MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+/** Rotating example prompts for the empty prompt box, like Claude Code's `Try "…"`. */
+const PLACEHOLDERS: readonly string[] = [
+  'Try "explain how this project is structured"',
+  'Try "fix the failing tests"',
+  'Try "review my changes"',
+  'Try "write a test for @src/…"',
+  'Try "what changed in the last commit?"',
+];
 const EXIT_WINDOW_MS = 2000;
 const DOUBLE_ESC_MS = 600;
 const RUNNING_OUTPUT_CHARS = 4000;
@@ -86,6 +100,8 @@ interface Streaming {
   label?: string;
   /** Stages of this turn so far (Inspecting repository → Editing → Running tests). */
   trail?: Phase[];
+  /** The model's reasoning while it thinks (cleared once the answer or a tool call starts). */
+  thinking?: string;
 }
 
 interface Running {
@@ -102,6 +118,13 @@ type Pending =
 type Overlay =
   | { kind: 'shortcuts' }
   | { kind: 'snake'; best: number; resolve: (score: number) => void }
+  | {
+      kind: 'settings';
+      title: string;
+      rows: readonly SettingRow[];
+      onChange: (key: string, value: string) => Promise<readonly SettingRow[] | undefined>;
+      resolve: (action: string | undefined) => void;
+    }
   | { kind: 'details' }
   | { kind: 'rewind' }
   | {
@@ -139,7 +162,7 @@ export interface ChatScreenProps {
   /** Loaded after the first paint: what's new, update available. */
   announcements?: (() => Promise<Announcement[]>) | undefined;
   editorMode: EditorMode;
-  onExit: (code: number) => void;
+  onExit: (code: number, summary?: ExitSummary) => void;
   onClear: () => void;
   onResume: (id: string) => void;
   onTheme: (theme: ThemeName) => void;
@@ -201,13 +224,24 @@ export function ChatScreen(props: ChatScreenProps) {
   const [, setEditorMode, editorModeRef] = useRefState<EditorMode>(props.editorMode);
   const [notice, setNotice] = useState<StatusNotice | undefined>(undefined);
   const [hint, setHint] = useState<string | undefined>(undefined);
-  const [turns, setTurns] = useState<TurnRecord[]>([]);
+  const [turns, setTurns, turnsRef] = useRefState<TurnRecord[]>([]);
   const [activeModel, setActiveModel] = useState(agent.model ?? runtime.settings.resolved.model);
   const [contextPct, setContextPct] = useState<number | undefined>(undefined);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [, setTitle, titleRef] = useRefState<string | undefined>(props.title);
 
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const mountedAt = useRef(now());
+  /** Files edited this session and lines added/removed, for the exit summary. */
+  const changes = useRef({ files: new Set<string>(), added: 0, removed: 0 });
+  const [exiting, setExiting] = useState(false);
+  /** Images pasted with Ctrl+V, by their `[Image #n]` number, until the prompt is sent. */
+  const pendingImages = useRef(new Map<number, ImageAttachment>());
+  const nextImage = useRef(1);
+  const placeholder = useMemo(
+    () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)] ?? PLACEHOLDERS[0],
+    [],
+  );
   const tailRef = useRef('');
   const committedRef = useRef(false);
   const exitArmedAt = useRef<number | undefined>(undefined);
@@ -271,6 +305,31 @@ export function ChatScreen(props: ChatScreenProps) {
     [runtime],
   );
 
+  /** Leaves like Claude Code: the prompt disappears and a session summary is printed. */
+  const leave = (code = 0): void => {
+    if (exiting) return;
+    const t = turnsRef.current;
+    const summary: ExitSummary = {
+      sessionId: session.id,
+      title: titleRef.current,
+      prompts: t.length,
+      toolCalls: t.reduce((n, x) => n + x.tools.length, 0),
+      wallMs: now() - mountedAt.current,
+      activeMs: t.reduce((n, x) => n + x.durationMs, 0),
+      inputTokens: t.reduce((n, x) => n + (x.inputTokens ?? 0), 0),
+      outputTokens: t.reduce((n, x) => n + (x.outputTokens ?? 0), 0),
+      filesChanged: changes.current.files.size,
+      linesAdded: changes.current.added,
+      linesRemoved: changes.current.removed,
+      models: [...new Set(t.map((x) => x.model).filter((m): m is string => m !== undefined))],
+    };
+    setExiting(true);
+    // let Ink paint one last frame without the prompt, then hand over to the summary
+    setTimeout(() => {
+      onExit(code, summary);
+    }, 30);
+  };
+
   const refreshContext = (): void => {
     const limit = setup.contextLimit();
     setContextPct(
@@ -307,8 +366,22 @@ export function ChatScreen(props: ChatScreenProps) {
     if (next !== undefined) void handleSubmitRef.current(next);
   };
 
-  const runTurn = async (q: Queued): Promise<void> => {
+  const runTurn = async (q: Queued & { images?: ImageAttachment[] }): Promise<void> => {
     push({ kind: 'user', text: q.display });
+    if (q.images !== undefined && q.images.length > 0) {
+      push({
+        kind: 'notice',
+        level: 'info',
+        text: `Attached ${q.images.map((img, i) => `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`).join(', ')}`,
+      });
+    }
+    let thinkingSince: number | undefined;
+    const endThinking = (): void => {
+      if (thinkingSince === undefined) return;
+      push({ kind: 'thought', durationMs: now() - thinkingSince });
+      thinkingSince = undefined;
+      setStreaming((st) => st && { ...st, thinking: undefined });
+    };
     const ac = new AbortController();
     abortRef.current = ac;
     tailRef.current = '';
@@ -323,7 +396,14 @@ export function ChatScreen(props: ChatScreenProps) {
     setStreaming({ startedAt, tail: '', chars: 0, committed: false, waiting: undefined });
 
     const onEvent = (ev: AgentEvent): void => {
+      if (ev.type !== 'reasoning' && ev.type !== 'status' && ev.type !== 'wait') endThinking();
       switch (ev.type) {
+        case 'reasoning': {
+          thinkingSince ??= now();
+          const add = ev.text;
+          setStreaming((st) => st && { ...st, thinking: `${st.thinking ?? ''}${add}`.slice(-600) });
+          return;
+        }
         case 'text': {
           tailRef.current += ev.text;
           const { stable, rest } = splitStable(tailRef.current);
@@ -373,6 +453,11 @@ export function ChatScreen(props: ChatScreenProps) {
             ...(began === undefined ? {} : { durationMs: now() - began }),
           });
           tools.push({ name: ev.name, label, ok: ev.ok, summary: ev.summary, output: ev.content });
+          if (ev.ok && ev.display?.kind === 'diff') {
+            changes.current.files.add(ev.display.path);
+            changes.current.added += ev.display.added;
+            changes.current.removed += ev.display.removed;
+          }
           return;
         }
         case 'notice':
@@ -427,7 +512,9 @@ export function ChatScreen(props: ChatScreenProps) {
       onEvent,
       ...(q.allowRules === undefined ? {} : { allowRules: q.allowRules }),
       ...(q.model === undefined ? {} : { model: q.model }),
+      ...(q.images === undefined || q.images.length === 0 ? {} : { images: q.images }),
     });
+    endThinking();
     abortRef.current = undefined;
     commitTail();
     setRunning([]);
@@ -613,6 +700,19 @@ export function ChatScreen(props: ChatScreenProps) {
         refreshContext();
       }
     },
+    editSettings: (settingsTitle, rows, onChange) =>
+      new Promise<string | undefined>((resolve) => {
+        setOverlay({
+          kind: 'settings',
+          title: settingsTitle,
+          rows,
+          onChange,
+          resolve: (action) => {
+            setOverlay(undefined);
+            resolve(action);
+          },
+        });
+      }),
     playSnake: (best) =>
       new Promise<number>((resolve) => {
         setOverlay({
@@ -639,7 +739,7 @@ export function ChatScreen(props: ChatScreenProps) {
     suspend: (fn) => suspendTerminal(fn),
     contextPct: () => contextPct,
     exit: () => {
-      onExit(0);
+      leave();
     },
     commands: () => commands,
     sessionTitle: () => titleRef.current,
@@ -685,16 +785,43 @@ export function ChatScreen(props: ChatScreenProps) {
         return;
       }
     }
-    const { prompt, attached } = await attachMentions(s.prompt, {
+    // Images: pasted with Ctrl+V (chips already in the text) or given as paths / @file.png.
+    const pasted = [...pendingImages.current.entries()].filter(([n]) =>
+      s.prompt.includes(`[Image #${String(n)}]`),
+    );
+    pendingImages.current.clear();
+    const found = await extractImages(s.prompt, runtime.cwd, nextImage.current);
+    for (const err of found.errors) push({ kind: 'notice', level: 'warning', text: err });
+    nextImage.current += found.images.length;
+    const images = [...pasted.map(([, img]) => img), ...found.images];
+    const display = s.display === s.prompt ? found.text : s.display;
+    const { prompt, attached } = await attachMentions(found.text, {
       cwd: runtime.cwd,
       workspace: setup.workspace,
       reads: setup.reads,
     });
-    await runTurn({ ...s, prompt });
+    await runTurn({ ...s, prompt, display, images });
+    nextImage.current = 1;
     if (attached.length > 0) refreshContext();
   };
   const handleSubmitRef = useRef(handleSubmit);
   handleSubmitRef.current = handleSubmit;
+
+  const pasteImage = async (): Promise<void> => {
+    const file = await clipboardImageFile();
+    if (file === undefined) {
+      flashHint('No image on the clipboard (Cmd+V pastes text; drag a file in to attach it)');
+      return;
+    }
+    try {
+      const img = await loadImage(file);
+      const n = nextImage.current++;
+      pendingImages.current.set(n, { ...img, name: `clipboard-${String(n)}.png` });
+      prompt.insertText(`[Image #${String(n)}] `);
+    } catch (err) {
+      flashHint(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const prompt = usePromptEditor({
     history,
@@ -702,6 +829,12 @@ export function ChatScreen(props: ChatScreenProps) {
     onSubmit: (s) => void handleSubmitRef.current(s),
     onShortcuts: () => {
       setOverlay({ kind: 'shortcuts' });
+    },
+    onPasteImage: () => void pasteImage(),
+    onRedraw: () => {
+      void suspendTerminal(() => {
+        process.stdout.write('\x1b[2J\x1b[H');
+      });
     },
   });
   const suggestions = useSuggestions(prompt.editor, commands, files);
@@ -756,7 +889,7 @@ export function ChatScreen(props: ChatScreenProps) {
         exitArmedAt.current !== undefined && now() - exitArmedAt.current < EXIT_WINDOW_MS;
       if (armed) {
         abortRef.current?.abort();
-        onExit(0);
+        leave();
         return;
       }
       if (abortRef.current) {
@@ -774,13 +907,14 @@ export function ChatScreen(props: ChatScreenProps) {
       ov?.kind === 'rewind' ||
       ov?.kind === 'picker' ||
       ov?.kind === 'ask' ||
-      ov?.kind === 'snake'
+      ov?.kind === 'snake' ||
+      ov?.kind === 'settings'
     )
       return;
     if (key.ctrl && input === 'd') {
       if (prompt.editorRef.current.value === '') {
         abortRef.current?.abort();
-        onExit(0);
+        leave();
       }
       return;
     }
@@ -837,7 +971,7 @@ export function ChatScreen(props: ChatScreenProps) {
       return;
     }
     if (key.tab && key.shift) {
-      setMode((m) => MODES[(MODES.indexOf(m) + 1) % MODES.length] ?? 'default');
+      setMode((m) => MODE_CYCLE[(MODE_CYCLE.indexOf(m) + 1) % MODE_CYCLE.length] ?? 'default');
       return;
     }
     prompt.handleKey(input, key);
@@ -868,7 +1002,7 @@ export function ChatScreen(props: ChatScreenProps) {
                 : 'new session'
             }
             memory={setup.memory.files}
-            tips={tips}
+            tips={runtime.settings.resolved.showTips ? tips : []}
             width={width}
             env={runtime.env}
           />
@@ -914,6 +1048,8 @@ export function ChatScreen(props: ChatScreenProps) {
         return <ErrorCard key={item.id} report={item.report} width={width} />;
       case 'summary':
         return <TurnSummary key={item.id} text={item.text} />;
+      case 'thought':
+        return <ThoughtLine key={item.id} durationMs={item.durationMs} />;
     }
   };
 
@@ -936,7 +1072,15 @@ export function ChatScreen(props: ChatScreenProps) {
     overlay?.kind !== 'rewind' &&
     overlay?.kind !== 'picker' &&
     overlay?.kind !== 'ask' &&
-    overlay?.kind !== 'snake';
+    overlay?.kind !== 'snake' &&
+    overlay?.kind !== 'settings';
+  if (exiting) {
+    return (
+      <Box flexDirection="column">
+        <Static items={items}>{renderItem}</Static>
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column">
       <Static items={items}>{renderItem}</Static>
@@ -970,6 +1114,9 @@ export function ChatScreen(props: ChatScreenProps) {
               (running[0] === undefined ? undefined : phaseFor(running[0].name, running[0].label))
             }
             trail={streaming.trail ?? []}
+            thinking={streaming.thinking}
+            effort={agent.effort}
+            width={width}
             now={now}
           />
         </Box>
@@ -986,6 +1133,14 @@ export function ChatScreen(props: ChatScreenProps) {
         </Box>
       ) : null}
       {overlay?.kind === 'shortcuts' ? <ShortcutsHelp /> : null}
+      {overlay?.kind === 'settings' ? (
+        <SettingsPanel
+          title={overlay.title}
+          rows={overlay.rows}
+          onChange={overlay.onChange}
+          onClose={overlay.resolve}
+        />
+      ) : null}
       {overlay?.kind === 'snake' ? (
         <SnakeGame columns={width} rows={rows} best={overlay.best} onExit={overlay.resolve} />
       ) : null}
@@ -1030,9 +1185,7 @@ export function ChatScreen(props: ChatScreenProps) {
           <PromptBox
             editor={prompt.editor}
             placeholder={
-              busy
-                ? 'Type to queue a follow-up · esc to interrupt'
-                : 'Ask VinaX anything · / commands · @ files · ! shell · # memory'
+              busy ? 'Type to queue a follow-up · esc to interrupt' : (placeholder ?? '')
             }
             search={prompt.searchView}
             dimmed={busy}
@@ -1046,6 +1199,7 @@ export function ChatScreen(props: ChatScreenProps) {
       ) : null}
       <StatusLine
         mode={mode}
+        effort={agent.effort}
         model={activeModel}
         contextPct={contextPct}
         notice={notice}

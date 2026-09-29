@@ -12,7 +12,11 @@ export const modelRefSchema = z
   .string()
   .refine((v) => normalizeModelRef(v) !== undefined, MODEL_REF_HINT);
 
-export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
+/**
+ * `auto` approves edits, commands and web access inside the project on its own; deny rules, ask
+ * rules, dangerous commands and anything outside the project still stop and ask.
+ */
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const THEME_NAMES = ['dark', 'light', 'colorblind'] as const;
@@ -75,6 +79,8 @@ export const settingsSchema = z.strictObject({
   smallModel: modelRefSchema.optional(),
   /** Tried in order after the main model fails or is rate-limited. */
   fallbackChain: z.array(modelRefSchema).optional(),
+  /** Answers prompts that carry images when the main model cannot see them. */
+  visionModel: modelRefSchema.optional(),
   providers: z
     .strictObject({
       groq: providerSettingsSchema.optional(),
@@ -87,6 +93,12 @@ export const settingsSchema = z.strictObject({
   theme: z.enum(THEME_NAMES).optional(),
   /** Input box key bindings. */
   editorMode: z.enum(EDITOR_MODES).optional(),
+  /** Reasoning effort for models that support it (gpt-oss): low, medium or high. */
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  /** Check for new VinaX releases at startup (at most once a day). */
+  updateCheck: z.boolean().optional(),
+  /** Show tips on the welcome screen. */
+  showTips: z.boolean().optional(),
   hooks: z
     .strictObject(
       Object.fromEntries(
@@ -132,6 +144,7 @@ export interface ResolvedSettings {
   model: string;
   smallModel: string;
   fallbackChain: string[];
+  visionModel: string | undefined;
   providers: Record<ProviderName, ProviderSettings>;
   router: RouterSettings;
   permissions: {
@@ -143,6 +156,9 @@ export interface ResolvedSettings {
   };
   theme: ThemeName;
   editorMode: EditorMode;
+  reasoningEffort: 'low' | 'medium' | 'high' | undefined;
+  updateCheck: boolean;
+  showTips: boolean;
   context: { maxTokens: number; autoCompact: boolean };
   gateway: { url: string | undefined; timeoutMs: number };
   hooks: Partial<Record<HookEvent, HookMatcher[]>>;
@@ -162,6 +178,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     'openrouter:nvidia/nemotron-3-super-120b-a12b:free',
     'nvidia:openai/gpt-oss-20b',
   ],
+  visionModel: undefined,
   providers: {
     groq: { enabled: true, baseUrl: 'https://api.groq.com/openai/v1', rpm: 30 },
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1', rpm: 20 },
@@ -178,6 +195,9 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   permissions: { allow: [], ask: [], deny: [], defaultMode: 'default', additionalDirectories: [] },
   theme: 'dark',
   editorMode: 'normal',
+  reasoningEffort: undefined,
+  updateCheck: true,
+  showTips: true,
   context: { maxTokens: 24_000, autoCompact: true },
   gateway: { url: undefined, timeoutMs: 120_000 },
   hooks: {},
@@ -195,6 +215,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     model: canonical(s.model ?? d.model),
     smallModel: canonical(s.smallModel ?? d.smallModel),
     fallbackChain: (s.fallbackChain ?? d.fallbackChain).map(canonical),
+    visionModel: s.visionModel === undefined ? d.visionModel : canonical(s.visionModel),
     providers: {
       groq: { ...d.providers.groq, ...s.providers?.groq },
       openrouter: { ...d.providers.openrouter, ...s.providers?.openrouter },
@@ -204,6 +225,9 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     permissions: { ...d.permissions, ...s.permissions },
     theme: s.theme ?? d.theme,
     editorMode: s.editorMode ?? d.editorMode,
+    reasoningEffort: s.reasoningEffort ?? d.reasoningEffort,
+    updateCheck: s.updateCheck ?? d.updateCheck,
+    showTips: s.showTips ?? d.showTips,
     context: { ...d.context, ...s.context },
     gateway: {
       url: s.gateway?.url ?? d.gateway.url,

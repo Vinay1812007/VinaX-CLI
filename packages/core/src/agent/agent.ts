@@ -2,8 +2,11 @@ import type { PermissionMode } from '../config/schema.js';
 import type { PermissionEngine } from '../permissions/engine.js';
 import {
   formatModelRef,
+  parseModelRef,
   type ChatMessage,
+  type ImageAttachment,
   type ModelRef,
+  type ReasoningEffort,
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
@@ -103,10 +106,18 @@ export interface AgentDeps {
   systemPrompt: (mode: PermissionMode, toolInstructions?: string) => string;
   /** From the model catalog: `false` means the model has no native tool calling. */
   supportsTools?: (ref: ModelRef) => boolean | undefined;
+  /** Whether a model accepts images; images are replaced by a note for models that do not. */
+  supportsVision?: (ref: ModelRef) => boolean;
+  /** Vision-capable models, best first, to answer turns that carry images. */
+  visionModels?: () => string[];
+  /** The settings' main model, used when no model was chosen for the session. */
+  defaultModel?: () => string;
   /** Model calls allowed per user turn. */
   maxTurns?: number;
   /** Head of the fallback chain (e.g. `--model`). */
   model?: string;
+  /** Default reasoning effort (settings `reasoningEffort`). */
+  effort?: ReasoningEffort;
   /** Persists the conversation (session transcript). */
   recorder?: SessionRecorder;
   /** Token budget for the conversation; auto-compaction starts at 85% of it. */
@@ -140,6 +151,10 @@ interface RunOptions {
   allowRules?: readonly string[];
   /** Model for this turn only (custom command `model`). */
   model?: string;
+  /** Fallbacks for this turn only, replacing the settings' chain (other vision models). */
+  fallbacks?: readonly string[];
+  /** Images attached to the prompt (pasted, dragged in or `@image.png`). */
+  images?: readonly ImageAttachment[];
 }
 
 /**
@@ -186,8 +201,18 @@ export class Agent {
   }
 
   private modelOverride: string | undefined;
+  private effortOverride: ReasoningEffort | undefined;
 
   /** Head of the fallback chain for later turns (`/model`); `undefined` returns to the default. */
+  /** Reasoning effort for this session (`undefined` = the model's default). */
+  setEffort(effort: ReasoningEffort | undefined): void {
+    this.effortOverride = effort;
+  }
+
+  get effort(): ReasoningEffort | undefined {
+    return this.effortOverride ?? this.deps.effort;
+  }
+
   setModel(model: string | undefined): void {
     this.modelOverride = model;
   }
@@ -326,7 +351,16 @@ export class Agent {
       this.deps.recorder?.record({ type: 'turn', ...mark });
       this.deps.checkpoints.beginTurn(turn);
     }
-    this.push({ role: 'user', content });
+    this.push(
+      opts.images && opts.images.length > 0
+        ? { role: 'user', content, images: [...opts.images] }
+        : { role: 'user', content },
+    );
+    const visionModel = this.visionModelFor(opts);
+    if (visionModel !== undefined)
+      opts = { ...opts, model: visionModel.ref, fallbacks: visionModel.fallbacks };
+    if (visionModel?.notice !== undefined)
+      opts.onEvent({ type: 'notice', level: 'info', text: visionModel.notice });
     let stopRetries = 0;
     let steps = 0;
     let lastText = '';
@@ -403,6 +437,47 @@ export class Agent {
     }
   }
 
+  /** The conversation as `ref` can take it: images become a short note for text-only models. */
+  private forModel(ref: ModelRef): ChatMessage[] {
+    const sees = this.deps.supportsVision?.(ref) ?? false;
+    if (sees) return this.messages;
+    return this.messages.map((m) => {
+      if (m.role !== 'user' || m.images === undefined || m.images.length === 0) return m;
+      const names = m.images.map((i, n) => i.name ?? `image ${String(n + 1)}`).join(', ');
+      return {
+        role: 'user',
+        content: `${m.content}\n\n[${String(m.images.length)} image(s) were attached (${names}), but this model cannot see images.]`,
+      };
+    });
+  }
+
+  /**
+   * When the prompt carries images and the model in use cannot see them, the turn goes to a
+   * vision-capable model instead (and says so).
+   */
+  private visionModelFor(
+    opts: RunOptions,
+  ): { ref: string; fallbacks: string[]; notice?: string } | undefined {
+    if (opts.images === undefined || opts.images.length === 0) return undefined;
+    const current = opts.model ?? this.model ?? this.deps.defaultModel?.();
+    if (current !== undefined && (this.deps.supportsVision?.(parseModelRef(current)) ?? false))
+      return undefined;
+    const [vision, ...others] = this.deps.visionModels?.() ?? [];
+    if (vision === undefined) {
+      opts.onEvent({
+        type: 'notice',
+        level: 'warning',
+        text: 'No vision-capable model is available, so the model only sees the image file names. Set `visionModel` in settings, or add a key for a provider with vision models.',
+      });
+      return undefined;
+    }
+    return {
+      ref: vision,
+      fallbacks: others,
+      notice: `Using ${vision} to look at the image${opts.images.length === 1 ? '' : 's'}${current === undefined ? '' : ` (${current} cannot see images)`}.`,
+    };
+  }
+
   private async step(
     turn: number,
     stepNo: number,
@@ -428,12 +503,13 @@ export class Agent {
     const textCalls: { name: string; arguments: string }[] = [];
     const native = new Map<number, { id: string; name: string; args: string }>();
 
-    const prepare = (ref: ModelRef) =>
-      this.modeFor(ref) === 'native'
+    const prepare = (ref: ModelRef) => {
+      const history = this.forModel(ref);
+      return this.modeFor(ref) === 'native'
         ? {
             messages: [
               { role: 'system' as const, content: this.deps.systemPrompt(mode) },
-              ...this.messages,
+              ...history,
             ],
             tools: specs,
           }
@@ -443,18 +519,21 @@ export class Agent {
                 role: 'system' as const,
                 content: this.deps.systemPrompt(mode, textProtocolInstructions(specs)),
               },
-              ...toTextProtocol(this.messages),
+              ...toTextProtocol(history),
             ],
           };
+    };
 
     try {
       const events = this.deps.router.stream({
         messages: this.messages,
         signal,
+        ...(this.effort === undefined ? {} : { reasoningEffort: this.effort }),
         prepare,
         onToolFormatError: (ref) =>
           this.useTextProtocol(ref, onEvent, 'sent a tool call the provider rejected'),
         ...((opts.model ?? this.model) === undefined ? {} : { model: opts.model ?? this.model }),
+        ...(opts.fallbacks === undefined ? {} : { fallbacks: opts.fallbacks }),
       });
       for await (const ev of events) {
         switch (ev.type) {

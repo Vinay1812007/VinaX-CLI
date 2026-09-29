@@ -71,9 +71,43 @@ An alias is a short name for a model ref. Aliases are case-insensitive and work 
 
 The chosen model heads the chain, followed by `fallbackChain`. The router then retries or falls back as described below.
 
+## Reasoning effort
+
+Reasoning models such as gpt-oss can think more or less before answering. `/effort` sets that for your session and saves it as `reasoningEffort` (also in [`/settings`](/settings#settings-panel)):
+
+| Effort   | Meter | Meaning                                  |
+| -------- | ----- | ---------------------------------------- |
+| `auto`   | `▱▱▱` | The model's own default; nothing is sent |
+| `low`    | `▰▱▱` | Fastest answers, least thinking          |
+| `medium` | `▰▰▱` | Balanced                                 |
+| `high`   | `▰▰▰` | Most thorough reasoning, slower          |
+
+VinaX sends the effort only when you set one: as `reasoning_effort` to Groq and NVIDIA, and as `reasoning.effort` to OpenRouter. Models without reasoning ignore it. If a provider rejects the parameter, VinaX sends the same request again without it and stops sending it to that model. The footer shows the effort (`◔ low`, `◑ medium`, `● high`), and the model's streamed reasoning appears under the spinner while it thinks.
+
+## Vision models
+
+gpt-oss and most other defaults are text-only. When a prompt carries [images](/interactive-mode#images) and the current model can't see them, that turn goes to a vision model instead, and a notice says which one. VinaX builds a list of vision models, best first:
+
+1. the `visionModel` setting, if set (a model ref or alias)
+2. vision models already in your `model`/`fallbackChain`
+3. vision models VinaX knows on a provider you use: NVIDIA's `meta/llama-3.2-11b-vision-instruct`, then `meta/llama-3.2-90b-vision-instruct`
+4. models a provider's catalog marks as taking images (OpenRouter's `input_modalities`), free ones first
+
+Providers you reach with your own key come before ones behind a [gateway](/gateway), because image requests are large. If the first model fails, the turn falls back through the other vision models, not your text-only chain. A model that does not answer in time is skipped at once when another model is next, instead of being retried.
+
+NVIDIA's Llama 3.2 Vision models reject requests that carry both images and tool definitions, so VinaX talks to them with its text tool protocol; any other model that fails the same way is switched automatically.
+
+Text-only models later in the conversation get a short note that an image was attached, not the image itself.
+
+```json
+{ "visionModel": "nvidia:meta/llama-3.2-11b-vision-instruct" }
+```
+
+If you use a VinaX gateway for images, give it room for them: `MAX_BODY_BYTES` defaults to 8 MB.
+
 ## Browsing and switching models
 
-- **`/model`** opens a searchable picker. Type to filter: every word must match the model id, its alias, or the provider's name or domain (`nvd`, `nvidia oss`, `groq 120b`). Models are grouped by provider (`NVIDIA · nvidia.com`), `●` marks the current one, and models you can't use yet are dimmed with the reason (`no key · /login`, `not in catalog`). ↑/↓ move, Enter picks, Backspace edits the search, Ctrl+U clears it and Esc cancels.
+- **`/model`** opens a searchable picker. Type to filter: every word must match the model id, its alias, or the provider's name or domain (`nvd`, `nvidia oss`, `groq 120b`). Models are grouped by provider (`NVIDIA · nvidia.com`), `●` marks the current one, `vision` marks models that take images, and models you can't use yet are dimmed with the reason (`no key · /login`, `not in catalog`, or `add your own key with /login` when your gateway doesn't serve that provider). Models VinaX knows but the provider no longer lists are hidden unless they have an alias. ↑/↓ move, Enter picks, Backspace edits the search, Ctrl+U clears it and Esc cancels.
 - **`/model <ref or alias>`** switches straight away, for example `/model NVD_CHAT_OSS_20_B`. It warns when there is no key for that provider yet.
 - **`/models`** shows each provider (configured, through the gateway, or not configured, with the size of its catalog), the current model and its alias, the fallback order with each entry's status (`ready`, `no key`, `skipped: not in catalog`), and the aliases. It then opens the picker so you can switch; Esc keeps the current model.
 

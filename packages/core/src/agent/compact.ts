@@ -42,7 +42,7 @@ export function renderTranscript(messages: readonly ChatMessage[]): string {
     .map((m) => {
       switch (m.role) {
         case 'user':
-          return `USER:\n${m.content}`;
+          return `USER:\n${m.content}${(m.images ?? []).map((i) => `\n[image: ${i.name ?? i.mediaType}]`).join('')}`;
         case 'assistant': {
           const calls = (m.toolCalls ?? []).map((c) => `CALL ${c.name} ${c.arguments}`).join('\n');
           return `ASSISTANT:\n${[m.content, calls].filter((s) => s !== '').join('\n')}`;

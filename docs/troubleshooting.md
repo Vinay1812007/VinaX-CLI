@@ -40,6 +40,24 @@ Environment variables (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `
 precedence over stored keys. `vinax config keys` shows which key is used and where it comes from.
 Standalone binaries and systems without a keychain store keys in `~/.vinax/credentials.json`.
 
+### The model says it can't see images
+
+gpt-oss and other text-only models can't see images. Attach the image as an image (drag the file in, use `@shot.png`, or copy it and press `Ctrl+V`) rather than describing its path; VinaX then sends that turn to a [vision model](/models#vision-models). If the notice says no vision model is available, add a key for a provider with one (NVIDIA or OpenRouter) or set `visionModel`.
+
+If VinaX says it can't read a screenshot, macOS is blocking the folder it's in (new screenshots first land in a private `TemporaryItems` folder). Press `Ctrl+Shift+Cmd+4` to copy a screenshot to the clipboard and `Ctrl+V` in VinaX, or save it to your Desktop first.
+
+### The `@` menu is empty or slow
+
+`@` lists the current folder's top level straight away and indexes the rest in the background, skipping dependencies, build output, caches, `Library` and `.gitignore`d files. In a very large folder, keep typing to narrow the list, or type a folder path such as `@src/` to list it directly.
+
+### `/copy` doesn't reach the clipboard
+
+`/copy` uses `pbcopy` (macOS), `clip` (Windows) or `wl-copy`, `xclip` or `xsel` (Linux), and otherwise the OSC 52 escape, which your terminal must allow (in tmux, `set -g set-clipboard on`). Selecting text with the mouse always works.
+
+### Reasoning effort has no effect
+
+Only reasoning models (such as gpt-oss) use it; others ignore it. If a provider rejects the parameter, VinaX quietly stops sending it to that model.
+
 ### Shift+Enter does not add a line
 
 Many terminals send the same code for Enter and Shift+Enter. `\` followed by Enter, or

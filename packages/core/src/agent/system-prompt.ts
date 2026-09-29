@@ -131,6 +131,8 @@ export interface PromptEnvironment {
   git: GitInfo | undefined;
   /** Project and user instructions (VINAX.md etc.), when present. */
   memory?: string;
+  /** The skills section (names and descriptions), when any skills are installed. */
+  skills?: string;
 }
 
 const CORE = `You are VinaX, a coding agent that works in the user's terminal. You help with software engineering: understanding code, fixing bugs, adding features, running tests and using git.
@@ -184,6 +186,7 @@ export function buildSystemPrompt(
     ...(env.memory === undefined || env.memory.trim() === ''
       ? []
       : [`# Project instructions\n${env.memory.trim()}`]),
+    ...(env.skills === undefined ? [] : [env.skills]),
     ...(toolInstructions === undefined ? [] : [toolInstructions]),
   ];
   return sections.join('\n\n');

@@ -71,7 +71,7 @@ again. Free services also get 750 instance-hours a month. VinaX handles the slee
 | `VINAX_TOKEN_HASHES`                                      | —                                                           | `name:sha256` entries, comma or newline separated                           |
 | `RATE_LIMIT_RPM`                                          | `20`                                                        | requests per minute per token                                               |
 | `RATE_LIMIT_RPD`                                          | `500`                                                       | requests per UTC day per token                                              |
-| `MAX_BODY_BYTES`                                          | `1000000`                                                   | largest accepted request body                                               |
+| `MAX_BODY_BYTES`                                          | `8000000`                                                   | largest accepted request body (images need several MB)                      |
 | `DEFAULT_MODELS`                                          | `groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free` | tried in order for `"model": "auto"`                                        |
 | `UPSTREAM_TIMEOUT_MS`                                     | `60000`                                                     | wait for a provider to start answering                                      |
 | `PORT`                                                    | `8787` (Render sets its own)                                | listen port                                                                 |

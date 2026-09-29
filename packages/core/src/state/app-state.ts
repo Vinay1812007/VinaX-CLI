@@ -12,6 +12,11 @@ const stateSchema = z.object({
   lastVersion: z.string().optional(),
   /** Best score in /snake. */
   snakeBest: z.number().int().min(0).default(0),
+  /** /snake: top score per `${level}:${maze}`, and the last chosen level, maze and palette. */
+  snakeScores: z.record(z.string(), z.number().int().min(0)).optional(),
+  snakeLevel: z.number().int().min(1).max(9).optional(),
+  snakeMaze: z.string().optional(),
+  snakePalette: z.string().optional(),
 });
 
 export type AppState = z.infer<typeof stateSchema>;

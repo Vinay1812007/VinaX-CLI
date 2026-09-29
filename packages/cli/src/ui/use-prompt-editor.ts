@@ -31,6 +31,10 @@ export function usePromptEditor(opts: {
   editorMode: () => EditorMode;
   onSubmit: (s: Submission) => void;
   onShortcuts: () => void;
+  /** Ctrl+V: attach an image from the clipboard (terminals paste text with Cmd/Ctrl+Shift+V). */
+  onPasteImage?: () => void;
+  /** Ctrl+L: redraw the screen. */
+  onRedraw?: () => void;
 }) {
   const [editor, setEditor, editorRef] = useRefState<ed.EditorState>(ed.EMPTY);
   const [search, setSearch, searchRef] = useRefState<Search | undefined>(undefined);
@@ -41,6 +45,8 @@ export function usePromptEditor(opts: {
   const draft = useRef<ed.EditorState>(ed.EMPTY);
   const pending = useRef('');
   const undo = useRef<ed.EditorState[]>([]);
+  /** Text removed by the last kill command (Ctrl+W/U/K, Alt+D), for Ctrl+Y. */
+  const yank = useRef('');
 
   useEffect(() => {
     void opts.history.load().then(setEntries);
@@ -125,6 +131,18 @@ export function usePromptEditor(opts: {
     setVimMode(r.mode);
   };
 
+  /** Applies an edit, remembering it for undo and anything it cut for Ctrl+Y. */
+  const edit = (next: ed.EditorState, kill = false): void => {
+    const e = editorRef.current;
+    if (next.value === e.value && next.cursor === e.cursor) return;
+    if (next.value !== e.value) snapshot();
+    if (kill) {
+      const cut = ed.killed(e, next);
+      if (cut !== '') yank.current = cut;
+    }
+    setEditor(next);
+  };
+
   const handleEditorKey = (input: string, key: Key): void => {
     const e = editorRef.current;
     if (key.return) {
@@ -144,23 +162,41 @@ export function usePromptEditor(opts: {
     else if (key.rightArrow) setEditor(key.meta || key.ctrl ? ed.wordRight(e) : ed.right(e));
     else if (key.home) setEditor(ed.lineStart(e));
     else if (key.end) setEditor(ed.lineEnd(e));
-    else if (key.backspace) setEditor(key.meta ? ed.deleteWordBack(e) : ed.backspace(e));
-    else if (key.delete) setEditor(ed.deleteForward(e));
+    else if (key.backspace) edit(key.meta ? ed.deleteWordBack(e) : ed.backspace(e), key.meta);
+    else if (key.delete) edit(ed.deleteForward(e));
     else if (key.ctrl) {
       if (input === 'a') setEditor(ed.lineStart(e));
       else if (input === 'e') setEditor(ed.lineEnd(e));
-      else if (input === 'w') setEditor(ed.deleteWordBack(e));
-      else if (input === 'u') setEditor(ed.killToLineStart(e));
-      else if (input === 'k') setEditor(ed.killToLineEnd(e));
-      else if (input === 'r') setSearch({ query: '', index: 0 });
+      else if (input === 'b') setEditor(ed.left(e));
+      else if (input === 'f') setEditor(ed.right(e));
+      else if (input === 'w') edit(ed.deleteWordBack(e), true);
+      else if (input === 'u') edit(ed.killToLineStart(e), true);
+      else if (input === 'k') edit(ed.killToLineEnd(e), true);
+      else if (input === 'y') {
+        if (yank.current !== '') edit(ed.insert(e, yank.current));
+      } else if (input === '_' || input === '-') {
+        const prev = undo.current.pop();
+        if (prev) setEditor(prev);
+      } else if (input === 'r') setSearch({ query: '', index: 0 });
+      else if (input === 'v') opts.onPasteImage?.();
+      else if (input === 'l') opts.onRedraw?.();
     } else if (key.meta) {
       if (input === 'b') setEditor(ed.wordLeft(e));
       else if (input === 'f') setEditor(ed.wordRight(e));
+      else if (input === 'd') edit(ed.deleteWordAfter(e), true);
     } else if (input === '?' && e.value === '') {
       opts.onShortcuts();
+    } else if (input === '\x1f') {
+      // Ctrl+_ arrives as the raw unit-separator byte in most terminals
+      const prev = undo.current.pop();
+      if (prev) setEditor(prev);
     } else if (input !== '' && !key.tab && !key.escape) {
       const text = cleanTyped(input);
-      if (text !== '') setEditor(ed.insert(e, text));
+      if (text !== '') {
+        // one undo step per word, not per keystroke
+        if (/\s/.test(text) || undo.current.length === 0) snapshot();
+        setEditor(ed.insert(e, text));
+      }
     }
   };
 
@@ -203,7 +239,15 @@ export function usePromptEditor(opts: {
     handlePaste: (text: string): void => {
       const s = searchRef.current;
       if (s) setSearch({ query: s.query + text.replace(/\s+/g, ' '), index: 0 });
-      else setEditor((e) => ed.insert(e, pastes.add(text)));
+      else {
+        snapshot();
+        setEditor((e) => ed.insert(e, pastes.add(text)));
+      }
+    },
+    /** Inserts text at the cursor (e.g. an "[Image #1]" chip). */
+    insertText: (text: string): void => {
+      snapshot();
+      setEditor((e) => ed.insert(e, text));
     },
   };
 }

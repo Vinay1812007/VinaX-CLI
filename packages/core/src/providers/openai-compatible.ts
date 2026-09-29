@@ -42,6 +42,7 @@ const catalogEntrySchema = z.looseObject({
   max_model_len: z.number().optional(),
   supported_parameters: z.array(z.string()).optional(),
   pricing: z.looseObject({ prompt: z.string(), completion: z.string() }).optional(),
+  architecture: z.looseObject({ input_modalities: z.array(z.string()).optional() }).optional(),
 });
 const catalogSchema = z.looseObject({ data: z.array(z.unknown()) });
 
@@ -61,6 +62,19 @@ function toWire(m: ChatMessage): ChatCompletionMessageParam {
         : { role: 'assistant', content: m.content };
     case 'tool':
       return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+    case 'user':
+      return m.images && m.images.length > 0
+        ? {
+            role: 'user',
+            content: [
+              { type: 'text', text: m.content },
+              ...m.images.map((img) => ({
+                type: 'image_url' as const,
+                image_url: { url: `data:${img.mediaType};base64,${img.data}` },
+              })),
+            ],
+          }
+        : { role: 'user', content: m.content };
     default:
       return { role: m.role, content: m.content };
   }
@@ -77,6 +91,9 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
     contextWindow: m.context_window ?? m.context_length ?? m.max_model_len,
     supportsTools: m.supported_parameters?.includes('tools'),
     free: m.id.endsWith(':free') || zeroPrice,
+    ...(m.architecture?.input_modalities === undefined
+      ? {}
+      : { vision: m.architecture.input_modalities.includes('image') }),
   };
 }
 
@@ -85,6 +102,8 @@ export class OpenAICompatibleProvider implements Provider {
   readonly name: ProviderName;
   private readonly client: OpenAI;
   private readonly now: () => number;
+  /** Models that rejected a reasoning-effort parameter; it is left out for them from then on. */
+  private readonly noEffort = new Set<string>();
 
   constructor(private readonly opts: OpenAICompatibleOptions) {
     this.name = opts.name;
@@ -196,6 +215,14 @@ export class OpenAICompatibleProvider implements Provider {
     }
   }
 
+  /** The provider's spelling of reasoning effort: OpenRouter nests it, others take it flat. */
+  private effortParams(req: ChatRequest): Record<string, unknown> {
+    if (req.reasoningEffort === undefined || this.noEffort.has(req.model)) return {};
+    return this.name === 'openrouter'
+      ? { reasoning: { effort: req.reasoningEffort } }
+      : { reasoning_effort: req.reasoningEffort };
+  }
+
   async *stream(req: ChatRequest): AsyncGenerator<StreamDelta> {
     const { logger, ledger, gateway } = this.opts;
     let started = this.now();
@@ -214,31 +241,50 @@ export class OpenAICompatibleProvider implements Provider {
         yield { type: 'status', text: '' };
         started = this.now();
       }
-      const { data, response } = await this.client.chat.completions
-        .create(
-          {
-            model: this.wireModel(req.model),
-            messages: req.messages.map(toWire),
-            ...(req.tools && req.tools.length > 0
-              ? {
-                  tools: req.tools.map((t) => ({
-                    type: 'function' as const,
-                    function: {
-                      name: t.name,
-                      description: t.description,
-                      parameters: t.parameters,
-                    },
-                  })),
-                  tool_choice: 'auto' as const,
-                }
-              : {}),
-            stream: true,
-            stream_options: { include_usage: true },
-            ...(req.maxTokens === undefined ? {} : { max_tokens: req.maxTokens }),
-          },
-          { signal: req.signal },
-        )
-        .withResponse();
+      const send = (extra: Record<string, unknown>) =>
+        this.client.chat.completions
+          .create(
+            {
+              ...extra,
+              model: this.wireModel(req.model),
+              messages: req.messages.map(toWire),
+              ...(req.tools && req.tools.length > 0
+                ? {
+                    tools: req.tools.map((t) => ({
+                      type: 'function' as const,
+                      function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.parameters,
+                      },
+                    })),
+                    tool_choice: 'auto' as const,
+                  }
+                : {}),
+              stream: true,
+              stream_options: { include_usage: true },
+              ...(req.maxTokens === undefined ? {} : { max_tokens: req.maxTokens }),
+            },
+            { signal: req.signal },
+          )
+          .withResponse();
+      const effort = this.effortParams(req);
+      let sent;
+      try {
+        sent = await send(effort);
+      } catch (err) {
+        // A provider that does not know the effort parameter gets the request again without it.
+        const rejected =
+          Object.keys(effort).length > 0 &&
+          err instanceof OpenAI.APIError &&
+          (err.status === 400 || err.status === 422) &&
+          /reason/i.test(err.message);
+        if (!rejected) throw err;
+        this.noEffort.add(req.model);
+        logger.debug('effort_unsupported', { provider: this.name, model: req.model });
+        sent = await send({});
+      }
+      const { data, response } = sent;
       ledger.observe(this.name, req.model, response.headers);
       gateway?.markOk();
       logger.debug('response', {
@@ -251,6 +297,12 @@ export class OpenAICompatibleProvider implements Provider {
       for await (const chunk of data) {
         chunks++;
         const delta = chunk.choices[0]?.delta;
+        // reasoning models stream their thinking as `reasoning` (Groq, OpenRouter) or
+        // `reasoning_content` (vLLM-based servers such as NVIDIA NIM)
+        const extra = delta as { reasoning?: unknown; reasoning_content?: unknown } | undefined;
+        const thought = extra?.reasoning ?? extra?.reasoning_content;
+        if (typeof thought === 'string' && thought !== '')
+          yield { type: 'reasoning', text: thought };
         const text = delta?.content;
         if (typeof text === 'string' && text !== '') yield { type: 'text', text };
         for (const tc of delta?.tool_calls ?? []) {

@@ -15,6 +15,25 @@ Permission rule lists (`permissions.allow`, `ask`, `deny`) and hooks **add up** 
 
 API keys never go in settings files. They come from environment variables, the OS keychain or `~/.vinax/credentials.json` (see [Install and set up](/setup#log-in)); a `providers.<name>.apiKey` entry is ignored with a warning.
 
+## Settings panel
+
+`/settings` (also `/config`) opens a panel like Claude Code's:
+
+| Setting                 | Values                                                               | Notes                                                          |
+| ----------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Model                   | opens the model picker                                               | For this session                                               |
+| Reasoning effort        | auto, low, medium, high                                              | Saved as `reasoningEffort`                                     |
+| Default permission mode | manual, accept edits, plan, auto                                     | Saved as `permissions.defaultMode`; also switches this session |
+| Theme                   | dark, light, colour-blind friendly                                   |                                                                |
+| Editor mode             | normal, vim                                                          |                                                                |
+| Auto-compact            | on, off                                                              | Applies to new sessions                                        |
+| Update notifications    | on, off                                                              | Saved as `updateCheck`                                         |
+| Welcome tips            | on, off                                                              | Saved as `showTips`                                            |
+| Permission rules        | opens [`/permissions`](/permissions#managing-rules-with-permissions) |                                                                |
+| Effective settings      | shows the merged settings as JSON and where each file is             |                                                                |
+
+↑/↓ choose a setting, ←/→, Enter or Space change it, and Esc closes the panel. Each change is saved to `~/.vinax/settings.json` right away.
+
 ## Edit from the shell
 
 ```bash
@@ -47,29 +66,33 @@ vinax config unset model
 
 ## All settings
 
-| Key                                       | Default                                 | Meaning                                                           |
-| ----------------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
-| `model`                                   | `groq:openai/gpt-oss-120b`              | Main model: a `provider:model` ref or an [alias](/models#aliases) |
-| `smallModel`                              | `groq:openai/gpt-oss-20b`               | Model for titles, summaries and compaction                        |
-| `fallbackChain`                           | see [Models](/models)                   | Models tried after the main one                                   |
-| `providers.<name>.enabled`                | `true`                                  | Turn a provider off (`groq`, `openrouter` or `nvidia`)            |
-| `providers.<name>.baseUrl`                | the provider's API                      | Point a provider at another OpenAI-compatible endpoint            |
-| `providers.<name>.rpm`                    | `30` Groq, `20` OpenRouter, `40` NVIDIA | Requests per minute to allow locally                              |
-| `router.maxRetries`                       | `2`                                     | Retries on one model before falling back                          |
-| `router.baseDelayMs`, `router.maxDelayMs` | `1000`, `20000`                         | Backoff range                                                     |
-| `router.maxWaitMs`                        | `20000`                                 | Longest wait for a rate-limit window before falling back          |
-| `router.requestTimeoutMs`                 | `90000`                                 | Request timeout                                                   |
-| `permissions.allow` / `ask` / `deny`      | `[]`                                    | [Permission rules](/permissions#rules)                            |
-| `permissions.defaultMode`                 | `default`                               | `default`, `acceptEdits` or `plan`                                |
-| `permissions.additionalDirectories`       | `[]`                                    | Extra folders tools may work in                                   |
-| `context.maxTokens`                       | `24000`                                 | Conversation budget; compaction starts at 85%                     |
-| `context.autoCompact`                     | `true`                                  | Compact automatically                                             |
-| `hooks`                                   | `{}`                                    | [Hooks](/hooks)                                                   |
-| `disableAllHooks`                         | `false`                                 | Turn every hook off                                               |
-| `gateway.url`                             | none                                    | A [VinaX gateway](/gateway), set by `vinax login --gateway`       |
-| `gateway.timeoutMs`                       | `120000`                                | Longest wait for a sleeping gateway to wake                       |
-| `theme`                                   | `dark`                                  | `dark`, `light` or `colorblind`                                   |
-| `editorMode`                              | `normal`                                | `normal` or `vim`                                                 |
+| Key                                       | Default                                 | Meaning                                                                    |
+| ----------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------- |
+| `model`                                   | `groq:openai/gpt-oss-120b`              | Main model: a `provider:model` ref or an [alias](/models#aliases)          |
+| `smallModel`                              | `groq:openai/gpt-oss-20b`               | Model for titles, summaries and compaction                                 |
+| `fallbackChain`                           | see [Models](/models)                   | Models tried after the main one                                            |
+| `providers.<name>.enabled`                | `true`                                  | Turn a provider off (`groq`, `openrouter` or `nvidia`)                     |
+| `providers.<name>.baseUrl`                | the provider's API                      | Point a provider at another OpenAI-compatible endpoint                     |
+| `providers.<name>.rpm`                    | `30` Groq, `20` OpenRouter, `40` NVIDIA | Requests per minute to allow locally                                       |
+| `router.maxRetries`                       | `2`                                     | Retries on one model before falling back                                   |
+| `router.baseDelayMs`, `router.maxDelayMs` | `1000`, `20000`                         | Backoff range                                                              |
+| `router.maxWaitMs`                        | `20000`                                 | Longest wait for a rate-limit window before falling back                   |
+| `router.requestTimeoutMs`                 | `90000`                                 | Request timeout                                                            |
+| `permissions.allow` / `ask` / `deny`      | `[]`                                    | [Permission rules](/permissions#rules)                                     |
+| `permissions.defaultMode`                 | `default`                               | `default`, `acceptEdits`, `plan` or `auto`                                 |
+| `permissions.additionalDirectories`       | `[]`                                    | Extra folders tools may work in                                            |
+| `context.maxTokens`                       | `24000`                                 | Conversation budget; compaction starts at 85%                              |
+| `context.autoCompact`                     | `true`                                  | Compact automatically                                                      |
+| `hooks`                                   | `{}`                                    | [Hooks](/hooks)                                                            |
+| `disableAllHooks`                         | `false`                                 | Turn every hook off                                                        |
+| `gateway.url`                             | none                                    | A [VinaX gateway](/gateway), set by `vinax login --gateway`                |
+| `gateway.timeoutMs`                       | `120000`                                | Longest wait for a sleeping gateway to wake                                |
+| `theme`                                   | `dark`                                  | `dark`, `light` or `colorblind`                                            |
+| `editorMode`                              | `normal`                                | `normal` or `vim`                                                          |
+| `reasoningEffort`                         | none                                    | `low`, `medium` or `high` for [reasoning models](/models#reasoning-effort) |
+| `visionModel`                             | none (chosen automatically)             | Model that answers prompts with [images](/interactive-mode#images)         |
+| `updateCheck`                             | `true`                                  | Check for new VinaX releases at startup (at most once a day)               |
+| `showTips`                                | `true`                                  | Show tips on the welcome screen                                            |
 
 ## Environment variables
 
@@ -81,3 +104,5 @@ vinax config unset model
 | `VINAX_SECRETS_BACKEND=file`                           | Skip the OS keychain; keep keys in `~/.vinax/credentials.json` |
 | `VINAX_GIT_BASH_PATH`                                  | Windows: the Git Bash to run commands with                     |
 | `NO_COLOR`                                             | Turn off all colour                                            |
+| `VINAX_NO_UPDATE_CHECK=1`                              | Skip the startup check for new releases                        |
+| `VINAX_CLIPBOARD=osc52`                                | `/copy` uses the terminal's OSC 52 escape instead of a program |

@@ -23,7 +23,9 @@ export type TranscriptItem =
   /** A failed turn, explained: what failed, why, and what to try. */
   | { id: number; kind: 'error'; report: FailureReport }
   /** End of a turn that used tools: "Updated 3 files · 7 tool calls · 12s". */
-  | { id: number; kind: 'summary'; text: string };
+  | { id: number; kind: 'summary'; text: string }
+  /** The model reasoned before answering: "✻ Thought for 4s". */
+  | { id: number; kind: 'thought'; durationMs: number };
 
 export interface ToolRecord {
   name: string;

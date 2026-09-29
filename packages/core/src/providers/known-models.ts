@@ -13,6 +13,13 @@ export interface KnownModel {
   /** Human-friendly name for pickers. */
   label: string;
   contextWindow: number | undefined;
+  /** Accepts images. */
+  vision?: boolean;
+  /**
+   * `false` when the model cannot take native tool definitions (VinaX then uses its text tool
+   * protocol). NVIDIA's Llama 3.2 Vision rejects requests that carry both images and tools.
+   */
+  tools?: false;
 }
 
 export const KNOWN_MODELS: readonly KnownModel[] = [
@@ -22,6 +29,24 @@ export const KNOWN_MODELS: readonly KnownModel[] = [
     alias: 'NVD_CHAT_OSS_20_B',
     label: 'GPT-OSS 20B',
     contextWindow: 131_072,
+  },
+  {
+    provider: 'nvidia',
+    model: 'meta/llama-3.2-11b-vision-instruct',
+    alias: undefined,
+    label: 'Llama 3.2 11B Vision',
+    contextWindow: 131_072,
+    vision: true,
+    tools: false,
+  },
+  {
+    provider: 'nvidia',
+    model: 'meta/llama-3.2-90b-vision-instruct',
+    alias: undefined,
+    label: 'Llama 3.2 90B Vision',
+    contextWindow: 131_072,
+    vision: true,
+    tools: false,
   },
 ];
 
@@ -74,14 +99,24 @@ export function normalizeModelRef(input: string): string | undefined {
 }
 
 /** Fills in what the provider's catalog left out (context window) from {@link KNOWN_MODELS}. */
-export function withKnownMetadata<T extends { id: string; contextWindow: number | undefined }>(
-  provider: ProviderName,
-  models: readonly T[],
-): T[] {
+export function withKnownMetadata<
+  T extends {
+    id: string;
+    contextWindow: number | undefined;
+    vision?: boolean;
+    supportsTools?: boolean | undefined;
+  },
+>(provider: ProviderName, models: readonly T[]): T[] {
   return models.map((m) => {
     const known = knownModel(provider, m.id);
-    return known?.contextWindow !== undefined && m.contextWindow === undefined
-      ? { ...m, contextWindow: known.contextWindow }
-      : m;
+    if (known === undefined) return m;
+    return {
+      ...m,
+      ...(known.contextWindow !== undefined && m.contextWindow === undefined
+        ? { contextWindow: known.contextWindow }
+        : {}),
+      ...(known.vision === true && m.vision === undefined ? { vision: true } : {}),
+      ...(known.tools === false ? { supportsTools: false } : {}),
+    };
   });
 }

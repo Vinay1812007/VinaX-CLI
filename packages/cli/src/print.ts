@@ -2,6 +2,7 @@ import {
   formatFailureReport,
   attachMentions,
   createRuntime,
+  extractImages,
   providerLabel,
   formatModelRef,
   SECRET_ENV_VARS,
@@ -310,7 +311,10 @@ export async function runPrint(
   out.sessionId = opened.writer.id;
   out.init(runtime.router.chain('main', opts.model).map(formatModelRef), io.cwd, mode);
   try {
-    const withFiles = await attachMentions(prompt, {
+    // image paths (and @image.png) in the prompt are attached as images
+    const withImages = await extractImages(prompt, io.cwd);
+    for (const err of withImages.errors) io.stderr.write(`⚠ ${err}\n`);
+    const withFiles = await attachMentions(withImages.text, {
       cwd: io.cwd,
       workspace: setup.workspace,
       reads: setup.reads,
@@ -321,6 +325,7 @@ export async function runPrint(
       onEvent: (ev) => {
         out.event(ev);
       },
+      ...(withImages.images.length === 0 ? {} : { images: withImages.images }),
     });
     const elapsed = Date.now() - started;
     switch (outcome.status) {

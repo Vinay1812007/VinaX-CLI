@@ -6,7 +6,11 @@ import type { ModelInfo, Provider, ProviderName } from './types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Bumped when the cached fields change, so older caches are fetched again once. */
+const CACHE_VERSION = 2;
+
 const cacheSchema = z.object({
+  version: z.number().optional(),
   fetchedAt: z.number(),
   models: z.array(
     z.object({
@@ -14,6 +18,7 @@ const cacheSchema = z.object({
       contextWindow: z.number().optional(),
       supportsTools: z.boolean().optional(),
       free: z.boolean(),
+      vision: z.boolean().optional(),
     }),
   ),
 });
@@ -46,7 +51,12 @@ export class ModelCatalog {
         JSON.parse(await fs.readFile(this.file(provider), 'utf8')),
       );
       // an empty list (e.g. a gateway that did not serve the provider yet) is never trusted
-      if (!parsed.success || parsed.data.models.length === 0) return undefined;
+      if (
+        !parsed.success ||
+        parsed.data.models.length === 0 ||
+        parsed.data.version !== CACHE_VERSION
+      )
+        return undefined;
       return {
         fetchedAt: parsed.data.fetchedAt,
         stale: false,
@@ -55,6 +65,7 @@ export class ModelCatalog {
           contextWindow: m.contextWindow,
           supportsTools: m.supportsTools,
           free: m.free,
+          ...(m.vision === undefined ? {} : { vision: m.vision }),
         })),
       };
     } catch {
@@ -84,7 +95,11 @@ export class ModelCatalog {
       // that has no key for this provider yet, and that can change at any moment.
       if (models.length > 0) {
         await fs.mkdir(this.dir, { recursive: true });
-        await fs.writeFile(this.file(provider.name), JSON.stringify({ fetchedAt, models }), 'utf8');
+        await fs.writeFile(
+          this.file(provider.name),
+          JSON.stringify({ version: CACHE_VERSION, fetchedAt, models }),
+          'utf8',
+        );
       }
       return { models, fetchedAt, stale: false };
     } catch (err) {

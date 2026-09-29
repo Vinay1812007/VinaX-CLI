@@ -35,9 +35,25 @@ import { notesMarkdown, readChangelog, releaseNotes, releaseUrl } from '../../up
 import { VERSION } from '../../version.js';
 import { gatewayLacks, modelSelectItems, providerSummaries } from '../model-items.js';
 import { sessionItems } from '../sessions.js';
+import {
+  MAZE_LABELS,
+  prefsFromState,
+  snakeSession,
+  stateFromPrefs,
+  topScore,
+  type SnakeSession,
+} from '../snake.js';
 import { formatTokens, shortenPath } from '../format.js';
 import { THEME_LABELS } from '../theme.js';
 import { sessionStore } from '../../session.js';
+import {
+  copy,
+  effort,
+  openPermissions,
+  permissionsCommand,
+  settingsCommand,
+  skills,
+} from './extra.js';
 import type { CommandContext, SlashCommand } from './types.js';
 
 const INIT_PROMPT = `Study this codebase and write a VINAX.md file in the project root that will help future VinaX sessions work here. Cover:
@@ -243,70 +259,36 @@ const models: SlashCommand = {
   },
 };
 
-const config: SlashCommand = {
-  name: 'config',
-  description: 'Show the effective settings and where they come from',
-  source: 'builtin',
-  run(ctx) {
-    const r = ctx.runtime.settings.resolved;
-    const paths = settingsPaths(ctx.runtime.cwd, ctx.runtime.env);
-    ctx.panel(
-      'Settings',
-      [
-        '```json',
-        JSON.stringify(
-          {
-            model: r.model,
-            smallModel: r.smallModel,
-            fallbackChain: r.fallbackChain,
-            theme: r.theme,
-            editorMode: r.editorMode,
-            context: r.context,
-            router: r.router,
-          },
-          null,
-          2,
-        ),
-        '```',
-        '',
-        `- user: \`${shortenPath(paths.user)}\``,
-        `- project: \`${shortenPath(paths.project)}\``,
-        `- local: \`${shortenPath(paths.local)}\``,
-        '',
-        'Change settings with `vinax config set <key> <value>` (see `vinax config --help`).',
-      ].join('\n'),
-    );
-  },
-};
-
-const permissions: SlashCommand = {
-  name: 'permissions',
-  description: 'Show permission mode and rules',
-  source: 'builtin',
-  run(ctx) {
-    const rules = ctx.setup.permissions.listRules();
-    const section = (effect: 'allow' | 'ask' | 'deny') => {
-      const list = rules.filter((r) => r.effect === effect);
-      return list.length === 0
-        ? [`**${effect}:** none`]
-        : [`**${effect}:**`, ...list.map((r) => `- \`${r.raw}\` _(${r.source})_`)];
-    };
-    ctx.panel(
-      'Permissions',
-      [
-        `Mode: **${ctx.mode()}** (Shift+Tab to change)`,
-        `Folders tools may use: ${ctx.setup.workspace.map((w) => `\`${shortenPath(w)}\``).join(', ')}`,
-        '',
-        ...section('deny'),
-        '',
-        ...section('ask'),
-        '',
-        ...section('allow'),
-        '',
-        'Add rules under `permissions` in `.vinax/settings.json`, or answer "don\'t ask again" in an approval prompt.',
-      ].join('\n'),
-    );
-  },
+/** The effective settings as JSON, and where they come from (from /settings). */
+const showEffectiveSettings = (ctx: CommandContext): void => {
+  const r = ctx.runtime.settings.resolved;
+  const paths = settingsPaths(ctx.runtime.cwd, ctx.runtime.env);
+  ctx.panel(
+    'Settings',
+    [
+      '```json',
+      JSON.stringify(
+        {
+          model: r.model,
+          smallModel: r.smallModel,
+          fallbackChain: r.fallbackChain,
+          theme: r.theme,
+          editorMode: r.editorMode,
+          context: r.context,
+          router: r.router,
+        },
+        null,
+        2,
+      ),
+      '```',
+      '',
+      `- user: \`${shortenPath(paths.user)}\``,
+      `- project: \`${shortenPath(paths.project)}\``,
+      `- local: \`${shortenPath(paths.local)}\``,
+      '',
+      'Change these with `/settings`, or `vinax config set <key> <value>` (see `vinax config --help`).',
+    ].join('\n'),
+  );
 };
 
 const init: SlashCommand = {
@@ -518,18 +500,39 @@ const health: SlashCommand = {
 const snake: SlashCommand = {
   name: 'snake',
   aliases: ['game'],
-  description: 'Play Snake, Nokia-style, in colour',
+  description: 'Play Snake II, Nokia-style: levels, mazes and top scores, in colour',
   source: 'builtin',
   async run(ctx) {
     const store = new AppStateStore(ctx.runtime.env);
-    const best = (await store.read()).snakeBest;
-    const score = await ctx.playSnake(best);
-    if (score > best) await store.update((s) => ({ ...s, snakeBest: score }));
+    const saved = await store.read();
+    const prefs = prefsFromState(saved);
+    const before = Math.max(saved.snakeBest, topScore(prefs));
+    // saves are queued so a quick burst of changes cannot interleave its writes
+    let saving: Promise<unknown> = Promise.resolve();
+    const session: SnakeSession = {
+      prefs,
+      last: undefined,
+      save: (p) => {
+        saving = saving
+          .then(() => store.update((s) => ({ ...s, ...stateFromPrefs(p) })))
+          .catch(() => undefined);
+      },
+    };
+    snakeSession.current = session;
+    let score: number;
+    try {
+      score = await ctx.playSnake(before);
+    } finally {
+      snakeSession.current = undefined;
+    }
+    await saving;
+    const last = session.last;
+    const best = Math.max(before, score);
     ctx.notice(
       'info',
-      score > best && score > 0
-        ? `Snake: ${String(score)} points, a new best!`
-        : `Snake: ${String(score)} points (best ${String(Math.max(best, score))}).`,
+      last === undefined
+        ? `Snake: ${String(score)} points (best ${String(best)}).`
+        : `Snake: ${String(last.score)} points (level ${String(last.level)}, ${MAZE_LABELS[last.maze]})${last.newTop && last.score > 0 ? ' — new top score!' : ''} · best ${String(best)}.`,
     );
   },
 };
@@ -974,8 +977,14 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   compact,
   model,
   models,
-  config,
-  permissions,
+  settingsCommand(showEffectiveSettings, openPermissions, async (ctx) => {
+    const ref = await pickModel(ctx, 'Model for this session');
+    if (ref !== undefined) switchModel(ctx, ref);
+  }),
+  effort,
+  permissionsCommand,
+  copy,
+  skills,
   init,
   memory,
   resume,
