@@ -13,7 +13,16 @@ import { chatModels } from './components/Onboarding.js';
 import type { SelectItem } from './components/Select.js';
 import { formatTokens } from './format.js';
 
-export type ModelStatus = 'ready' | 'no_key' | 'unlisted' | 'unchecked';
+/** `no_gateway`: the provider goes through a VinaX gateway that has no key for it. */
+export type ModelStatus = 'ready' | 'no_key' | 'no_gateway' | 'unlisted' | 'unchecked';
+
+/**
+ * True when a provider is routed through the VinaX gateway but the gateway lists none of its
+ * models, i.e. the gateway was not given that provider's key (or predates the provider).
+ */
+export function gatewayLacks(runtime: Runtime, provider: ProviderName): boolean {
+  return runtime.viaGateway.has(provider) && runtime.models.get(provider)?.length === 0;
+}
 
 export interface ModelRow {
   ref: string;
@@ -86,15 +95,18 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
       rows.push(r);
     };
     const unavailable = (ref: string): boolean => runtime.skipped.has(ref);
+    const noGateway = gatewayLacks(runtime, provider);
     for (const k of KNOWN_MODELS.filter((m) => m.provider === provider)) {
       const inCatalog = catalog?.find((m) => m.id === k.model);
       const status: ModelStatus = !configured
         ? 'no_key'
-        : catalog === undefined
-          ? 'unchecked'
-          : inCatalog === undefined || unavailable(`${provider}:${k.model}`)
-            ? 'unlisted'
-            : 'ready';
+        : noGateway
+          ? 'no_gateway'
+          : catalog === undefined
+            ? 'unchecked'
+            : inCatalog === undefined || unavailable(`${provider}:${k.model}`)
+              ? 'unlisted'
+              : 'ready';
       add(
         row(
           provider,
@@ -114,11 +126,13 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
       const id = parseModelRef(current).model;
       const status: ModelStatus = !configured
         ? 'no_key'
-        : catalog === undefined
-          ? 'unchecked'
-          : catalog.some((m) => m.id === id) && !unavailable(current)
-            ? 'ready'
-            : 'unlisted';
+        : noGateway
+          ? 'no_gateway'
+          : catalog === undefined
+            ? 'unchecked'
+            : catalog.some((m) => m.id === id) && !unavailable(current)
+              ? 'ready'
+              : 'unlisted';
       rows.unshift(
         row(
           provider,
@@ -139,11 +153,13 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
 }
 
 export function providerGroupLabel(provider: ProviderName, runtime: Runtime): string {
-  const route = runtime.viaGateway.has(provider)
-    ? ' · via VinaX gateway'
-    : runtime.providers.has(provider)
-      ? ''
-      : ' · not configured';
+  const route = gatewayLacks(runtime, provider)
+    ? ' · not served by your VinaX gateway'
+    : runtime.viaGateway.has(provider)
+      ? ' · via VinaX gateway'
+      : runtime.providers.has(provider)
+        ? ''
+        : ' · not configured';
   return `${providerLabel(provider)} · ${providerHost(provider)}${route}`;
 }
 
@@ -152,6 +168,7 @@ const STATUS_HINT: Record<ModelStatus, string | undefined> = {
   unchecked: 'catalog unavailable',
   unlisted: 'not in catalog',
   no_key: 'no key · /login',
+  no_gateway: 'add your own key with /login',
 };
 
 export function modelHint(r: ModelRow): string {
@@ -174,7 +191,7 @@ export function modelSelectItems(runtime: Runtime, current: string): SelectItem<
     hint: modelHint(r),
     group: providerGroupLabel(r.provider, runtime),
     current: r.current,
-    disabled: r.status === 'no_key' || r.status === 'unlisted',
+    disabled: r.status === 'no_key' || r.status === 'no_gateway' || r.status === 'unlisted',
     keywords: [
       r.ref,
       providerLabel(r.provider),

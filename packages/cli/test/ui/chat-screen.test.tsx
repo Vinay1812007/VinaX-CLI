@@ -113,8 +113,17 @@ async function mount(
   };
 }
 
+/** Session titles are generated in the background and may land last; skip those requests. */
+const isTitleRequest = (body: unknown): boolean =>
+  JSON.stringify((body as { messages?: unknown } | undefined)?.messages ?? []).includes(
+    'word title for a coding session',
+  );
+
+const agentRequests = (hh: Harness) =>
+  hh.groq.requests.filter((r) => r.path === '/v1/chat/completions' && !isTitleRequest(r.body));
+
 const lastChatBody = (hh: Harness) => {
-  const req = hh.groq.requests.filter((r) => r.path === '/v1/chat/completions').at(-1);
+  const req = agentRequests(hh).at(-1);
   return req?.body as { messages: { role: string; content: string }[] } | undefined;
 };
 
@@ -260,9 +269,7 @@ const call = (name: string, args: Record<string, unknown>) => ({
   arguments: JSON.stringify(args),
 });
 const reqBodies = (hh: Harness) =>
-  hh.groq.requests
-    .filter((r) => r.path === '/v1/chat/completions')
-    .map((r) => r.body as { messages: { role: string; content: string | null }[] });
+  agentRequests(hh).map((r) => r.body as { messages: { role: string; content: string | null }[] });
 
 describe('ChatScreen agent', () => {
   it('shows tool calls as tree lines and runs reads without asking', async () => {
@@ -465,7 +472,7 @@ describe('ChatScreen agent', () => {
 describe('ChatScreen workflow (M4)', () => {
   const TAB = '\t';
   const lastRequest = (hh: Harness) =>
-    hh.groq.requests.filter((r) => r.path === '/v1/chat/completions').at(-1)?.body as
+    agentRequests(hh).at(-1)?.body as
       { model: string; messages: { role: string; content: string }[] } | undefined;
 
   it('offers / completions and runs /help', async () => {
@@ -522,8 +529,12 @@ describe('ChatScreen workflow (M4)', () => {
     expect(frame()).toContain('hello-from-shell');
     await type('what did it print?', KEYS.enter);
     await waitFor(() => frame().includes('I see hello.'), 'answer');
-    const msgs = lastRequest(harness)?.messages ?? [];
-    expect(msgs.at(-2)?.content).toContain('<shell-output exit-code="0">\nhello-from-shell');
+    // the session title is generated in the background, so pick the main model's request
+    const main = harness.groq.requests.filter(
+      (r) => (r.body as { model?: string } | undefined)?.model === 'main-model',
+    );
+    const msgs = (main.at(-1)?.body as { messages: { content: string }[] } | undefined)?.messages;
+    expect(msgs?.at(-2)?.content).toContain('<shell-output exit-code="0">\nhello-from-shell');
   });
 
   it('saves # notes to project memory and uses them', async () => {

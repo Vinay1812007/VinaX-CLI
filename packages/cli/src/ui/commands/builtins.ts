@@ -31,7 +31,7 @@ import {
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
 import { detectInstall } from '../../update.js';
 import { VERSION } from '../../version.js';
-import { modelSelectItems, providerSummaries } from '../model-items.js';
+import { gatewayLacks, modelSelectItems, providerSummaries } from '../model-items.js';
 import { sessionItems } from '../sessions.js';
 import { formatTokens, shortenPath } from '../format.js';
 import { THEME_LABELS } from '../theme.js';
@@ -142,7 +142,11 @@ function switchModel(ctx: CommandContext, input: string): void {
     warnings.push(
       `there is no ${providerLabel(provider)} key yet — add one with /login or set ${SECRET_ENV_VARS[provider]}`,
     );
-  if (ctx.runtime.skipped.has(ref))
+  else if (gatewayLacks(ctx.runtime, provider))
+    warnings.push(
+      `your VinaX gateway does not serve ${providerLabel(provider)} — add your own key with /login or set ${SECRET_ENV_VARS[provider]}`,
+    );
+  else if (ctx.runtime.skipped.has(ref))
     warnings.push(`it is not in ${providerLabel(provider)}'s model list, so it will be skipped`);
   ctx.notice(
     warnings.length === 0 ? 'info' : 'warning',
@@ -191,19 +195,22 @@ const models: SlashCommand = {
       '**Providers**',
     ];
     for (const p of providerSummaries(runtime)) {
-      const state = p.viaGateway
-        ? 'via the VinaX gateway'
-        : p.configured
-          ? 'key configured'
-          : `not configured — /login or ${SECRET_ENV_VARS[p.provider]}`;
+      const state = gatewayLacks(runtime, p.provider)
+        ? `not served by your VinaX gateway — add your own key with /login or ${SECRET_ENV_VARS[p.provider]}`
+        : p.viaGateway
+          ? 'via the VinaX gateway'
+          : p.configured
+            ? 'key configured'
+            : `not configured — /login or ${SECRET_ENV_VARS[p.provider]}`;
+      const lacking = gatewayLacks(runtime, p.provider);
       const size =
-        p.catalogSize === undefined
-          ? p.configured
+        lacking || p.catalogSize === undefined
+          ? p.configured && !lacking
             ? ' · catalog unavailable'
             : ''
           : ` · ${plural(p.catalogSize, 'model')} in catalog`;
       lines.push(
-        `- ${p.configured ? '✔' : '○'} **${providerLabel(p.provider)}** _${providerHost(p.provider)}_ — ${state}${size}`,
+        `- ${p.configured && !lacking ? '✔' : '○'} **${providerLabel(p.provider)}** _${providerHost(p.provider)}_ — ${state}${size}`,
       );
     }
     lines.push('', '**Fallback order**');
@@ -212,9 +219,11 @@ const models: SlashCommand = {
       const { provider } = parseModelRef(ref);
       const status = !runtime.providers.has(provider)
         ? 'no key'
-        : runtime.skipped.has(ref)
-          ? 'skipped: not in catalog'
-          : 'ready';
+        : gatewayLacks(runtime, provider)
+          ? 'skipped: not served by your gateway'
+          : runtime.skipped.has(ref)
+            ? 'skipped: not in catalog'
+            : 'ready';
       const a = modelAlias(ref);
       lines.push(`${String(i + 1)}. \`${ref}\`${a === undefined ? '' : ` (${a})`} — ${status}`);
     }
