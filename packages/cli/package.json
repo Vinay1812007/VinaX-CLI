@@ -1,6 +1,6 @@
 {
   "name": "@sirimillavinay/vinax",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "VinaX: your AI coding agent for the terminal, powered by Groq, OpenRouter and NVIDIA models.",
   "type": "module",
   "license": "MIT",
