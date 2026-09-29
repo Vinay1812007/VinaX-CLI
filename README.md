@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/vinax-wordmark.svg" alt="VinaX" width="360">
+  <img src="brand/vinax-logo.svg" alt="VinaX" width="520">
 </p>
 
 <p align="center"><strong>VinaX is your AI coding agent for the terminal.</strong></p>
@@ -144,8 +144,14 @@ The welcome panel shows where you are and what VinaX will use:
 
 ```
 ╭──────────────────────────────────────────────────────────────╮
-│ ╲  ╱ ╲╱  VinaX v0.1.0                                        │
-│  ╲╱  ╱╲  AI coding agent for the terminal                    │
+│ ▀▀▀     ▀▀▀ ▀▀▀                     ▀▀▀     ▀▀▀              │
+│ ▀▀▀     ▀▀▀                          ▀▀▀   ▀▀▀               │
+│  ▀▀▀   ▀▀▀  ▀▀▀ ▀▀▀▀▀▀▀▀   ▀▀▀▀▀▀▀▀   ▀▀▀ ▀▀▀                │
+│  ▀▀▀   ▀▀▀  ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀    ▀▀▀▀▀                 │
+│   ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀ ✺ ▀▀▀   ▀▀▀ ▀▀▀                │
+│    ▀▀▀▀▀    ▀▀▀ ▀▀▀   ▀▀▀ ▀▀▀   ▀▀▀  ▀▀▀   ▀▀▀               │
+│     ▀▀▀     ▀▀▀ ▀▀▀   ▀▀▀  ▀▀▀▀▀▀▀▀ ▀▀▀     ▀▀▀              │
+│ VinaX v0.3.0 · AI coding agent for the terminal              │
 │                                                              │
 │ cwd      ~/code/app ⎇ main                                   │
 │ model    openai/gpt-oss-20b · NVIDIA · NVD_CHAT_OSS_20_B     │
@@ -156,8 +162,11 @@ The welcome panel shows where you are and what VinaX will use:
 ╰──────────────────────────────────────────────────────────────╯
 ```
 
-It lists memory files by name only (never their contents). Narrow windows drop the mark,
-`TERM=dumb` gets an ASCII mark, and `NO_COLOR` turns colour off.
+The logo is drawn in saffron, white and green stripes with a blue chakra in the "a". It lists
+memory files by name only (never their contents). Windows narrower than 51 columns show a
+one-line tricolor **VinaX** instead, `TERM=dumb` gets an ASCII logo, and `NO_COLOR` turns
+colour off. After an upgrade the first session shows **what's new**, and when a newer release
+is out VinaX says so (checked at most once a day; set `VINAX_NO_UPDATE_CHECK=1` to turn it off).
 
 Answers stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
 While a reply is streaming, the activity line shows what VinaX is doing (Inspecting repository,
@@ -296,6 +305,8 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; requests and tokens today                                               |
 | `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
 | `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
+| `/update`, `/changelog`            | Check for a newer release and how to update; what's new in recent releases                                                |
+| `/snake`                           | Play Snake, Nokia-style, in colour (arrows/WASD, P pause, R restart, Esc quit; best score is saved)                       |
 | `/login`, `/logout`                | Add, replace or remove a provider key without leaving the session                                                         |
 | `/config`, `/permissions`          | Show the effective settings and permission rules                                                                          |
 | `/theme`, `/vim`                   | Change the colour theme; toggle vim key bindings (saved)                                                                  |
@@ -596,7 +607,7 @@ pnpm build:binaries darwin-arm64   # standalone binaries in dist-bin/ (needs Bun
 | Package            | Purpose                                                                            |
 | ------------------ | ---------------------------------------------------------------------------------- |
 | `packages/core`    | UI-free: settings, secrets, providers, router, agent loop, tools, permissions, MCP |
-| `brand/`           | VinaX logo assets: the VX mark (colour and mono) and the wordmark                  |
+| `brand/`           | VinaX logo assets (tricolor logo and VX mark, colour and mono); `pnpm brand:build` |
 | `packages/cli`     | The `vinax` executable: Ink UI, commands, print mode (bundles core)                |
 | `packages/testkit` | Scriptable mock OpenAI-compatible and MCP servers used by the tests                |
 | `apps/gateway`     | The optional Hono gateway deployed to Render                                       |

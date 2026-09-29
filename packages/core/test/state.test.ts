@@ -30,6 +30,7 @@ describe('AppStateStore', () => {
       onboardingComplete: false,
       trustedDirs: [],
       approvedMcp: {},
+      snakeBest: 0,
     });
     await store.update((s) => ({ ...s, onboardingComplete: true }));
     const project = path.join(home, 'work', 'app');

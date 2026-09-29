@@ -2,9 +2,17 @@ import path from 'node:path';
 import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
 import type { Env, MemoryFile } from '@vinax/core';
-import { markFor, MARK_MIN_WIDTH, TAGLINE } from '../brand.js';
+import {
+  asciiOnly,
+  bandFor,
+  BRAND_COLORS,
+  LOGO_GRID,
+  LOGO_MIN_WIDTH,
+  logoSegments,
+  TAGLINE,
+} from '../brand.js';
 import { shortenPath, truncate } from '../format.js';
-import { useTheme } from '../theme.js';
+import { useTheme, type Theme } from '../theme.js';
 
 interface Props {
   version: string;
@@ -43,6 +51,55 @@ export function memoryLabels(files: readonly MemoryFile[], cwd: string): string[
   return labels;
 }
 
+function bandColor(row: number, theme: Theme): string | undefined {
+  if (!theme.color) return undefined;
+  const band = bandFor(row);
+  if (band === 'white')
+    return theme.name === 'light' ? BRAND_COLORS.whiteOnLight : BRAND_COLORS.white;
+  return BRAND_COLORS[band];
+}
+
+/** The striped tricolor VinaX logo (see brand.ts); plain shapes under NO_COLOR. */
+export function Logo({ env = {} }: { env?: Env }) {
+  const theme = useTheme();
+  const ascii = asciiOnly(env);
+  return (
+    <Box flexDirection="column">
+      {LOGO_GRID.map((row, i) => (
+        <Text key={i}>
+          {logoSegments(row, ascii).map((seg, j) => (
+            <Text
+              key={j}
+              color={
+                seg.kind === 'chakra'
+                  ? theme.color
+                    ? BRAND_COLORS.chakra
+                    : undefined
+                  : bandColor(i, theme)
+              }
+              bold={seg.kind === 'chakra'}
+            >
+              {seg.text}
+            </Text>
+          ))}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+/** One-line tricolor name for narrow terminals. */
+function SmallName() {
+  const theme = useTheme();
+  return (
+    <Text bold>
+      <Text color={bandColor(0, theme)}>Vi</Text>
+      <Text color={bandColor(3, theme)}>na</Text>
+      <Text color={bandColor(6, theme)}>X</Text>
+    </Text>
+  );
+}
+
 function Row({ label, children }: { label: string; children: ReactNode }) {
   const theme = useTheme();
   return (
@@ -73,8 +130,7 @@ export function Welcome({
   const theme = useTheme();
   const boxWidth = Math.min(width, 88);
   const inner = boxWidth - 4;
-  const wide = boxWidth >= MARK_MIN_WIDTH;
-  const mark = markFor(env);
+  const wide = boxWidth >= LOGO_MIN_WIDTH;
   const memoryShown = memoryLabels(memory, cwd);
   return (
     <Box
@@ -85,30 +141,19 @@ export function Welcome({
       width={boxWidth}
     >
       {wide ? (
-        <Box>
-          <Box flexDirection="column" marginRight={2} flexShrink={0}>
-            {mark.map((line) => (
-              <Text key={line} color={theme.accent} bold>
-                {line}
-              </Text>
-            ))}
-          </Box>
-          <Box flexDirection="column">
-            <Text>
-              <Text bold>VinaX</Text>
-              <Text color={theme.muted}> v{version}</Text>
+        <Box flexDirection="column">
+          <Logo env={env} />
+          <Text wrap="truncate-end">
+            <Text bold>VinaX</Text>
+            <Text color={theme.muted}>
+              {' '}
+              v{version} · {TAGLINE}
             </Text>
-            <Text color={theme.muted} wrap="truncate-end">
-              {TAGLINE}
-            </Text>
-          </Box>
+          </Text>
         </Box>
       ) : (
         <Text>
-          <Text color={theme.accent} bold>
-            VX
-          </Text>
-          <Text bold> VinaX</Text>
+          <SmallName />
           <Text color={theme.muted}> v{version}</Text>
         </Text>
       )}

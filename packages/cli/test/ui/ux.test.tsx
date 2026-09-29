@@ -65,12 +65,13 @@ function welcome(width: number, theme = mono, env: Record<string, string> = {}) 
 }
 
 describe('Welcome', () => {
-  it('shows the VX mark, version, folder, branch, model, alias, session and memory', () => {
+  it('shows the striped VinaX logo, version, folder, branch, model, alias, session and memory', () => {
     const out = welcome(90);
-    expect(out).toContain('╲  ╱ ╲╱');
-    expect(out).toContain(' ╲╱  ╱╲');
-    expect(out).toContain('VinaX v1.2.3');
-    expect(out).toContain('AI coding agent for the terminal');
+    // first row of the striped logo: the tops of V, i and X
+    expect(out).toContain('▀▀▀     ▀▀▀ ▀▀▀');
+    // the chakra sits inside the "a"
+    expect(out).toMatch(/▀▀▀ ✺ ▀▀▀/);
+    expect(out).toContain('VinaX v1.2.3 · AI coding agent for the terminal');
     expect(out).toContain('/work/app ⎇ main');
     expect(out).toContain('openai/gpt-oss-20b · NVIDIA · NVD_CHAT_OSS_20_B');
     expect(out).toContain('new session');
@@ -81,10 +82,10 @@ describe('Welcome', () => {
     expect(out).toContain('? shortcuts');
   });
 
-  it('drops the mark and shortcut row in a narrow terminal without overflowing', () => {
+  it('drops the logo and shortcut row in a narrow terminal without overflowing', () => {
     const out = welcome(32);
-    expect(out).not.toContain('╲');
-    expect(out).toContain('VX VinaX v1.2.3');
+    expect(out).not.toContain('▀');
+    expect(out).toContain('VinaX v1.2.3');
     for (const line of out.split('\n')) expect(line.length).toBeLessThanOrEqual(32);
   });
 
@@ -97,7 +98,9 @@ describe('Welcome', () => {
   });
 
   it('falls back to an ASCII mark on dumb terminals', () => {
-    expect(welcome(90, mono, { TERM: 'dumb' })).toContain('\\  / \\/');
+    const out = welcome(90, mono, { TERM: 'dumb' });
+    expect(out).toContain('===     === ===');
+    expect(out).not.toContain('▀');
   });
 
   it('labels memory without paths or content', () => {

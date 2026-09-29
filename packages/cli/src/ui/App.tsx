@@ -2,6 +2,7 @@ import { Box, Text, useApp, useStdout } from 'ink';
 import { useEffect, useState } from 'react';
 import type { AppStateStore, Env, Runtime, SessionSummary, ThemeName } from '@vinax/core';
 import type { OpenedSession, SessionChoice } from '../session.js';
+import type { Announcement } from '../updates.js';
 import type { SlashCommand } from './commands/types.js';
 import { ChatScreen } from './components/ChatScreen.js';
 import { Onboarding, type OnboardingDeps } from './components/Onboarding.js';
@@ -25,6 +26,8 @@ export interface AppDeps {
   listSessions: (runtime: Runtime) => SessionSummary[];
   loadCommands: (runtime: Runtime) => Promise<{ commands: SlashCommand[]; warnings: string[] }>;
   onboarding: OnboardingDeps;
+  /** What's new since the last run and whether an update is out (network; optional). */
+  announcements?: () => Promise<Announcement[]>;
 }
 
 /** `pick` shows the resume picker first (`vinax -r` without an id). */
@@ -207,6 +210,7 @@ export function App({ deps, version, cwd, env, tips, start, initialPrompt, onExi
           title={chat.opened.loaded?.title}
           startupNotices={chat.notices}
           initialPrompt={chat.key === 0 ? initialPrompt : undefined}
+          announcements={chat.key === 0 ? deps.announcements : undefined}
           editorMode={chat.runtime.settings.resolved.editorMode}
           onExit={quit}
           onClear={() => {

@@ -21,6 +21,7 @@ import { App, type AppDeps, type StartChoice } from './ui/App.js';
 import { loadCommands } from './ui/commands/registry.js';
 import { cliSettings, type SessionOptions } from './session-options.js';
 import { pickTips } from './ui/tips.js';
+import { startupAnnouncements } from './updates.js';
 import { VERSION } from './version.js';
 
 /** Real implementations behind the UI's dependency interfaces. */
@@ -79,6 +80,7 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
       },
       defaultModel: opts.model ?? 'groq:openai/gpt-oss-120b',
     },
+    announcements: () => startupAnnouncements({ current: VERSION, env }),
   };
 }
 

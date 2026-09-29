@@ -45,7 +45,8 @@ export class ModelCatalog {
       const parsed = cacheSchema.safeParse(
         JSON.parse(await fs.readFile(this.file(provider), 'utf8')),
       );
-      if (!parsed.success) return undefined;
+      // an empty list (e.g. a gateway that did not serve the provider yet) is never trusted
+      if (!parsed.success || parsed.data.models.length === 0) return undefined;
       return {
         fetchedAt: parsed.data.fetchedAt,
         stale: false,
@@ -79,8 +80,12 @@ export class ModelCatalog {
     try {
       const models = await provider.listModels(opts.signal);
       const fetchedAt = this.now();
-      await fs.mkdir(this.dir, { recursive: true });
-      await fs.writeFile(this.file(provider.name), JSON.stringify({ fetchedAt, models }), 'utf8');
+      // Only a non-empty list is worth keeping for a day: an empty one usually means a gateway
+      // that has no key for this provider yet, and that can change at any moment.
+      if (models.length > 0) {
+        await fs.mkdir(this.dir, { recursive: true });
+        await fs.writeFile(this.file(provider.name), JSON.stringify({ fetchedAt, models }), 'utf8');
+      }
       return { models, fetchedAt, stale: false };
     } catch (err) {
       if (cached) return { ...cached, stale: true };

@@ -12,6 +12,8 @@ export const TIPS: readonly string[] = [
   'Use NVIDIA with --model NVD_CHAT_OSS_20_B once NVIDIA_API_KEY is set',
   'Run /health for a quick check of keys, models, gateway and MCP',
   'Ask "review my changes" — VinaX already knows your branch and changed files',
+  'Waiting on a long task? Type /snake for a round of Nokia-style Snake',
+  'Run /update to see if a newer VinaX is out, and /changelog for what changed',
 ];
 
 export function pickTips(count: number, random: () => number = Math.random): string[] {
