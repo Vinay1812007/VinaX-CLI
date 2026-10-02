@@ -15,6 +15,7 @@ import { AbortError } from '../router/backoff.js';
 import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
+import type { UserAnswer, UserQuestion } from '../tools/question-tool.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
 import type { AnyTool, ToolContext, ToolDisplay, ToolKind, ToolOutput } from '../tools/types.js';
 import type { LoadedSession, SessionRecorder, TurnMark } from '../session/store.js';
@@ -63,7 +64,8 @@ export interface AgentHost {
   /** Shows an approval prompt. Should reject (or resolve deny) when `signal` aborts. */
   askPermission(req: PermissionRequest, signal: AbortSignal): Promise<PermissionAnswer>;
   /** Omit when nobody can approve plans (headless runs). */
-  approvePlan?: (plan: string) => Promise<PlanDecision>;
+  approvePlan?: (plan: string, signal: AbortSignal) => Promise<PlanDecision>;
+  askQuestion?: (question: UserQuestion, signal: AbortSignal) => Promise<UserAnswer>;
   /** Saves an allow rule for this project (in `.vinax/settings.local.json`). */
   saveProjectRule?: (rule: string) => Promise<void>;
 }
@@ -717,7 +719,12 @@ export class Agent {
     const batches: Prepared[][] = [];
     for (const p of prepared) {
       const last = batches.at(-1);
-      if (p.tool?.readOnly === true && last?.every((q) => q.tool?.readOnly === true)) last.push(p);
+      if (
+        p.tool?.readOnly === true &&
+        p.tool.kind !== 'meta' &&
+        last?.every((q) => q.tool?.readOnly === true && q.tool.kind !== 'meta')
+      )
+        last.push(p);
       else batches.push([p]);
     }
 
@@ -849,6 +856,15 @@ export class Agent {
         };
         try {
           await this.deps.checkpoints.capture(tool.affectedPaths?.(p.input, ctx) ?? []);
+          // Input can change the mode or cancel the turn while approval/checkpointing waits.
+          if (signal.aborted) {
+            finish(p.call.id, tool.name, fail('Not run: the user interrupted.', 'Interrupted'));
+            return;
+          }
+          if (host.mode() === 'plan' && !tool.readOnly && tool.kind !== 'meta') {
+            finish(p.call.id, tool.name, fail('Not run: plan mode is now on.', 'Denied'));
+            return;
+          }
           const output = await tool.run(p.input, ctx);
           const touched = tool.target(p.input, ctx).path;
           const extra: string[] = [];

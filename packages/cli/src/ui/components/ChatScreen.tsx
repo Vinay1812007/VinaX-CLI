@@ -27,6 +27,8 @@ import {
   type SessionWriter,
   type ThemeName,
   type TodoItem,
+  type UserQuestion,
+  type UserAnswer,
 } from '@vinax/core';
 import type { Announcement } from '../../updates.js';
 import type { ExitSummary } from '../../exit-summary.js';
@@ -34,6 +36,7 @@ import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
 import { formatBytes, formatTokens, truncate } from '../format.js';
 import { extendTrail, phaseFor, turnSummary, type Phase } from '../phases.js';
+import { InputQueue } from '../input-queue.js';
 import { useTheme } from '../theme.js';
 import {
   splitStable,
@@ -58,13 +61,14 @@ import {
 import { AskOverlay, PickerOverlay } from './Overlays.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { PlanPrompt } from './PlanPrompt.js';
+import { QuestionPrompt } from './QuestionPrompt.js';
 import { PromptBox } from './PromptBox.js';
 import { RewindPicker, type RewindChoice } from './RewindPicker.js';
 import type { SelectItem } from './Select.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
 import { SettingsPanel, type SettingRow } from './SettingsPanel.js';
 import { SnakeGame } from './SnakeGame.js';
-import { MODE_CYCLE, StatusLine, type StatusNotice } from './StatusLine.js';
+import { MODE_CYCLE, MODE_DESCRIPTIONS, StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
 import { RunningTool, ToolEntry } from './ToolEntry.js';
@@ -111,9 +115,11 @@ interface Running {
   output: string;
 }
 
-type Pending =
+type Pending = { id: number } & (
   | { kind: 'permission'; req: PermissionRequest; resolve: (a: PermissionAnswer) => void }
-  | { kind: 'plan'; plan: string; resolve: (d: PlanDecision) => void };
+  | { kind: 'plan'; plan: string; resolve: (d: PlanDecision) => void }
+  | { kind: 'question'; question: UserQuestion; resolve: (answer: UserAnswer) => void }
+);
 
 type Overlay =
   | { kind: 'shortcuts' }
@@ -215,6 +221,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const [streaming, setStreaming] = useState<Streaming | undefined>(undefined);
   const [running, setRunning] = useState<Running[]>([]);
   const [pending, setPending, pendingRef] = useRefState<Pending | undefined>(undefined);
+  const inputQueue = useMemo(() => new InputQueue(), []);
+  const nextInputId = useRef(0);
   const [queued, setQueued, queuedRef] = useRefState<Queued[]>([]);
   const [overlay, setOverlay, overlayRef] = useRefState<Overlay | undefined>(undefined);
   const [detailsOffset, setDetailsOffset] = useState(0);
@@ -255,39 +263,36 @@ export function ChatScreen(props: ChatScreenProps) {
   const files = useMemo(() => new FileIndex(runtime.cwd), [runtime]);
 
   useEffect(() => setup.todos.subscribe(setTodos), [setup]);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const host = useMemo<AgentHost>(
     () => ({
       mode: () => modeRef.current,
       askPermission: (req, signal) =>
-        new Promise<PermissionAnswer>((resolve) => {
-          const onAbort = (): void => {
-            setPending(undefined);
-            resolve({ kind: 'deny', feedback: '' });
-          };
-          signal.addEventListener('abort', onAbort, { once: true });
-          setPending({
-            kind: 'permission',
-            req,
-            resolve: (answer) => {
-              signal.removeEventListener('abort', onAbort);
-              setPending(undefined);
-              resolve(answer);
-            },
-          });
-        }),
-      approvePlan: (plan) =>
-        new Promise<PlanDecision>((resolve) => {
-          setPending({
-            kind: 'plan',
-            plan,
-            resolve: (decision) => {
-              setPending(undefined);
-              if (decision.approved) setMode(decision.mode);
-              resolve(decision);
-            },
-          });
-        }),
+        inputQueue.request<PermissionAnswer>(
+          signal,
+          (resolve) => setPending({ id: nextInputId.current++, kind: 'permission', req, resolve }),
+          () => setPending(undefined),
+          { kind: 'deny', feedback: '' },
+        ),
+      approvePlan: async (plan, signal) => {
+        const decision = await inputQueue.request<PlanDecision>(
+          signal,
+          (resolve) => setPending({ id: nextInputId.current++, kind: 'plan', plan, resolve }),
+          () => setPending(undefined),
+          { approved: false, feedback: '' },
+        );
+        if (decision.approved && !signal.aborted) setMode(decision.mode);
+        return decision;
+      },
+      askQuestion: (question, signal) =>
+        inputQueue.request<UserAnswer>(
+          signal,
+          (resolve) =>
+            setPending({ id: nextInputId.current++, kind: 'question', question, resolve }),
+          () => setPending(undefined),
+          { cancelled: true },
+        ),
       saveProjectRule: async (rule) => {
         const file = await updateSettingsFile(
           { cwd: runtime.cwd, env: runtime.env, scope: 'local' },
@@ -901,6 +906,45 @@ export function ChatScreen(props: ChatScreenProps) {
       return;
     }
     const ov = overlayRef.current;
+    if (key.tab && key.shift && ov === undefined) {
+      const request = pendingRef.current;
+      if (request !== undefined && request.kind !== 'permission') {
+        flashHint('Answer or cancel the current question first');
+        return;
+      }
+      const next =
+        MODE_CYCLE[(MODE_CYCLE.indexOf(modeRef.current) + 1) % MODE_CYCLE.length] ?? 'default';
+      setMode(next);
+      setNotice({ level: 'info', text: MODE_DESCRIPTIONS[next] });
+      if (request?.kind === 'permission') {
+        if (next === 'plan') {
+          abortRef.current?.abort();
+        } else {
+          const tool = setup.tools.find((t) => t.name === request.req.tool);
+          if (tool && abortRef.current) {
+            const target = tool.target(request.req.input, {
+              cwd: runtime.cwd,
+              workspace: setup.workspace,
+              shell: setup.shell,
+              reads: setup.reads,
+              signal: abortRef.current.signal,
+            });
+            const decision = setup.permissions.decide(
+              {
+                name: tool.name,
+                kind: tool.kind,
+                readOnly: tool.readOnly,
+                target,
+              },
+              next,
+            );
+            if (decision.kind === 'allow') request.resolve({ kind: 'allow' });
+          }
+        }
+      }
+      refreshContext();
+      return;
+    }
     // prompts, pickers and questions handle their own keys
     if (
       pendingRef.current !== undefined ||
@@ -968,10 +1012,6 @@ export function ChatScreen(props: ChatScreenProps) {
       } else if (double && agent.turns.length > 0) {
         setOverlay({ kind: 'rewind' });
       }
-      return;
-    }
-    if (key.tab && key.shift) {
-      setMode((m) => MODE_CYCLE[(MODE_CYCLE.indexOf(m) + 1) % MODE_CYCLE.length] ?? 'default');
       return;
     }
     prompt.handleKey(input, key);
@@ -1085,13 +1125,26 @@ export function ChatScreen(props: ChatScreenProps) {
     <Box flexDirection="column">
       <Static items={items}>{renderItem}</Static>
       {streaming !== undefined && streaming.tail.trim() !== '' ? (
-        <AssistantMarkdown markdown={streaming.tail} first={!streaming.committed} width={width} />
+        <AssistantMarkdown
+          markdown={streaming.tail}
+          first={!streaming.committed}
+          width={width}
+          maxLines={Math.max(3, rows - 16)}
+        />
       ) : null}
-      {running.map((r) => (
-        <RunningTool key={r.id} name={r.name} label={r.label} output={r.output} width={width} />
+      {running.slice(-2).map((r) => (
+        <RunningTool
+          key={r.id}
+          name={r.name}
+          label={r.label}
+          output={r.output}
+          width={width}
+          active={pending === undefined}
+        />
       ))}
       {pending?.kind === 'permission' ? (
         <PermissionPrompt
+          key={pending.id}
           req={pending.req}
           width={width}
           onAnswer={pending.resolve}
@@ -1101,7 +1154,10 @@ export function ChatScreen(props: ChatScreenProps) {
         />
       ) : null}
       {pending?.kind === 'plan' ? (
-        <PlanPrompt plan={pending.plan} width={width} onDecide={pending.resolve} />
+        <PlanPrompt key={pending.id} plan={pending.plan} width={width} onDecide={pending.resolve} />
+      ) : null}
+      {pending?.kind === 'question' ? (
+        <QuestionPrompt key={pending.id} question={pending.question} onAnswer={pending.resolve} />
       ) : null}
       {busy && pending === undefined ? (
         <Box marginTop={1}>

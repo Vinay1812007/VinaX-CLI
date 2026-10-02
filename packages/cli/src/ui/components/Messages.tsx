@@ -21,22 +21,32 @@ export function AssistantMarkdown({
   markdown,
   first,
   width,
+  maxLines,
 }: {
   markdown: string;
   first: boolean;
   width: number;
+  /** Bound live output so a long code block cannot push controls below the viewport. */
+  maxLines?: number;
 }) {
   const theme = useTheme();
   const rendered = useMemo(
     () => renderMarkdown(markdown, { width: width - 2, theme }),
     [markdown, width, theme],
   );
+  const lines = rendered.split('\n');
+  const visible =
+    maxLines !== undefined && lines.length > maxLines
+      ? ['… streaming (full answer appears when complete)', ...lines.slice(-(maxLines - 1))].join(
+          '\n',
+        )
+      : rendered;
   return (
     <Box marginTop={1}>
       <Box width={2} flexShrink={0}>
         <Text color={theme.accent}>{first ? '◆' : ' '}</Text>
       </Box>
-      <Text>{rendered}</Text>
+      <Text>{visible}</Text>
     </Box>
   );
 }

@@ -37,8 +37,13 @@ export function Select<T>({
 }: Props<T>) {
   const theme = useTheme();
   const [index, setIndex] = useState(Math.min(Math.max(0, initialIndex), items.length - 1));
+  const choose = (position: number): void => {
+    const item = items[position];
+    if (item && !item.disabled) onSelect(item.value);
+  };
 
   const move = (next: number): void => {
+    if (items.length === 0) return;
     const wrapped = (next + items.length) % items.length;
     setIndex(wrapped);
     const item = items[wrapped];
@@ -50,11 +55,9 @@ export function Select<T>({
       if (key.upArrow || input === 'k') move(index - 1);
       else if (key.downArrow || input === 'j') move(index + 1);
       else if (key.return) {
-        const item = items[index];
-        if (item) onSelect(item.value);
+        choose(index);
       } else if (/^[1-9]$/.test(input)) {
-        const item = items[Number(input) - 1];
-        if (item) onSelect(item.value);
+        choose(Number(input) - 1);
       }
     },
     { isActive },
@@ -75,7 +78,10 @@ export function Select<T>({
           <Box key={item.label}>
             {/* the label keeps its width; a long hint is cut instead */}
             <Box flexShrink={0}>
-              <Text color={selected ? theme.accent : undefined} bold={selected}>
+              <Text
+                color={item.disabled ? theme.muted : selected ? theme.accent : undefined}
+                bold={selected && !item.disabled}
+              >
                 {selected ? '❯ ' : '  '}
                 {i + 1}. {item.label}
               </Text>

@@ -126,6 +126,7 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
       stdout: io.stdout as NodeJS.WriteStream,
       stderr: io.stderr as NodeJS.WriteStream,
       exitOnCtrlC: false,
+      incrementalRendering: true,
     },
   );
   await instance.waitUntilExit();

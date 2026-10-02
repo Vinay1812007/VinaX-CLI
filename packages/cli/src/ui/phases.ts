@@ -22,6 +22,7 @@ export function phaseFor(tool: string, label: string): Phase {
       return 'Inspecting repository';
     case 'TodoWrite':
     case 'ExitPlanMode':
+    case 'AskUserQuestion':
       return 'Planning';
     case 'Edit':
     case 'MultiEdit':

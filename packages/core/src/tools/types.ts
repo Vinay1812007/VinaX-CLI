@@ -29,7 +29,8 @@ export type ToolDisplay =
       hunks: DiffHunk[];
     }
   | { kind: 'todos'; todos: TodoItem[] }
-  | { kind: 'plan'; plan: string };
+  | { kind: 'plan'; plan: string }
+  | { kind: 'question'; question: string; answer: string };
 
 export interface ToolOutput {
   ok: boolean;
@@ -58,7 +59,7 @@ export interface ToolContext {
   /** Live output from long-running tools (Bash). */
   onProgress?: (chunk: string) => void;
   /** Asks the user to approve a plan; absent when nobody can answer (headless runs). */
-  approvePlan?: (plan: string) => Promise<PlanDecision>;
+  approvePlan?: (plan: string, signal: AbortSignal) => Promise<PlanDecision>;
   /** The session's host, so a sub-agent (Task) can ask for approvals the same way. */
   host?: AgentHost;
 }

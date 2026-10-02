@@ -25,7 +25,7 @@ export const exitPlanTool = defineTool({
         display: { kind: 'plan', plan: i.plan },
       };
     }
-    const decision = await approver(i.plan);
+    const decision = await approver(i.plan, ctx.signal);
     if (decision.approved) {
       return {
         ok: true,
@@ -39,7 +39,10 @@ export const exitPlanTool = defineTool({
     }
     return {
       ok: false,
-      content: `The user wants changes to the plan. Stay in plan mode and revise it. Feedback: ${decision.feedback || '(none given)'}`,
+      content:
+        decision.feedback.trim() === ''
+          ? 'The user cancelled plan approval. Stay in plan mode, stop, and wait for their next instruction. Do not repeat the approval request.'
+          : `The user wants changes to the plan. Stay in plan mode and revise it. Feedback: ${decision.feedback}`,
       summary: 'Plan not approved',
       display: { kind: 'plan', plan: i.plan },
     };

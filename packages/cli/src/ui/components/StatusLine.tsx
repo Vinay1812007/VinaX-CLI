@@ -17,7 +17,7 @@ export const MODE_DESCRIPTIONS: Record<PermissionMode, string> = {
   default: 'asks before edits, commands and web access',
   acceptEdits: 'edits inside the project are applied without asking',
   plan: 'read-only: VinaX researches and proposes a plan first',
-  auto: 'edits, commands and web access inside the project run without asking; dangerous commands, deny rules and anything outside the project still ask',
+  auto: 'edits, commands and web access inside the project run without asking; dangerous commands and outside-project access still ask; deny rules still block',
 };
 
 /** Shift+Tab cycles through these. */
@@ -72,27 +72,29 @@ export function StatusLine({ mode, model, contextPct, notice, hint, effort, widt
       : contextPct < 85
         ? theme.warning
         : theme.error;
-  const ctx = contextPct === undefined ? '' : ` · ${String(contextPct)}% context`;
-  const eff = effort === undefined ? '' : ` · ${EFFORT_GLYPH[effort] ?? '◑'} ${effort}`;
+  let ctx = contextPct === undefined ? '' : ` · ${String(contextPct)}% context`;
+  let eff = effort === undefined ? '' : ` · ${EFFORT_GLYPH[effort] ?? '◑'} ${effort}`;
   const left = hint ?? MODE_LABELS[mode];
   // Fit on one line: drop the shortcuts hint, then the cycle hint, then shorten the model.
   // Widths are terminal columns (⏸ and ⏵ take two), not string lengths.
-  const inner = width - 2;
+  const inner = Math.max(1, width - 2);
+  if (stringWidth(left + ctx + eff) + 10 > inner) eff = '';
+  if (stringWidth(left + ctx) + 10 > inner) ctx = '';
   const fixed = stringWidth(left) + stringWidth(ctx) + stringWidth(eff) + 2;
   const room = (extra: number): number => inner - fixed - extra;
   const want = Math.min(stringWidth(model), 24);
   const showCycle = hint === undefined && room(CYCLE_HINT.length) >= want;
   const showShortcuts = showCycle && room(CYCLE_HINT.length + SHORTCUTS_HINT.length) >= want;
   const used = (showCycle ? CYCLE_HINT.length : 0) + (showShortcuts ? SHORTCUTS_HINT.length : 0);
-  const modelShown = truncate(model, Math.max(8, room(used)));
+  const modelShown = room(used) > 0 ? truncate(model, room(used)) : '';
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} width={width}>
       <Box justifyContent="space-between">
         <Text
           color={hint === undefined ? modeColor(mode, theme) : theme.warning}
           wrap="truncate-end"
         >
-          {left}
+          {truncate(left, inner)}
           {showCycle ? <Text color={theme.muted}>{CYCLE_HINT}</Text> : ''}
           {showShortcuts ? <Text color={theme.muted}>{SHORTCUTS_HINT}</Text> : ''}
         </Text>

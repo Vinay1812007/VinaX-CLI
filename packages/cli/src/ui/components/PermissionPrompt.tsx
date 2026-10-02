@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useWindowSize } from 'ink';
 import { useState } from 'react';
 import type { PermissionAnswer, PermissionRequest } from '@vinax/core';
 import { useTheme } from '../theme.js';
@@ -33,6 +33,7 @@ function title(req: PermissionRequest): string {
 
 export function PermissionPrompt({ req, width, onAnswer, onAcceptEdits }: Props) {
   const theme = useTheme();
+  const { rows } = useWindowSize();
   const [stage, setStage] = useState<'choose' | 'feedback'>('choose');
 
   useInput(
@@ -83,7 +84,11 @@ export function PermissionPrompt({ req, width, onAnswer, onAcceptEdits }: Props)
       ) : null}
       {req.preview?.kind === 'diff' ? (
         <Box marginY={1}>
-          <DiffView diff={req.preview} maxLines={20} width={width - 6} />
+          <DiffView
+            diff={req.preview}
+            maxLines={Math.max(3, Math.min(20, rows - 16))}
+            width={width - 6}
+          />
         </Box>
       ) : null}
       {req.danger === undefined ? (

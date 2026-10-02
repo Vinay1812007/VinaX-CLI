@@ -81,6 +81,12 @@ export function ToolEntry({
           <Text>{renderMarkdown(display.plan, { width: width - 4, theme })}</Text>
         </Box>
       ) : null}
+      {display?.kind === 'question' ? (
+        <Box paddingLeft={4} flexDirection="column">
+          <Text>{display.question}</Text>
+          <Text color={theme.accent}>Your answer: {display.answer}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }
@@ -93,22 +99,25 @@ export function RunningTool({
   label,
   output,
   width,
+  active = true,
 }: {
   name: string;
   label: string;
   output: string;
   width: number;
+  active?: boolean;
 }) {
   const theme = useTheme();
   const [tick, setTick] = useState(0);
   useEffect(() => {
+    if (!active) return;
     const t = setInterval(() => {
       setTick((n) => n + 1);
     }, 150);
     return () => {
       clearInterval(t);
     };
-  }, []);
+  }, [active]);
   const tail = output
     .split('\n')
     .filter((l) => l.trim() !== '')
@@ -119,7 +128,7 @@ export function RunningTool({
         name={name}
         label={label}
         color={theme.accent}
-        glyph={SPINNER[tick % SPINNER.length] ?? '○'}
+        glyph={active ? (SPINNER[tick % SPINNER.length] ?? '○') : '⏸'}
         width={width}
       />
       {tail.map((l, i) => (

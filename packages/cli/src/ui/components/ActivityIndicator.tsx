@@ -98,7 +98,7 @@ export function ActivityIndicator({
   const glyph = SPINNER_FRAMES[tick % SPINNER_FRAMES.length] ?? '✻';
   return (
     <Box flexDirection="column">
-      <Text>
+      <Text wrap="truncate-end">
         <Text color={waiting === undefined ? theme.accent : theme.warning}>{glyph} </Text>
         {waiting === undefined ? (
           <Shimmer text={`${activity ?? verb}…`} tick={tick} />

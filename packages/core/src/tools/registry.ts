@@ -3,6 +3,7 @@ import type { ToolSpec } from '../providers/types.js';
 import { createBashTools } from './bash-tool.js';
 import { editTool, multiEditTool, readTool, writeTool } from './file-tools.js';
 import { exitPlanTool } from './plan-tool.js';
+import { askUserTool } from './question-tool.js';
 import { globTool, grepTool, lsTool } from './search-tools.js';
 import type { ShellInfo } from './shell.js';
 import { createTodoTool, type TodoStore } from './todo.js';
@@ -20,6 +21,7 @@ export function createToolset(opts: { shell: ShellInfo; todos: TodoStore }): Any
     ...createBashTools(opts.shell),
     createTodoTool(opts.todos),
     exitPlanTool,
+    askUserTool,
   ];
 }
 

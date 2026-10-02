@@ -125,6 +125,7 @@ export { createToolset, toolSpec } from './tools/registry.js';
 export { detectShell, ShellSession, splitCwdMarker, type ShellInfo } from './tools/shell.js';
 export { TodoStore, type TodoItem } from './tools/todo.js';
 export type { PlanDecision } from './tools/plan-tool.js';
+export type { UserQuestion, UserAnswer } from './tools/question-tool.js';
 export type {
   AnyTool,
   DiffHunk,
