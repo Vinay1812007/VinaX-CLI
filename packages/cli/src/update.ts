@@ -129,7 +129,8 @@ function runVersion(file: string): Promise<string> {
 
 /**
  * Replaces the running binary with the release's build for the same target, after checking it
- * against the release's SHA256SUMS. On Windows the running file cannot be overwritten, so it is
+ * against the release's SHA256SUMS and verifying its version before installation.
+ * On Windows the running file cannot be overwritten, so it is
  * moved aside to `<name>.old` (removed on the next start).
  */
 export async function updateBinary(
@@ -156,20 +157,40 @@ export async function updateBinary(
       `The download of ${asset} is corrupt (checksum mismatch); nothing was changed.`,
     );
 
-  const next = `${install.path}.new`;
-  await fs.writeFile(next, data, { mode: 0o755 });
-  if (windows) {
-    const old = `${install.path}.old`;
-    await fs.rm(old, { force: true });
-    await fs.rename(install.path, old);
+  // Stage on the same filesystem for an atomic rename. Keep .exe on Windows so the
+  // candidate can be executed, and use a unique directory for concurrent updates.
+  const staging = await fs.mkdtemp(path.join(path.dirname(install.path), '.vinax-update-'));
+  const next = path.join(staging, windows ? 'vinax.exe' : 'vinax');
+  try {
+    await fs.writeFile(next, data, { mode: 0o755 });
+    let reported: string;
     try {
-      await fs.rename(next, install.path);
+      reported = await runVersion(next);
     } catch (err) {
-      await fs.rename(old, install.path);
-      throw err;
+      throw new Error(
+        `Could not verify ${asset}: ${err instanceof Error ? err.message : String(err)}; nothing was changed.`,
+      );
     }
-  } else {
-    await fs.rename(next, install.path);
+    if (reported.replace(/^v/, '') !== release.version.replace(/^v/, ''))
+      throw new Error(
+        `Release v${release.version} contains ${asset} reporting ${JSON.stringify(reported)} (version mismatch); nothing was changed.`,
+      );
+
+    if (windows) {
+      const old = `${install.path}.old`;
+      await fs.rm(old, { force: true });
+      await fs.rename(install.path, old);
+      try {
+        await fs.rename(next, install.path);
+      } catch (err) {
+        await fs.rename(old, install.path);
+        throw err;
+      }
+    } else {
+      await fs.rename(next, install.path);
+    }
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true });
   }
 }
 
@@ -244,8 +265,7 @@ export async function runUpdate(
   try {
     if (!release) throw new Error('no release information');
     await updateBinary(install, release, fetchFn);
-    const reported = await runVersion(install.path).catch(() => undefined);
-    io.out(`✔ Updated ${install.path} to v${reported ?? latest}.`);
+    io.out(`✔ Updated ${install.path} to v${latest}.`);
     return 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

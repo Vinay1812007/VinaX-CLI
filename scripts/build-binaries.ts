@@ -8,7 +8,7 @@
  * for other platforms, so they are left out: the OS keychain (keys go to ~/.vinax/credentials.json,
  * mode 0600) and the bundled ripgrep (Grep uses `rg` from PATH, or its JavaScript search).
  */
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 export const TARGETS = {
@@ -24,6 +24,14 @@ export const TARGETS = {
 type TargetName = keyof typeof TARGETS;
 
 const root = path.resolve(import.meta.dir, '..');
+const pkg = JSON.parse(await readFile(path.join(root, 'packages/cli/package.json'), 'utf8')) as {
+  version: string;
+};
+const releaseVersion = process.env.VINAX_RELEASE_VERSION;
+if (releaseVersion !== undefined && releaseVersion !== pkg.version)
+  throw new Error(
+    `Release version ${releaseVersion} does not match checkout version ${pkg.version}`,
+  );
 const outDir = path.join(root, 'dist-bin');
 const bundleDir = path.join(outDir, '.bundle');
 

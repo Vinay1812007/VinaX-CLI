@@ -52,7 +52,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="$(node -p "require('./packages/cli/package.json').version")"
+          # changesets/action can leave the next release PR's version in the working tree.
+          # All jobs must use the version from the commit that triggered this workflow.
+          version="$(git show "$GITHUB_SHA:packages/cli/package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$version" != "0.0.0" ] && ! gh release view "v$version" > /dev/null 2>&1; then
             echo "release=true" >> "$GITHUB_OUTPUT"
@@ -69,9 +71,11 @@ jobs:
         include:
           - os: ubuntu-latest
             targets: linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl windows-x64 windows-arm64
+            smoke-target: linux-x64
           # macOS builds are made (and ad-hoc signed) on macOS so Gatekeeper accepts them.
           - os: macos-latest
             targets: darwin-x64 darwin-arm64
+            smoke-target: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -83,9 +87,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install --frozen-lockfile
       - run: bun scripts/build-binaries.ts ${{ matrix.targets }}
+        env:
+          VINAX_RELEASE_VERSION: ${{ needs.npm.outputs.version }}
       - name: Sign (macOS)
         if: runner.os == 'macOS'
         run: for f in dist-bin/vinax-darwin-*; do codesign --force --sign - "$f"; done
+      - name: Verify binary version before upload
+        env:
+          EXPECTED_VERSION: ${{ needs.npm.outputs.version }}
+          SMOKE_TARGET: ${{ matrix.smoke-target }}
+        run: |
+          actual="$(./dist-bin/vinax-$SMOKE_TARGET --version)"
+          if [ "$actual" != "$EXPECTED_VERSION" ]; then
+            echo "Expected $EXPECTED_VERSION, but binary reports $actual" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.os }}

@@ -145,6 +145,39 @@ describe('vinax update', () => {
     );
   });
 
+  it.skipIf(!posix).each([
+    { binary: '#!/bin/sh\necho 0.3.0\n', error: 'version mismatch' },
+    { binary: '#!/bin/sh\necho 0.5.0\n', error: 'version mismatch' },
+    { binary: '#!/bin/sh\nexit 1\n', error: 'Could not verify' },
+    { binary: '#!/bin/sh\nexit 0\n', error: 'version mismatch' },
+  ])('preserves the installed binary on $error ($binary)', async ({ binary, error }) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vinax-update-'));
+    closers.push(() => fs.rm(dir, { recursive: true, force: true }));
+    const exe = path.join(dir, 'vinax');
+    const original = '#!/bin/sh\necho 0.3.0\n';
+    await fs.writeFile(exe, original, { mode: 0o755 });
+    const url = await releaseServer({ version: '0.4.0', binary: Buffer.from(binary) });
+    const lines: string[] = [];
+    const errors: string[] = [];
+
+    expect(
+      await runUpdate(
+        '0.3.0',
+        {
+          check: false,
+          env: { VINAX_UPDATE_URL: url },
+          install: { kind: 'binary', path: exe, target: 'linux-x64' },
+        },
+        { out: (s) => lines.push(s), err: (s) => errors.push(s) },
+      ),
+    ).toBe(1);
+    expect(errors.join('\n')).toContain(error);
+    expect(errors.join('\n')).toContain('nothing was changed');
+    expect(lines.join('\n')).not.toContain('✔ Updated');
+    expect(await fs.readFile(exe, 'utf8')).toBe(original);
+    expect(await fs.readdir(dir)).toEqual(['vinax']);
+  });
+
   it('tells source checkouts to use git', async () => {
     const lines: string[] = [];
     const code = await runUpdate(
