@@ -28,7 +28,8 @@ type Style = Parameters<typeof styleText>[0];
 /** Styles text only for a colour-capable TTY; honours NO_COLOR / FORCE_COLOR. */
 export function paint(stream: OutStream, style: Style, text: string, env: Env): string {
   const forced = env.FORCE_COLOR !== undefined && env.FORCE_COLOR !== '0';
-  if (env.NO_COLOR !== undefined && env.NO_COLOR !== '' && !forced) return text;
+  if (((env.NO_COLOR !== undefined && env.NO_COLOR !== '') || env.TERM === 'dumb') && !forced)
+    return text;
   if (stream.isTTY !== true && !forced) return text;
   return styleText(style, text, { validateStream: false });
 }

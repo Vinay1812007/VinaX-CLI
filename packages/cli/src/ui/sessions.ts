@@ -46,6 +46,9 @@ export function sessionItems(
         relativeTime(s.updatedAt, now),
         `${String(s.turns)} prompt${s.turns === 1 ? '' : 's'}`,
         ...(s.model === undefined ? [] : [s.model]),
+        ...(s.damagedLines > 0
+          ? [`⚠ ${String(s.damagedLines)} damaged line${s.damagedLines === 1 ? '' : 's'}`]
+          : []),
       ].join(' · '),
       group: sessionGroup(s.updatedAt, now),
       keywords: [s.firstPrompt ?? '', s.id],

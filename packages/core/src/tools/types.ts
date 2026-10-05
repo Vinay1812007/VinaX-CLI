@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { AgentHost } from '../agent/agent.js';
+import type { ModelUsage } from '../state/cost.js';
 import type { PlanDecision } from './plan-tool.js';
 import type { ReadTracker } from './read-tracker.js';
 import type { ShellSession } from './shell.js';
@@ -62,6 +63,8 @@ export interface ToolContext {
   approvePlan?: (plan: string, signal: AbortSignal) => Promise<PlanDecision>;
   /** The session's host, so a sub-agent (Task) can ask for approvals the same way. */
   host?: AgentHost;
+  /** Adds tokens used on the task's behalf (by a sub-agent) to the task's usage and budget. */
+  addUsage?: (byModel: Readonly<Record<string, ModelUsage>>) => void;
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {
@@ -83,6 +86,9 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
   preview?(input: z.infer<S>, ctx: ToolContext): Promise<ToolDisplay | undefined>;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolOutput>;
 }
+
+/** `AbortSignal.reason` when a task is stopped by its time budget rather than by the user. */
+export const TIME_BUDGET_ABORT = 'vinax:time-budget';
 
 /** Erases the input type so heterogeneous tools can share one list. */
 export type AnyTool = Tool;

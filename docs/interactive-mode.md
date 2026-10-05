@@ -39,8 +39,26 @@ After you upgrade, the first session shows a **What's new** panel with the relea
 - **The turn summary.** A turn that used tools ends with a line like `▸ Done └ Updated 2 files · 5 tool calls · 12.3s`.
 - **Error cards.** When a turn fails, a card shows each model that was tried, its provider, the kind of failure and the provider's message, and what to try next: retry, `/model`, `/login`, `/health` or `/compact`.
 - **Your prompts** appear in the transcript as `> your prompt`.
-- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows the model that answered, the effort (`◔ low`, `◑ medium`, `● high`) when set, and how much of the context budget is used. Fallback and rate-limit notices appear under it.
+- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows what VinaX is doing (see [Task state](#task-state)), the model that answered, the effort (`◔ low`, `◑ medium`, `● high`) when set, and how much of the context budget is used. Fallback and rate-limit notices appear under it.
 - **The task list** appears above the prompt whenever VinaX tracks steps with `TodoWrite`.
+
+### Task state
+
+The footer says at a glance whether VinaX is working, needs you, or stopped, and why:
+
+| Footer                         | Meaning                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------- |
+| `● working 0:12`               | A turn, command or `!` shell command is running (with tokens against a budget)          |
+| `◆ needs your approval · 0:05` | Waiting for you: an approval, a plan (`plan needs your review`) or a question           |
+| `2 queued`                     | Messages you typed while VinaX was busy, sent in order when it finishes                 |
+| `✓ done · 0:08`                | The last turn finished                                                                  |
+| `⏹ interrupted`                | You stopped it; what was done so far is kept                                            |
+| `✖ failed`                     | The models could not answer; an error card above says what to try                       |
+| `⏹ stopped at the budget`      | A [token or time budget](/usage#budgets) ran out                                        |
+| `⟲ stopped: going in circles`  | The task kept repeating a failing call; see [Usage](/usage#when-a-task-goes-in-circles) |
+| `⊘ stopped: you declined`      | You declined an action                                                                  |
+
+On a narrow terminal the state shortens to its symbol and clock (`◆ 0:05`).
 
 ## The chat bar
 
@@ -86,7 +104,9 @@ See [Permissions](/permissions#modes) for the details.
 | `Ctrl+U` / `Ctrl+K`                                 | Delete to the start / end of the line                                               |
 | `Ctrl+Y`                                            | Paste back the text you last deleted                                                |
 | `Ctrl+_`                                            | Undo                                                                                |
-| `Ctrl+O`                                            | Turn details: model, tokens, time, fallbacks and live rate limits                   |
+| `Ctrl+P`                                            | [Command palette](#command-palette): search every command and view                  |
+| `Ctrl+G`                                            | [Review changes](#reviewing-changes): changed files, diffs, undo one file           |
+| `Ctrl+O`                                            | [Transcript](#transcript-and-turn-details): search, full tool output, turn details  |
 | `Ctrl+L`                                            | Redraw the screen                                                                   |
 | `?` (on an empty prompt)                            | Show all shortcuts                                                                  |
 | `Ctrl+C`                                            | Clear the prompt; press again within 2 s to exit                                    |
@@ -135,16 +155,44 @@ Clicking to move the cursor inside the prompt would mean capturing the mouse, wh
   <span class="dim">Session</span>  20260929-164512-abc123 · Fix login bug
   <span class="dim">Resume</span>   <span class="accent">vinax --resume 20260929-164512-abc123</span>
   <span class="dim">Time</span>     12m 04s total · 3m 10s working · 8 prompts · 23 tool calls
-  <span class="dim">Tokens</span>   45K in · 3.1K out
+  <span class="dim">Tokens</span>   45K in · 3.1K out (reported) · ~2.4K estimated
+  <span class="dim">Cost</span>     unknown (no price for nvidia:openai/gpt-oss-20b)
   <span class="dim">Changes</span>  4 files · +120 −34 lines
   <span class="dim">Models</span>   nvidia:openai/gpt-oss-20b</pre>
 
-A session with no prompts just prints `✻ Bye!`.
+A session with no prompts just prints `✻ Bye!`. Reported and estimated tokens and the cost are explained in [Usage, budgets and cost](/usage).
 
 ## Themes
 
 `/theme` (or [`/settings`](/settings#settings-panel)) switches between dark, light and colour-blind friendly themes. The choice is saved to your settings. `NO_COLOR` turns off colour entirely.
 
-## Turn details
+## Command palette
 
-`Ctrl+O` opens a panel for the last turns. It shows which model answered, prompt and completion tokens, duration, every fallback, and the provider's remaining rate limits. It's useful for seeing why a turn was slow or switched models.
+`Ctrl+P` opens a searchable list of every view (Review changes, Search transcript, Rewind, the next permission mode, keyboard shortcuts) and every slash command, built-in and custom, with its shortcut where there is one. Type to filter and press Enter. A command that needs an argument (such as `/review <file>`) is put into the prompt for you to finish instead of running.
+
+## Reviewing changes
+
+`Ctrl+G` (or `/changes`) lists every file VinaX changed this session with lines added and removed (`M` changed, `A` created, `D` deleted) and the diff of the selected file from before VinaX first touched it.
+
+| Key                      | Action                            |
+| ------------------------ | --------------------------------- |
+| `↑` / `↓`                | Choose a file                     |
+| `PgUp` / `PgDn`, `Space` | Scroll its diff                   |
+| `u`                      | Undo VinaX's changes to that file |
+| `r`                      | Read the files again              |
+| `Esc`                    | Close                             |
+
+A file that changed outside VinaX after it last wrote it (in your editor, or by a shell command) is marked `✎ changed outside VinaX`. Undoing it asks first, and your current version is saved to a backup folder before it is replaced. VinaX is told about the undo so it reads the file again. Only changes made with VinaX's file tools appear here; changes made by shell commands are not tracked. Undo is not available while VinaX is still working.
+
+## Transcript and turn details
+
+`Ctrl+O` opens the whole transcript as a list, newest selected. Under each prompt it shows which model answered, the time, reported and estimated tokens, and every fallback with its reason; the providers' remaining rate limits are at the bottom.
+
+- `↑` / `↓` move, `Enter` opens an entry to read all of it, including the **full output** of a tool call (scroll with `↑` / `↓` and `PgUp` / `PgDn`, `Enter` or `Esc` to go back).
+- `/` searches prompts, answers and tool output; the matching line is shown under each result. `Esc` clears the search.
+
+Your terminal's own scrollback is never changed; this is a separate view on top of it. Full tool output is kept for the calls made since VinaX started (a resumed session shows the summaries of older calls).
+
+## Terminals
+
+VinaX adapts to the window: lines are cut by their width on screen (wide CJK characters and emoji count double), the footer drops hints before it wraps, and views redraw when the window is resized. `NO_COLOR` turns off colour. `TERM=dumb` turns off colour too, and since the interactive screen needs cursor movement, VinaX asks you to use [`vinax -p`](/print-mode) there instead. Without a terminal (piped input or output) interactive mode is refused the same way.

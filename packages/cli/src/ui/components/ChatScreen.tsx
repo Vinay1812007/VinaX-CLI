@@ -10,69 +10,62 @@ import {
   generateTitle,
   modelAlias,
   parseModelRef,
+  costOf,
+  formatCost,
+  mergeModelUsage,
+  priceFor,
   projectDataDir,
   PromptHistory,
   providerLabel,
-  updateSettingsFile,
-  type AgentEvent,
-  type AgentHost,
+  totalTokens,
+  type ModelUsage,
+  type AgentOutcome,
   type AgentSetup,
   type EditorMode,
   type ImageAttachment,
-  type PermissionAnswer,
   type PermissionMode,
-  type PermissionRequest,
-  type PlanDecision,
   type Runtime,
   type SessionWriter,
   type ThemeName,
   type TodoItem,
-  type UserQuestion,
-  type UserAnswer,
 } from '@vinax/core';
 import type { Announcement } from '../../updates.js';
 import type { ExitSummary } from '../../exit-summary.js';
 import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
-import { formatBytes, formatTokens, truncate } from '../format.js';
-import { extendTrail, phaseFor, turnSummary, type Phase } from '../phases.js';
-import { InputQueue } from '../input-queue.js';
+import { loadChanges } from '../changes.js';
+import { formatBytes, truncate } from '../format.js';
+import { paletteItems, type PaletteChoice } from '../palette.js';
+import { phaseFor, turnSummary } from '../phases.js';
+import { performRewind, undoFile, type ReviewDeps } from '../review-actions.js';
+import type { TaskState } from '../task-state.js';
 import { useTheme } from '../theme.js';
-import {
-  splitStable,
-  type ToolRecord,
-  type TranscriptItem,
-  type TurnRecord,
-} from '../transcript.js';
+import { browseEntries } from '../transcript-browser.js';
+import { createTurnTracker, outcomeItem, type Running, type Streaming } from '../turn-events.js';
+import { type NewTranscriptItem, type TranscriptItem, type TurnRecord } from '../transcript.js';
+import { useAgentHost } from '../use-agent-host.js';
+import { ownsKeyboard, useOverlays } from '../use-overlays.js';
 import { usePromptEditor, type Submission } from '../use-prompt-editor.js';
 import { useRefState } from '../use-ref-state.js';
 import { useSuggestions } from '../use-suggestions.js';
 import { ActivityIndicator } from './ActivityIndicator.js';
-import {
-  AssistantMarkdown,
-  ErrorCard,
-  Notice,
-  Panel,
-  ShellEntry,
-  ThoughtLine,
-  TurnSummary,
-  UserMessage,
-} from './Messages.js';
+import { ChangesView } from './ChangesView.js';
+import { AssistantMarkdown } from './Messages.js';
 import { AskOverlay, PickerOverlay } from './Overlays.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { PlanPrompt } from './PlanPrompt.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { PromptBox } from './PromptBox.js';
-import { RewindPicker, type RewindChoice } from './RewindPicker.js';
-import type { SelectItem } from './Select.js';
+import { RewindPicker } from './RewindPicker.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
-import { SettingsPanel, type SettingRow } from './SettingsPanel.js';
+import { SettingsPanel } from './SettingsPanel.js';
 import { SnakeGame } from './SnakeGame.js';
 import { MODE_CYCLE, MODE_DESCRIPTIONS, StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
-import { RunningTool, ToolEntry } from './ToolEntry.js';
-import { TurnDetails } from './TurnDetails.js';
+import { RunningTool } from './ToolEntry.js';
+import { TranscriptBrowser } from './TranscriptBrowser.js';
+import { TranscriptEntry } from './TranscriptEntry.js';
 import { Welcome } from './Welcome.js';
 
 /** Rotating example prompts for the empty prompt box, like Claude Code's `Try "…"`. */
@@ -85,68 +78,7 @@ const PLACEHOLDERS: readonly string[] = [
 ];
 const EXIT_WINDOW_MS = 2000;
 const DOUBLE_ESC_MS = 600;
-const RUNNING_OUTPUT_CHARS = 4000;
 const SHELL_CONTEXT_CHARS = 6000;
-
-type NewItem = TranscriptItem extends infer T
-  ? T extends { id: number }
-    ? Omit<T, 'id'>
-    : never
-  : never;
-
-interface Streaming {
-  startedAt: number;
-  tail: string;
-  chars: number;
-  committed: boolean;
-  waiting: string | undefined;
-  /** Replaces the rotating verb, e.g. "Compacting the conversation". */
-  label?: string;
-  /** Stages of this turn so far (Inspecting repository → Editing → Running tests). */
-  trail?: Phase[];
-  /** The model's reasoning while it thinks (cleared once the answer or a tool call starts). */
-  thinking?: string;
-}
-
-interface Running {
-  id: string;
-  name: string;
-  label: string;
-  output: string;
-}
-
-type Pending = { id: number } & (
-  | { kind: 'permission'; req: PermissionRequest; resolve: (a: PermissionAnswer) => void }
-  | { kind: 'plan'; plan: string; resolve: (d: PlanDecision) => void }
-  | { kind: 'question'; question: UserQuestion; resolve: (answer: UserAnswer) => void }
-);
-
-type Overlay =
-  | { kind: 'shortcuts' }
-  | { kind: 'snake'; best: number; resolve: (score: number) => void }
-  | {
-      kind: 'settings';
-      title: string;
-      rows: readonly SettingRow[];
-      onChange: (key: string, value: string) => Promise<readonly SettingRow[] | undefined>;
-      resolve: (action: string | undefined) => void;
-    }
-  | { kind: 'details' }
-  | { kind: 'rewind' }
-  | {
-      kind: 'picker';
-      title: string;
-      items: readonly SelectItem<unknown>[];
-      searchable: boolean;
-      resolve: (v: unknown) => void;
-    }
-  | {
-      kind: 'ask';
-      title: string;
-      placeholder: string;
-      mask: boolean;
-      resolve: (v: string | undefined) => void;
-    };
 
 interface Queued extends Submission {
   allowRules?: readonly string[] | undefined;
@@ -212,23 +144,26 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const [items, setItems] = useState<TranscriptItem[]>(() => initialItems(props));
   const nextId = useRef(items.length);
-  const push = (item: NewItem): void => {
+  const push = (item: NewTranscriptItem): number => {
     const id = nextId.current++;
     session.record({ type: 'view', data: item });
     setItems((prev) => [...prev, { ...item, id }]);
+    return id;
   };
+  /** Full output of this session's tool calls, by transcript item id (for Ctrl+O). */
+  const toolOutputs = useRef(new Map<number, string>());
 
   const [streaming, setStreaming] = useState<Streaming | undefined>(undefined);
   const [running, setRunning] = useState<Running[]>([]);
-  const [pending, setPending, pendingRef] = useRefState<Pending | undefined>(undefined);
-  const inputQueue = useMemo(() => new InputQueue(), []);
-  const nextInputId = useRef(0);
   const [queued, setQueued, queuedRef] = useRefState<Queued[]>([]);
-  const [overlay, setOverlay, overlayRef] = useRefState<Overlay | undefined>(undefined);
-  const [detailsOffset, setDetailsOffset] = useState(0);
+  const { overlay, overlayRef, setOverlay, pick, ask, editSettings, playSnake } = useOverlays();
   const [mode, setMode, modeRef] = useRefState<PermissionMode>(
     runtime.settings.resolved.permissions.defaultMode,
   );
+  /** How the last turn ended, for the status line (cleared when the next one starts). */
+  const [lastOutcome, setLastOutcome] = useState<
+    { status: AgentOutcome['status']; durationMs: number } | undefined
+  >(undefined);
   const [, setEditorMode, editorModeRef] = useRefState<EditorMode>(props.editorMode);
   const [notice, setNotice] = useState<StatusNotice | undefined>(undefined);
   const [hint, setHint] = useState<string | undefined>(undefined);
@@ -250,8 +185,8 @@ export function ChatScreen(props: ChatScreenProps) {
     () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)] ?? PLACEHOLDERS[0],
     [],
   );
-  const tailRef = useRef('');
-  const committedRef = useRef(false);
+  /** The answer text still streaming in (see createTurnTracker). */
+  const streamRef = useRef({ tail: '', committed: false });
   const exitArmedAt = useRef<number | undefined>(undefined);
   const lastEscAt = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -265,50 +200,15 @@ export function ChatScreen(props: ChatScreenProps) {
   useEffect(() => setup.todos.subscribe(setTodos), [setup]);
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const host = useMemo<AgentHost>(
-    () => ({
-      mode: () => modeRef.current,
-      askPermission: (req, signal) =>
-        inputQueue.request<PermissionAnswer>(
-          signal,
-          (resolve) => setPending({ id: nextInputId.current++, kind: 'permission', req, resolve }),
-          () => setPending(undefined),
-          { kind: 'deny', feedback: '' },
-        ),
-      approvePlan: async (plan, signal) => {
-        const decision = await inputQueue.request<PlanDecision>(
-          signal,
-          (resolve) => setPending({ id: nextInputId.current++, kind: 'plan', plan, resolve }),
-          () => setPending(undefined),
-          { approved: false, feedback: '' },
-        );
-        if (decision.approved && !signal.aborted) setMode(decision.mode);
-        return decision;
-      },
-      askQuestion: (question, signal) =>
-        inputQueue.request<UserAnswer>(
-          signal,
-          (resolve) =>
-            setPending({ id: nextInputId.current++, kind: 'question', question, resolve }),
-          () => setPending(undefined),
-          { cancelled: true },
-        ),
-      saveProjectRule: async (rule) => {
-        const file = await updateSettingsFile(
-          { cwd: runtime.cwd, env: runtime.env, scope: 'local' },
-          (s) => {
-            const perms = (s.permissions ?? {}) as { allow?: string[] };
-            return {
-              ...s,
-              permissions: { ...perms, allow: [...new Set([...(perms.allow ?? []), rule])] },
-            };
-          },
-        );
-        push({ kind: 'notice', level: 'info', text: `Saved ${rule} to ${file}` });
-      },
-    }),
-    [runtime],
-  );
+  const { host, pending, pendingRef, backlog } = useAgentHost({
+    runtime,
+    modeRef,
+    setMode,
+    onRuleSaved: (rule, file) => {
+      push({ kind: 'notice', level: 'info', text: `Saved ${rule} to ${file}` });
+    },
+    now,
+  });
 
   /** Leaves like Claude Code: the prompt disappears and a session summary is printed. */
   const leave = (code = 0): void => {
@@ -323,6 +223,10 @@ export function ChatScreen(props: ChatScreenProps) {
       activeMs: t.reduce((n, x) => n + x.durationMs, 0),
       inputTokens: t.reduce((n, x) => n + (x.inputTokens ?? 0), 0),
       outputTokens: t.reduce((n, x) => n + (x.outputTokens ?? 0), 0),
+      estimatedTokens: t.reduce((n, x) => n + (x.estimatedTokens ?? 0), 0),
+      ...(t.some((x) => Object.keys(x.usageByModel ?? {}).length > 0)
+        ? { cost: formatCost(sessionCost()) }
+        : {}),
       filesChanged: changes.current.files.size,
       linesAdded: changes.current.added,
       linesRemoved: changes.current.removed,
@@ -335,6 +239,15 @@ export function ChatScreen(props: ChatScreenProps) {
     }, 30);
   };
 
+  /** Tokens per model this session, and what they cost where prices are known. */
+  const sessionUsage = (): Record<string, ModelUsage> => {
+    const byModel: Record<string, ModelUsage> = {};
+    for (const t of turnsRef.current) mergeModelUsage(byModel, t.usageByModel ?? {});
+    return byModel;
+  };
+  const sessionCost = () =>
+    costOf(sessionUsage(), (ref) => priceFor(ref, runtime.settings.resolved, runtime.models));
+
   const refreshContext = (): void => {
     const limit = setup.contextLimit();
     setContextPct(
@@ -342,16 +255,6 @@ export function ChatScreen(props: ChatScreenProps) {
         ? Math.min(100, Math.round((agent.requestTokens(modeRef.current) / limit) * 100))
         : undefined,
     );
-  };
-
-  const commitTail = (): void => {
-    const rest = tailRef.current.trim();
-    if (rest !== '') {
-      push({ kind: 'assistant', markdown: rest, first: !committedRef.current });
-      committedRef.current = true;
-    }
-    tailRef.current = '';
-    setStreaming((s) => s && { ...s, tail: '' });
   };
 
   const flashHint = (text: string): void => {
@@ -380,192 +283,56 @@ export function ChatScreen(props: ChatScreenProps) {
         text: `Attached ${q.images.map((img, i) => `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`).join(', ')}`,
       });
     }
-    let thinkingSince: number | undefined;
-    const endThinking = (): void => {
-      if (thinkingSince === undefined) return;
-      push({ kind: 'thought', durationMs: now() - thinkingSince });
-      thinkingSince = undefined;
-      setStreaming((st) => st && { ...st, thinking: undefined });
-    };
     const ac = new AbortController();
     abortRef.current = ac;
-    tailRef.current = '';
-    committedRef.current = false;
+    streamRef.current = { tail: '', committed: false };
     const startedAt = now();
-    const fallbacks: string[] = [];
-    const tools: ToolRecord[] = [];
-    const labels = new Map<string, string>();
-    const toolStarts = new Map<string, number>();
-    let model: string | undefined;
     setNotice(undefined);
+    setLastOutcome(undefined);
     setStreaming({ startedAt, tail: '', chars: 0, committed: false, waiting: undefined });
-
-    const onEvent = (ev: AgentEvent): void => {
-      if (ev.type !== 'reasoning' && ev.type !== 'status' && ev.type !== 'wait') endThinking();
-      switch (ev.type) {
-        case 'reasoning': {
-          thinkingSince ??= now();
-          const add = ev.text;
-          setStreaming((st) => st && { ...st, thinking: `${st.thinking ?? ''}${add}`.slice(-600) });
-          return;
-        }
-        case 'text': {
-          tailRef.current += ev.text;
-          const { stable, rest } = splitStable(tailRef.current);
-          if (stable !== '') {
-            push({ kind: 'assistant', markdown: stable, first: !committedRef.current });
-            committedRef.current = true;
-            tailRef.current = rest;
-          }
-          const tail = tailRef.current;
-          const committed = committedRef.current;
-          setStreaming(
-            (s) =>
-              s && { ...s, tail, committed, chars: s.chars + ev.text.length, waiting: undefined },
-          );
-          return;
-        }
-        case 'tool_call': {
-          commitTail();
-          committedRef.current = false;
-          labels.set(ev.id, ev.label);
-          toolStarts.set(ev.id, now());
-          const phase = phaseFor(ev.name, ev.label);
-          setStreaming((s) => s && { ...s, trail: extendTrail(s.trail ?? [], phase) });
-          setRunning((r) => [...r, { id: ev.id, name: ev.name, label: ev.label, output: '' }]);
-          return;
-        }
-        case 'tool_progress':
-          setRunning((r) =>
-            r.map((t) =>
-              t.id === ev.id
-                ? { ...t, output: (t.output + ev.chunk).slice(-RUNNING_OUTPUT_CHARS) }
-                : t,
-            ),
-          );
-          return;
-        case 'tool_result': {
-          const label = labels.get(ev.id) ?? '';
-          const began = toolStarts.get(ev.id);
-          setRunning((r) => r.filter((t) => t.id !== ev.id));
-          push({
-            kind: 'tool',
-            name: ev.name,
-            label,
-            ok: ev.ok,
-            summary: ev.summary,
-            display: ev.display,
-            ...(began === undefined ? {} : { durationMs: now() - began }),
-          });
-          tools.push({ name: ev.name, label, ok: ev.ok, summary: ev.summary, output: ev.content });
-          if (ev.ok && ev.display?.kind === 'diff') {
-            changes.current.files.add(ev.display.path);
-            changes.current.added += ev.display.added;
-            changes.current.removed += ev.display.removed;
-          }
-          return;
-        }
-        case 'notice':
-          push({ kind: 'notice', level: ev.level, text: ev.text });
-          return;
-        case 'compact':
-          push({
-            kind: 'notice',
-            level: 'info',
-            text:
-              ev.kind === 'summary'
-                ? `Compacted the conversation to stay within the context budget (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`
-                : `Trimmed old tool output to save context (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`,
-          });
-          return;
-        case 'attempt':
-          model = formatModelRef(ev.ref);
-          setActiveModel(model);
-          return;
-        case 'wait': {
-          const waiting = `Waiting ${String(Math.ceil(ev.ms / 1000))}s: ${providerLabel(ev.ref.provider)} ${ev.reason}`;
-          setStreaming((s) => s && { ...s, waiting });
-          return;
-        }
-        case 'status': {
-          const waiting = ev.text === '' ? undefined : ev.text;
-          setStreaming((s) => s && { ...s, waiting });
-          return;
-        }
-        case 'retry':
-          setNotice({
-            level: 'warning',
-            text: `↻ ${ev.reason} — retrying in ${(ev.delayMs / 1000).toFixed(1)}s`,
-          });
-          return;
-        case 'fallback': {
-          const to = formatModelRef(ev.to);
-          fallbacks.push(to);
-          const text = `${ev.reason} — switched to ${to}`;
-          push({ kind: 'notice', level: 'info', text });
-          setNotice({ level: 'warning', text: `↪ ${text}` });
-          return;
-        }
-        case 'done':
-          return;
-      }
-    };
+    const tracker = createTurnTracker({
+      push,
+      setStreaming,
+      setRunning,
+      setNotice,
+      setActiveModel,
+      toolOutputs: toolOutputs.current,
+      changes: changes.current,
+      stream: streamRef.current,
+      now,
+    });
 
     const outcome = await agent.run(q.prompt, {
       signal: ac.signal,
       host,
-      onEvent,
+      onEvent: tracker.onEvent,
       ...(q.allowRules === undefined ? {} : { allowRules: q.allowRules }),
       ...(q.model === undefined ? {} : { model: q.model }),
       ...(q.images === undefined || q.images.length === 0 ? {} : { images: q.images }),
     });
-    endThinking();
+    tracker.endThinking();
     abortRef.current = undefined;
-    commitTail();
+    tracker.commitTail();
     setRunning([]);
-    if (outcome.status === 'done' && outcome.steps === 1 && outcome.text.trim() === '') {
-      push({ kind: 'notice', level: 'info', text: 'The model returned an empty answer.' });
-    }
-    if (outcome.status === 'interrupted') {
-      push({
-        kind: 'notice',
-        level: 'warning',
-        text: 'Interrupted — what VinaX did so far is kept.',
-      });
-    } else if (outcome.status === 'blocked') {
-      push({
-        kind: 'notice',
-        level: 'warning',
-        text: `Not sent — a UserPromptSubmit hook blocked it: ${outcome.error ?? ''}`,
-      });
-    } else if (outcome.status === 'declined') {
-      push({
-        kind: 'notice',
-        level: 'info',
-        text: 'Stopped: you declined the action. Tell VinaX what to do instead.',
-      });
-    } else if (outcome.status === 'failed' && outcome.report !== undefined) {
-      push({ kind: 'error', report: outcome.report });
-    } else if (outcome.status === 'failed' || outcome.status === 'max_turns') {
-      push({
-        kind: 'notice',
-        level: outcome.status === 'failed' ? 'error' : 'warning',
-        text: outcome.error ?? 'The request failed.',
-      });
-    }
+    const ended = outcomeItem(outcome);
+    if (ended !== undefined) push(ended);
+    const { tools } = tracker;
     if (outcome.status === 'done' && tools.length > 0) {
       push({ kind: 'summary', text: turnSummary(tools, now() - startedAt) });
     }
     setStreaming(undefined);
+    setLastOutcome({ status: outcome.status, durationMs: now() - startedAt });
     setTurns((t) => [
       ...t,
       {
         prompt: q.display,
-        model,
+        model: tracker.model,
         inputTokens: outcome.usage.promptTokens || undefined,
         outputTokens: outcome.usage.completionTokens || undefined,
+        estimatedTokens: totalTokens(outcome.estimatedUsage) || undefined,
+        usageByModel: outcome.usageByModel,
         durationMs: now() - startedAt,
-        fallbacks,
+        fallbacks: tracker.fallbacks,
         tools,
         status: outcome.status,
       },
@@ -607,42 +374,6 @@ export function ChatScreen(props: ChatScreenProps) {
     refreshContext();
     drainQueue();
   };
-
-  const pick = <T,>(
-    pickTitle: string,
-    pickItems: readonly SelectItem<T>[],
-    pickOpts: { searchable?: boolean } = {},
-  ): Promise<T | undefined> =>
-    new Promise((resolve) => {
-      setOverlay({
-        kind: 'picker',
-        title: pickTitle,
-        items: pickItems,
-        searchable: pickOpts.searchable === true,
-        resolve: (v) => {
-          setOverlay(undefined);
-          resolve(v as T | undefined);
-        },
-      });
-    });
-
-  const ask = (
-    askTitle: string,
-    placeholder: string,
-    opts: { mask?: boolean } = {},
-  ): Promise<string | undefined> =>
-    new Promise((resolve) => {
-      setOverlay({
-        kind: 'ask',
-        title: askTitle,
-        placeholder,
-        mask: opts.mask === true,
-        resolve: (v) => {
-          setOverlay(undefined);
-          resolve(v);
-        },
-      });
-    });
 
   /** `#note`: save to a memory file. */
   const saveNote = async (note: string): Promise<void> => {
@@ -705,30 +436,8 @@ export function ChatScreen(props: ChatScreenProps) {
         refreshContext();
       }
     },
-    editSettings: (settingsTitle, rows, onChange) =>
-      new Promise<string | undefined>((resolve) => {
-        setOverlay({
-          kind: 'settings',
-          title: settingsTitle,
-          rows,
-          onChange,
-          resolve: (action) => {
-            setOverlay(undefined);
-            resolve(action);
-          },
-        });
-      }),
-    playSnake: (best) =>
-      new Promise<number>((resolve) => {
-        setOverlay({
-          kind: 'snake',
-          best,
-          resolve: (score) => {
-            setOverlay(undefined);
-            resolve(score);
-          },
-        });
-      }),
+    editSettings,
+    playSnake,
     mode: () => modeRef.current,
     setMode,
     setTheme: props.onTheme,
@@ -741,6 +450,9 @@ export function ChatScreen(props: ChatScreenProps) {
         push({ kind: 'notice', level: 'info', text: 'Nothing to rewind yet.' });
       else setOverlay({ kind: 'rewind' });
     },
+    openChanges: () => {
+      setOverlay({ kind: 'changes' });
+    },
     suspend: (fn) => suspendTerminal(fn),
     contextPct: () => contextPct,
     exit: () => {
@@ -748,6 +460,7 @@ export function ChatScreen(props: ChatScreenProps) {
     },
     commands: () => commands,
     sessionTitle: () => titleRef.current,
+    sessionUsage,
   });
 
   const handleSubmit = async (s: Queued & { raw?: boolean }): Promise<void> => {
@@ -764,7 +477,7 @@ export function ChatScreen(props: ChatScreenProps) {
           push({
             kind: 'notice',
             level: 'warning',
-            text: `Unknown command /${slash.name}. Type / to see the commands.`,
+            text: `Unknown command /${slash.name}. Type / to see the commands, or press Ctrl+P to search them.`,
           });
           return;
         }
@@ -865,26 +578,83 @@ export function ChatScreen(props: ChatScreenProps) {
     };
   }, []); // mount only
 
-  const rewind = async (choice: RewindChoice | undefined): Promise<void> => {
-    setOverlay(undefined);
-    if (!choice) return;
-    const target = agent.turns.find((t) => t.turn === choice.turn);
-    const restored = choice.code ? await checkpoints.restoreTo(choice.turn) : [];
-    if (choice.conversation) {
-      const text = agent.rewindConversation(choice.turn);
-      if (text !== undefined) prompt.setText(text);
-    }
-    const parts = [
-      choice.conversation ? 'the conversation' : undefined,
-      choice.code
-        ? `${String(restored.length)} file${restored.length === 1 ? '' : 's'}`
-        : undefined,
-    ].filter((p): p is string => p !== undefined);
-    push({
-      kind: 'notice',
-      level: 'info',
-      text: `Rewound ${parts.join(' and ')} to before “${truncate(target?.prompt ?? '', 60)}”. Earlier output above stays on screen.`,
+  const reviewDeps: ReviewDeps = {
+    agent,
+    checkpoints,
+    cwd: runtime.cwd,
+    notify: (level, text) => {
+      push({ kind: 'notice', level, text });
+    },
+    setPrompt: (text) => {
+      prompt.setText(text);
+    },
+  };
+
+  /** Ctrl+P: every view and slash command, searchable. */
+  const openPalette = async (): Promise<void> => {
+    const choice = await pick<PaletteChoice>('Command palette', paletteItems(commands), {
+      searchable: true,
     });
+    if (choice === undefined) return;
+    if (choice.kind === 'command') {
+      if (choice.needsArgs) prompt.setText(`/${choice.name} `);
+      else void handleSubmitRef.current({ prompt: `/${choice.name}`, display: `/${choice.name}` });
+      return;
+    }
+    switch (choice.id) {
+      case 'changes':
+        setOverlay({ kind: 'changes' });
+        return;
+      case 'transcript':
+        setOverlay({ kind: 'transcript' });
+        return;
+      case 'rewind':
+        if (agent.turns.length === 0)
+          push({ kind: 'notice', level: 'info', text: 'Nothing to rewind yet.' });
+        else setOverlay({ kind: 'rewind' });
+        return;
+      case 'mode':
+        cycleMode();
+        return;
+      case 'shortcuts':
+        setOverlay({ kind: 'shortcuts' });
+        return;
+    }
+  };
+
+  /** Shift+Tab: next permission mode; a pending approval the new mode allows is granted. */
+  const cycleMode = (): void => {
+    const request = pendingRef.current;
+    const next =
+      MODE_CYCLE[(MODE_CYCLE.indexOf(modeRef.current) + 1) % MODE_CYCLE.length] ?? 'default';
+    setMode(next);
+    setNotice({ level: 'info', text: MODE_DESCRIPTIONS[next] });
+    if (request?.kind === 'permission') {
+      if (next === 'plan') {
+        abortRef.current?.abort();
+      } else {
+        const tool = setup.tools.find((t) => t.name === request.req.tool);
+        if (tool && abortRef.current) {
+          const target = tool.target(request.req.input, {
+            cwd: runtime.cwd,
+            workspace: setup.workspace,
+            shell: setup.shell,
+            reads: setup.reads,
+            signal: abortRef.current.signal,
+          });
+          const decision = setup.permissions.decide(
+            {
+              name: tool.name,
+              kind: tool.kind,
+              readOnly: tool.readOnly,
+              target,
+            },
+            next,
+          );
+          if (decision.kind === 'allow') request.resolve({ kind: 'allow' });
+        }
+      }
+    }
     refreshContext();
   };
 
@@ -912,49 +682,11 @@ export function ChatScreen(props: ChatScreenProps) {
         flashHint('Answer or cancel the current question first');
         return;
       }
-      const next =
-        MODE_CYCLE[(MODE_CYCLE.indexOf(modeRef.current) + 1) % MODE_CYCLE.length] ?? 'default';
-      setMode(next);
-      setNotice({ level: 'info', text: MODE_DESCRIPTIONS[next] });
-      if (request?.kind === 'permission') {
-        if (next === 'plan') {
-          abortRef.current?.abort();
-        } else {
-          const tool = setup.tools.find((t) => t.name === request.req.tool);
-          if (tool && abortRef.current) {
-            const target = tool.target(request.req.input, {
-              cwd: runtime.cwd,
-              workspace: setup.workspace,
-              shell: setup.shell,
-              reads: setup.reads,
-              signal: abortRef.current.signal,
-            });
-            const decision = setup.permissions.decide(
-              {
-                name: tool.name,
-                kind: tool.kind,
-                readOnly: tool.readOnly,
-                target,
-              },
-              next,
-            );
-            if (decision.kind === 'allow') request.resolve({ kind: 'allow' });
-          }
-        }
-      }
-      refreshContext();
+      cycleMode();
       return;
     }
-    // prompts, pickers and questions handle their own keys
-    if (
-      pendingRef.current !== undefined ||
-      ov?.kind === 'rewind' ||
-      ov?.kind === 'picker' ||
-      ov?.kind === 'ask' ||
-      ov?.kind === 'snake' ||
-      ov?.kind === 'settings'
-    )
-      return;
+    // prompts, pickers, questions and views handle their own keys
+    if (pendingRef.current !== undefined || ownsKeyboard(ov)) return;
     if (key.ctrl && input === 'd') {
       if (prompt.editorRef.current.value === '') {
         abortRef.current?.abort();
@@ -962,19 +694,20 @@ export function ChatScreen(props: ChatScreenProps) {
       }
       return;
     }
-    if (ov?.kind === 'details') {
-      if (key.escape || (key.ctrl && input === 'o')) setOverlay(undefined);
-      else if (key.upArrow) setDetailsOffset((o) => Math.min(o + 1, Math.max(0, turns.length - 1)));
-      else if (key.downArrow) setDetailsOffset((o) => Math.max(0, o - 1));
-      return;
-    }
     if (ov?.kind === 'shortcuts') {
       setOverlay(undefined);
       if (key.escape || input === '?') return;
     }
     if (key.ctrl && input === 'o') {
-      setDetailsOffset(0);
-      setOverlay({ kind: 'details' });
+      setOverlay({ kind: 'transcript' });
+      return;
+    }
+    if (key.ctrl && input === 'g') {
+      setOverlay({ kind: 'changes' });
+      return;
+    }
+    if (key.ctrl && input === 'p') {
+      void openPalette();
       return;
     }
     if (suggestions.items.length > 0 && !abortRef.current) {
@@ -1024,74 +757,28 @@ export function ChatScreen(props: ChatScreenProps) {
   });
 
   const modelRef = parseModelRef(activeModel);
-  const renderItem = (item: TranscriptItem) => {
-    switch (item.kind) {
-      case 'welcome':
-        return (
-          <Welcome
-            key={item.id}
-            version={version}
-            cwd={runtime.cwd}
-            model={modelRef.model}
-            provider={`${providerLabel(modelRef.provider)}${runtime.viaGateway.has(modelRef.provider) ? ' (VinaX gateway)' : ''}`}
-            alias={modelAlias(formatModelRef(modelRef))}
-            branch={setup.git?.branch}
-            session={
-              (props.restored ?? []).length > 0
-                ? `resumed · ${props.title ?? 'untitled session'}`
-                : 'new session'
-            }
-            memory={setup.memory.files}
-            tips={runtime.settings.resolved.showTips ? tips : []}
-            width={width}
-            env={runtime.env}
-          />
-        );
-      case 'user':
-        return <UserMessage key={item.id} text={item.text} />;
-      case 'assistant':
-        return (
-          <AssistantMarkdown
-            key={item.id}
-            markdown={item.markdown}
-            first={item.first}
-            width={width}
-          />
-        );
-      case 'notice':
-        return <Notice key={item.id} level={item.level} text={item.text} />;
-      case 'panel':
-        return <Panel key={item.id} title={item.title} markdown={item.markdown} width={width} />;
-      case 'shell':
-        return (
-          <ShellEntry
-            key={item.id}
-            command={item.command}
-            output={item.output}
-            exitCode={item.exitCode}
-          />
-        );
-      case 'tool':
-        return (
-          <ToolEntry
-            key={item.id}
-            name={item.name}
-            label={item.label}
-            ok={item.ok}
-            summary={item.summary}
-            display={item.display}
-            durationMs={item.durationMs}
-            width={width}
-          />
-        );
-      case 'error':
-        return <ErrorCard key={item.id} report={item.report} width={width} />;
-      case 'summary':
-        return <TurnSummary key={item.id} text={item.text} />;
-      case 'thought':
-        return <ThoughtLine key={item.id} durationMs={item.durationMs} />;
-    }
-  };
+  const welcome = () => (
+    <Welcome
+      version={version}
+      cwd={runtime.cwd}
+      model={modelRef.model}
+      provider={`${providerLabel(modelRef.provider)}${runtime.viaGateway.has(modelRef.provider) ? ' (VinaX gateway)' : ''}`}
+      alias={modelAlias(formatModelRef(modelRef))}
+      branch={setup.git?.branch}
+      session={
+        (props.restored ?? []).length > 0
+          ? `resumed · ${props.title ?? 'untitled session'}`
+          : 'new session'
+      }
+      memory={setup.memory.files}
+      tips={runtime.settings.resolved.showTips ? tips : []}
+      width={width}
+      env={runtime.env}
+    />
+  );
+  const renderItem = (item: TranscriptItem) => (
+    <TranscriptEntry key={item.id} item={item} width={width} welcome={welcome} />
+  );
 
   const openTodos = todos.some((t) => t.status !== 'completed');
   const busy = streaming !== undefined;
@@ -1107,13 +794,32 @@ export function ChatScreen(props: ChatScreenProps) {
           : prompt.vimMode === 'insert'
             ? '-- INSERT --'
             : undefined;
-  const promptVisible =
-    pending === undefined &&
-    overlay?.kind !== 'rewind' &&
-    overlay?.kind !== 'picker' &&
-    overlay?.kind !== 'ask' &&
-    overlay?.kind !== 'snake' &&
-    overlay?.kind !== 'settings';
+  const promptVisible = pending === undefined && !ownsKeyboard(overlay);
+  const task: TaskState =
+    pending !== undefined
+      ? {
+          kind: 'waiting',
+          since: pending.since,
+          what: pending.kind === 'permission' ? 'approval' : pending.kind,
+          more: backlog,
+        }
+      : streaming !== undefined
+        ? {
+            kind: 'running',
+            since: streaming.startedAt,
+            ...(runtime.settings.resolved.budget.tokens === undefined ||
+            streaming.label !== undefined
+              ? {}
+              : {
+                  tokens: {
+                    used: streaming.tokens ?? 0,
+                    budget: runtime.settings.resolved.budget.tokens,
+                  },
+                }),
+          }
+        : lastOutcome !== undefined
+          ? { kind: 'ended', ...lastOutcome }
+          : { kind: 'idle' };
   if (exiting) {
     return (
       <Box flexDirection="column">
@@ -1200,13 +906,33 @@ export function ChatScreen(props: ChatScreenProps) {
       {overlay?.kind === 'snake' ? (
         <SnakeGame columns={width} rows={rows} best={overlay.best} onExit={overlay.resolve} />
       ) : null}
-      {overlay?.kind === 'details' ? (
-        <TurnDetails
-          turns={turns}
+      {overlay?.kind === 'transcript' ? (
+        <TranscriptBrowser
+          entries={browseEntries(items, turns, toolOutputs.current)}
           limits={runtime.ledger.entries()}
-          offset={detailsOffset}
           height={rows}
           width={width}
+          onClose={() => {
+            setOverlay(undefined);
+          }}
+        />
+      ) : null}
+      {overlay?.kind === 'changes' ? (
+        <ChangesView
+          load={() => loadChanges(checkpoints, runtime.cwd)}
+          undo={(row, resolution) =>
+            busy
+              ? Promise.resolve(
+                  'VinaX is still working. Wait for it to finish (or press Ctrl+C to stop it) before undoing a file.',
+                )
+              : undoFile(reviewDeps, row, resolution)
+          }
+          height={rows}
+          width={width}
+          onClose={() => {
+            setOverlay(undefined);
+            refreshContext();
+          }}
         />
       ) : null}
       {overlay?.kind === 'rewind' ? (
@@ -1215,9 +941,18 @@ export function ChatScreen(props: ChatScreenProps) {
             turn: t.turn,
             prompt: t.prompt,
             changedFiles: checkpoints.changedSince(t.turn).length,
+            shellCommands: agent.shellCommandsSince(t.turn),
           }))}
           width={width}
-          onDone={(c) => void rewind(c)}
+          cwd={runtime.cwd}
+          plan={(turn) => checkpoints.planRestore(turn)}
+          onDone={(c) => {
+            setOverlay(undefined);
+            if (c !== undefined)
+              void performRewind(reviewDeps, c).then(() => {
+                refreshContext();
+              });
+          }}
         />
       ) : null}
       {overlay?.kind === 'picker' ? (
@@ -1262,6 +997,9 @@ export function ChatScreen(props: ChatScreenProps) {
         hint={
           hint ?? (pending === undefined ? undefined : 'Waiting for your answer · Ctrl+C to stop')
         }
+        task={task}
+        queued={queued.length}
+        now={now}
         width={width}
       />
     </Box>

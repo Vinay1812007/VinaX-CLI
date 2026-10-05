@@ -16,12 +16,27 @@ import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
 import type { UserAnswer, UserQuestion } from '../tools/question-tool.js';
+import { addUsage, emptyUsage, totalTokens, type ModelUsage } from '../state/cost.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
-import type { AnyTool, ToolContext, ToolDisplay, ToolKind, ToolOutput } from '../tools/types.js';
+import {
+  TIME_BUDGET_ABORT,
+  type AnyTool,
+  type ToolContext,
+  type ToolDisplay,
+  type ToolKind,
+  type ToolOutput,
+} from '../tools/types.js';
 import type { LoadedSession, SessionRecorder, TurnMark } from '../session/store.js';
 import type { HookRunner } from '../hooks/runner.js';
 import type { CheckpointStore } from './checkpoints.js';
-import { applySummary, elideToolOutputs, summarize } from './compact.js';
+import { LoopGuard, STUCK_ADVICE } from './loop-guard.js';
+import {
+  applySummary,
+  elideToolOutputs,
+  safeTailStart,
+  summarize,
+  userRequests,
+} from './compact.js';
 import {
   TextCallParser,
   textProtocolInstructions,
@@ -88,15 +103,31 @@ export type AgentEvent =
   | { type: 'compact'; kind: 'elide' | 'summary'; before: number; after: number };
 
 export interface AgentOutcome {
-  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked';
+  /**
+   * `budget`: the task reached its token or time budget. `stuck`: it was going in circles
+   * (the same call failing or repeating); `error` explains and says what to do next.
+   */
+  status:
+    'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked' | 'budget' | 'stuck';
   /** The final assistant text of the turn. */
   text: string;
   error?: string;
   /** For `failed` turns: the failure explained, with actions to try. */
   report?: FailureReport;
   steps: number;
+  /** Tokens the providers reported (sub-agents included). */
   usage: Usage;
+  /** Tokens VinaX estimated for responses without a usage report (or cut off mid-stream). */
+  estimatedUsage: Usage;
+  /** Both, per model ref, for pricing. */
+  usageByModel: Record<string, ModelUsage>;
   models: string[];
+}
+
+/** Per-task limits; either may be unset. */
+export interface TaskBudget {
+  tokens?: number | undefined;
+  seconds?: number | undefined;
 }
 
 export interface AgentDeps {
@@ -129,6 +160,60 @@ export interface AgentDeps {
   hooks?: HookRunner;
   /** A sub-agent: no turn marks, checkpoints turns or prompt/stop hooks of its own. */
   nested?: boolean;
+  /** Open items of the task list, carried verbatim through compaction. */
+  activeTasks?: () => string | undefined;
+  /** Token and time limits for each task (read when a task starts). */
+  budget?: () => TaskBudget;
+  /** A model's context window, when its catalog says (for warnings before a request). */
+  contextWindow?: (ref: ModelRef) => number | undefined;
+}
+
+/** What one task has used and how it is going, shared by its steps. */
+class TaskState {
+  readonly byModel: Record<string, ModelUsage> = {};
+  readonly guard = new LoopGuard();
+  /** Set when a budget ran out: why, for the user. */
+  budgetHit: string | undefined;
+  /** Set when the task is going in circles: why, for the user. */
+  stuck: string | undefined;
+
+  private slot(ref: string): ModelUsage {
+    return (this.byModel[ref] ??= { measured: emptyUsage(), estimated: emptyUsage() });
+  }
+
+  measured(ref: string, u: Usage): void {
+    addUsage(this.slot(ref).measured, u);
+  }
+
+  estimated(ref: string, u: Usage): void {
+    addUsage(this.slot(ref).estimated, u);
+  }
+
+  totals(): { measured: Usage; estimated: Usage } {
+    const measured = emptyUsage();
+    const estimated = emptyUsage();
+    for (const u of Object.values(this.byModel)) {
+      addUsage(measured, u.measured);
+      addUsage(estimated, u.estimated);
+    }
+    return { measured, estimated };
+  }
+
+  total(): number {
+    const t = this.totals();
+    return totalTokens(t.measured) + totalTokens(t.estimated);
+  }
+
+  /** Why work is being stopped, for "Not run: …" notes. */
+  why(): string {
+    return this.budgetHit === undefined
+      ? 'the user interrupted'
+      : 'the task reached its time budget';
+  }
+}
+
+function kTokens(n: number): string {
+  return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
 }
 
 /** How many times a Stop hook may send the model back to work in one turn. */
@@ -159,6 +244,8 @@ interface RunOptions {
   images?: readonly ImageAttachment[];
 }
 
+type StepOptions = RunOptions & { task: TaskState };
+
 /**
  * The agent loop: stream a reply, collect tool calls (native or text protocol), check
  * permissions, run the tools, feed results back, and repeat until the model stops calling tools.
@@ -169,6 +256,11 @@ export class Agent {
   private readonly malformed = new Map<string, number>();
   private readonly marks: TurnMark[] = [];
   private turnCounter = 0;
+  /**
+   * Where the task in progress starts in `messages`. Kept apart from the rewind marks, which
+   * compaction clears, so a second compaction in the same task keeps the task's own messages.
+   */
+  private taskStart: number | undefined;
 
   constructor(private readonly deps: AgentDeps) {}
 
@@ -260,8 +352,8 @@ export class Agent {
         if (after <= target) return { before, after };
       }
     }
-    const mark = opts.inTurn === true ? this.marks.at(-1) : undefined;
-    let tailStart = mark?.messageIndex ?? this.messages.length;
+    const start = opts.inTurn === true ? this.taskStart : undefined;
+    let tailStart = safeTailStart(this.messages, start ?? this.messages.length);
     if (estimateTokens(this.messages.slice(tailStart)) > limit * 0.5)
       tailStart = this.messages.length;
     const head = this.messages.slice(0, tailStart);
@@ -270,7 +362,15 @@ export class Agent {
       signal: opts.signal,
       ...(opts.instructions === undefined ? {} : { instructions: opts.instructions }),
     });
-    this.reset(applySummary(summary, this.messages.slice(tailStart)));
+    const keptTail = tailStart < this.messages.length;
+    this.reset(
+      applySummary(summary, this.messages.slice(tailStart), {
+        requests: userRequests(head),
+        tasks: this.deps.activeTasks?.(),
+      }),
+    );
+    // the task's prompt is now the first message (with the summary folded in)
+    if (opts.inTurn === true) this.taskStart = keptTail ? 0 : undefined;
     const after = this.requestTokens(opts.mode);
     opts.onEvent?.({ type: 'compact', kind: 'summary', before, after });
     return { before, after };
@@ -312,6 +412,25 @@ export class Agent {
     return true;
   }
 
+  /**
+   * Shell commands the agent ran from `turn` on. Their effects are not checkpointed, so rewind
+   * cannot undo them.
+   */
+  shellCommandsSince(turn: number): number {
+    const mark = this.marks.find((m) => m.turn === turn);
+    if (!mark) return 0;
+    return this.messages
+      .slice(mark.messageIndex)
+      .reduce(
+        (n, m) =>
+          n +
+          (m.role === 'assistant'
+            ? (m.toolCalls ?? []).filter((c) => c.name === 'Bash').length
+            : 0),
+        0,
+      );
+  }
+
   /** Drops the conversation from `turn` on and returns that turn's prompt. */
   rewindConversation(turn: number): string | undefined {
     const idx = this.marks.findIndex((m) => m.turn === turn);
@@ -325,28 +444,58 @@ export class Agent {
     for (const text of warnings) onEvent({ type: 'notice', level: 'warning', text });
   }
 
-  async run(prompt: string, opts: RunOptions): Promise<AgentOutcome> {
-    const usage: Usage = { promptTokens: 0, completionTokens: 0 };
+  async run(prompt: string, runOpts: RunOptions): Promise<AgentOutcome> {
+    const task = new TaskState();
     const models = new Set<string>();
+    let steps = 0;
+    let lastText = '';
+    const outcome = (
+      status: AgentOutcome['status'],
+      error?: string,
+      report?: FailureReport,
+    ): AgentOutcome => {
+      const { measured, estimated } = task.totals();
+      return {
+        status,
+        text: lastText,
+        steps,
+        usage: measured,
+        estimatedUsage: estimated,
+        usageByModel: task.byModel,
+        models: [...models],
+        ...(error === undefined ? {} : { error }),
+        ...(report === undefined ? {} : { report }),
+      };
+    };
     const { hooks, nested } = this.deps;
     let content = prompt;
     if (hooks && nested !== true) {
-      const r = await hooks.run('UserPromptSubmit', { prompt }, { signal: opts.signal });
-      this.warn(opts.onEvent, r.warnings);
-      if (r.blocked) {
-        return {
-          status: 'blocked',
-          text: '',
-          steps: 0,
-          usage,
-          models: [],
-          error: r.message ?? 'Blocked by a UserPromptSubmit hook.',
-        };
-      }
+      const r = await hooks.run('UserPromptSubmit', { prompt }, { signal: runOpts.signal });
+      this.warn(runOpts.onEvent, r.warnings);
+      if (r.cancelled) return outcome('interrupted');
+      if (r.blocked) return outcome('blocked', r.message ?? 'Blocked by a UserPromptSubmit hook.');
       if (r.context.length > 0)
         content = `${prompt}\n\n<hook-context>\n${r.context.join('\n')}\n</hook-context>`;
     }
+    // The task runs on its own signal: the user's interrupt and the time budget both stop it.
+    const budget = this.deps.budget?.() ?? {};
+    const inner = new AbortController();
+    const relay = (): void => {
+      inner.abort();
+    };
+    if (runOpts.signal.aborted) inner.abort();
+    else runOpts.signal.addEventListener('abort', relay, { once: true });
+    const timer =
+      budget.seconds === undefined
+        ? undefined
+        : setTimeout(() => {
+            task.budgetHit = `Stopped at the time budget: this task ran for ${String(budget.seconds)}s. What VinaX did so far is kept. Send a message to continue, or raise the limit with --time-budget or "budget.seconds" in settings.`;
+            inner.abort(TIME_BUDGET_ABORT);
+          }, budget.seconds * 1000);
+    let opts: StepOptions = { ...runOpts, signal: inner.signal, task };
+
     const turn = ++this.turnCounter;
+    this.taskStart = this.messages.length;
     if (nested !== true) {
       const mark = { turn, messageIndex: this.messages.length, prompt };
       this.marks.push(mark);
@@ -364,21 +513,18 @@ export class Agent {
     if (visionModel?.notice !== undefined)
       opts.onEvent({ type: 'notice', level: 'info', text: visionModel.notice });
     let stopRetries = 0;
-    let steps = 0;
-    let lastText = '';
-    const outcome = (
-      status: AgentOutcome['status'],
-      error?: string,
-      report?: FailureReport,
-    ): AgentOutcome => ({
-      status,
-      text: lastText,
-      steps,
-      usage,
-      models: [...models],
-      ...(error === undefined ? {} : { error }),
-      ...(report === undefined ? {} : { report }),
-    });
+    const overBudget = (next: number): string | undefined => {
+      if (budget.tokens === undefined) return undefined;
+      const used = task.total();
+      if (used + next <= budget.tokens) return undefined;
+      const { measured, estimated } = task.totals();
+      const split = `${kTokens(totalTokens(measured))} measured, ${kTokens(totalTokens(estimated))} estimated`;
+      const what =
+        used >= budget.tokens
+          ? `this task used ~${kTokens(used)} tokens (${split}) of its ${kTokens(budget.tokens)} budget`
+          : `the next request (~${kTokens(next)} tokens) would take this task (~${kTokens(used)} so far: ${split}) past its ${kTokens(budget.tokens)} budget`;
+      return `Stopped at the token budget: ${what}. What VinaX did so far is kept. Send a message to continue (each task gets a fresh budget), or raise it with --token-budget or "budget.tokens" in settings.`;
+    };
 
     const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
     try {
@@ -386,7 +532,6 @@ export class Agent {
         if (this.deps.maxTurns !== undefined && steps >= this.deps.maxTurns) {
           return outcome('max_turns', `Stopped after ${String(steps)} model calls (--max-turns).`);
         }
-        steps++;
         if (this.deps.contextLimit) {
           try {
             await this.compact({
@@ -396,7 +541,10 @@ export class Agent {
               onEvent: opts.onEvent,
             });
           } catch (err) {
-            if (opts.signal.aborted) return outcome('interrupted');
+            if (opts.signal.aborted)
+              return task.budgetHit === undefined
+                ? outcome('interrupted')
+                : outcome('budget', task.budgetHit);
             opts.onEvent({
               type: 'notice',
               level: 'warning',
@@ -404,8 +552,13 @@ export class Agent {
             });
           }
         }
-        const step = await this.step(turn, steps, opts, usage, models);
+        const tooMuch = overBudget(this.requestTokens(opts.host.mode()));
+        if (tooMuch !== undefined) return outcome('budget', tooMuch);
+        steps++;
+        const step = await this.step(turn, steps, opts, models);
         lastText = step.text;
+        if (task.budgetHit !== undefined) return outcome('budget', task.budgetHit);
+        if (step.status === 'stuck') return outcome('stuck', step.error);
         if (
           step.status === 'done' &&
           hooks?.has('Stop') === true &&
@@ -433,9 +586,13 @@ export class Agent {
           }
         }
         if (step.status !== 'continue') return outcome(step.status, step.error, step.report);
+        const used = overBudget(0);
+        if (used !== undefined) return outcome('budget', used);
       }
     } finally {
       removeRules();
+      if (timer !== undefined) clearTimeout(timer);
+      runOpts.signal.removeEventListener('abort', relay);
     }
   }
 
@@ -483,8 +640,7 @@ export class Agent {
   private async step(
     turn: number,
     stepNo: number,
-    opts: RunOptions,
-    usage: Usage,
+    opts: StepOptions,
     models: Set<string>,
   ): Promise<{
     status: 'continue' | AgentOutcome['status'];
@@ -492,7 +648,7 @@ export class Agent {
     error?: string;
     report?: FailureReport;
   }> {
-    const { signal, host, onEvent } = opts;
+    const { signal, host, onEvent, task } = opts;
     const mode = host.mode();
     const active = this.deps.tools.filter((t) =>
       mode === 'plan' ? t.readOnly : t.name !== 'ExitPlanMode',
@@ -504,26 +660,41 @@ export class Agent {
     let parser = new TextCallParser();
     const textCalls: { name: string; arguments: string }[] = [];
     const native = new Map<number, { id: string; name: string; args: string }>();
+    // for estimating usage when a provider does not report it
+    let attempt: string | undefined;
+    let promptEstimate = 0;
+    let outputChars = 0;
+    const estimateAttempt = (): void => {
+      if (attempt === undefined || outputChars === 0) return;
+      task.estimated(attempt, {
+        promptTokens: promptEstimate,
+        completionTokens: Math.ceil(outputChars / 4),
+      });
+      outputChars = 0;
+    };
 
     const prepare = (ref: ModelRef) => {
       const history = this.forModel(ref);
-      return this.modeFor(ref) === 'native'
-        ? {
-            messages: [
-              { role: 'system' as const, content: this.deps.systemPrompt(mode) },
-              ...history,
-            ],
-            tools: specs,
-          }
-        : {
-            messages: [
-              {
-                role: 'system' as const,
-                content: this.deps.systemPrompt(mode, textProtocolInstructions(specs)),
-              },
-              ...toTextProtocol(history),
-            ],
-          };
+      const req =
+        this.modeFor(ref) === 'native'
+          ? {
+              messages: [
+                { role: 'system' as const, content: this.deps.systemPrompt(mode) },
+                ...history,
+              ],
+              tools: specs,
+            }
+          : {
+              messages: [
+                {
+                  role: 'system' as const,
+                  content: this.deps.systemPrompt(mode, textProtocolInstructions(specs)),
+                },
+                ...toTextProtocol(history),
+              ],
+            };
+      promptEstimate = estimateTokens(req.messages, req.tools);
+      return req;
     };
 
     try {
@@ -545,10 +716,18 @@ export class Agent {
             parser = new TextCallParser();
             textCalls.length = 0;
             native.clear();
-            models.add(formatModelRef(ev.ref));
+            attempt = formatModelRef(ev.ref);
+            outputChars = 0;
+            models.add(attempt);
+            onEvent(ev);
+            this.noteCapabilities(ev.ref, promptEstimate, onEvent);
+            break;
+          case 'reasoning':
+            outputChars += ev.text.length;
             onEvent(ev);
             break;
           case 'text':
+            outputChars += ev.text.length;
             if (current === 'text') {
               const r = parser.push(ev.text);
               textCalls.push(...r.calls);
@@ -562,6 +741,7 @@ export class Agent {
             }
             break;
           case 'tool_call_delta': {
+            outputChars += (ev.name?.length ?? 0) + (ev.argsChunk?.length ?? 0);
             const slot = native.get(ev.index) ?? { id: '', name: '', args: '' };
             if (ev.id !== undefined) slot.id = ev.id;
             if (ev.name !== undefined) slot.name += ev.name;
@@ -570,8 +750,10 @@ export class Agent {
             break;
           }
           case 'done':
-            usage.promptTokens += ev.usage?.promptTokens ?? 0;
-            usage.completionTokens += ev.usage?.completionTokens ?? 0;
+            if (ev.usage) {
+              task.measured(formatModelRef(ev.ref), ev.usage);
+              outputChars = 0;
+            } else estimateAttempt();
             onEvent(ev);
             break;
           default:
@@ -579,10 +761,16 @@ export class Agent {
         }
       }
     } catch (err) {
+      // a reply cut off mid-stream still cost tokens
+      estimateAttempt();
       if (err instanceof AbortError) {
+        const marker =
+          task.budgetHit === undefined
+            ? INTERRUPTED_MARKER
+            : '[stopped: the task reached its time budget]';
         this.push({
           role: 'assistant',
-          content: text === '' ? INTERRUPTED_MARKER : `${text}\n\n${INTERRUPTED_MARKER}`,
+          content: text === '' ? marker : `${text}\n\n${marker}`,
         });
         return { status: 'interrupted', text };
       }
@@ -630,7 +818,11 @@ export class Agent {
     if (calls.length === 0) return { status: 'done', text };
 
     const result = await this.runCalls(calls, current, [...models].at(-1), opts);
+    const spinning = task.guard.endStep();
+    task.stuck ??= spinning;
     if (result.interrupted) return { status: 'interrupted', text };
+    if (task.stuck !== undefined)
+      return { status: 'stuck', text, error: `Stopped: ${task.stuck} ${STUCK_ADVICE}` };
     if (result.declined !== undefined) {
       if (result.declined === '') return { status: 'declined', text };
       this.push({
@@ -639,6 +831,34 @@ export class Agent {
       });
     }
     return { status: 'continue', text };
+  }
+
+  private readonly noted = new Set<string>();
+
+  /** Says once per model when what it can do limits this session (tools, context size). */
+  private noteCapabilities(ref: ModelRef, requestTokens: number, onEvent: RunOptions['onEvent']) {
+    const key = formatModelRef(ref);
+    if (
+      this.deps.supportsTools?.(ref) === false &&
+      this.toolModes.get(key) === undefined &&
+      !this.noted.has(`${key}:tools`)
+    ) {
+      this.noted.add(`${key}:tools`);
+      onEvent({
+        type: 'notice',
+        level: 'info',
+        text: `${key} has no native tool calling, so VinaX drives its tools through a text protocol (it works, but expect more formatting slips).`,
+      });
+    }
+    const window = this.deps.contextWindow?.(ref);
+    if (window !== undefined && requestTokens > window && !this.noted.has(`${key}:ctx`)) {
+      this.noted.add(`${key}:ctx`);
+      onEvent({
+        type: 'notice',
+        level: 'warning',
+        text: `${key} accepts about ${kTokens(window)} tokens, but this request is ~${kTokens(requestTokens)}, so it may be rejected. Run /compact, or choose a model with a larger context with /model.`,
+      });
+    }
   }
 
   private prepareCall(
@@ -690,11 +910,27 @@ export class Agent {
     calls: readonly ToolCall[],
     mode: ToolMode,
     modelKey: string | undefined,
-    { signal, host, onEvent }: RunOptions,
+    { signal, host, onEvent, task }: StepOptions,
   ): Promise<{ interrupted: boolean; declined?: string }> {
     const results = new Map<string, string>();
-    const finish = (id: string, name: string, out: ToolOutput): void => {
-      results.set(id, out.content);
+    const byId = new Map(calls.map((c) => [c.id, c]));
+    const labels = new Map<string, string>();
+    /** `counts`: the call really ran (or was malformed), so it counts towards loop detection. */
+    const finish = (id: string, name: string, out: ToolOutput, counts = true): void => {
+      let content = out.content;
+      const call = byId.get(id);
+      if (counts && call !== undefined) {
+        const verdict = task.guard.record(
+          name,
+          call.arguments,
+          out.ok,
+          out.content,
+          labels.get(id) ?? '',
+        );
+        if (verdict.nudge !== undefined) content = `${content}\n\n${verdict.nudge}`;
+        task.stuck ??= verdict.stop;
+      }
+      results.set(id, content);
       onEvent({
         type: 'tool_result',
         id,
@@ -732,6 +968,7 @@ export class Agent {
       const runnable: Prepared[] = [];
       for (const p of batch) {
         const label = p.tool && p.input !== undefined ? p.tool.label(p.input) : p.call.name;
+        labels.set(p.call.id, label);
         onEvent({
           type: 'tool_call',
           id: p.call.id,
@@ -741,7 +978,7 @@ export class Agent {
         });
         if (interrupted || signal.aborted) {
           interrupted = true;
-          finish(p.call.id, p.call.name, fail('Not run: the user interrupted.', 'Interrupted'));
+          finish(p.call.id, p.call.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
           continue;
         }
         if (declined !== undefined) {
@@ -749,6 +986,16 @@ export class Agent {
             p.call.id,
             p.call.name,
             fail('Not run: the user declined an earlier action in this reply.', 'Skipped'),
+            false,
+          );
+          continue;
+        }
+        if (task.stuck !== undefined) {
+          finish(
+            p.call.id,
+            p.call.name,
+            fail('Not run: VinaX stopped this task because it was going in circles.', 'Skipped'),
+            false,
           );
           continue;
         }
@@ -822,7 +1069,7 @@ export class Agent {
           }
           if (isAborted(signal)) {
             interrupted = true;
-            finish(p.call.id, tool.name, fail('Not run: the user interrupted.', 'Interrupted'));
+            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
             continue;
           }
           if (answer.kind === 'unavailable') {
@@ -831,7 +1078,7 @@ export class Agent {
           }
           if (answer.kind === 'deny') {
             declined = answer.feedback.trim();
-            finish(p.call.id, tool.name, fail('The user declined this action.', 'Declined'));
+            finish(p.call.id, tool.name, fail('The user declined this action.', 'Declined'), false);
             continue;
           }
           if (answer.kind === 'allow_rule') {
@@ -853,19 +1100,30 @@ export class Agent {
           onProgress: (chunk) => {
             onEvent({ type: 'tool_progress', id: p.call.id, chunk });
           },
+          // a sub-agent's tokens count towards this task (and its budget)
+          addUsage: (byModel) => {
+            for (const [ref, u] of Object.entries(byModel)) {
+              task.measured(ref, u.measured);
+              task.estimated(ref, u.estimated);
+            }
+          },
         };
+        const affected = tool.affectedPaths?.(p.input, ctx) ?? [];
         try {
-          await this.deps.checkpoints.capture(tool.affectedPaths?.(p.input, ctx) ?? []);
+          await this.deps.checkpoints.capture(affected);
           // Input can change the mode or cancel the turn while approval/checkpointing waits.
           if (signal.aborted) {
-            finish(p.call.id, tool.name, fail('Not run: the user interrupted.', 'Interrupted'));
+            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
             return;
           }
           if (host.mode() === 'plan' && !tool.readOnly && tool.kind !== 'meta') {
             finish(p.call.id, tool.name, fail('Not run: plan mode is now on.', 'Denied'));
             return;
           }
-          const output = await tool.run(p.input, ctx);
+          const output = await tool.run(p.input, ctx).finally(async () => {
+            // what the file holds now, even after a failed edit, so rewind can spot outside edits
+            if (affected.length > 0) await this.deps.checkpoints.recordResult(affected);
+          });
           const touched = tool.target(p.input, ctx).path;
           const extra: string[] = [];
           const found = touched === undefined ? undefined : this.deps.onPathTouched?.(touched);

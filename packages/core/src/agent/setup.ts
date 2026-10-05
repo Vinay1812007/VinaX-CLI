@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { projectDataDir } from '../config/paths.js';
 import type { PermissionMode } from '../config/schema.js';
 import { HookRunner, type HookResult } from '../hooks/runner.js';
 import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
@@ -147,7 +148,10 @@ export async function createAgentSetup(
     workspace,
     shellCwd: () => shell.cwd,
   });
-  const checkpoints = new CheckpointStore(opts.recorder);
+  const checkpoints = new CheckpointStore(
+    opts.recorder,
+    path.join(projectDataDir(cwd, env), 'rewind-backups'),
+  );
   const memory = ProjectMemory.load(cwd, env);
   const reads = new ReadTracker();
   const git = await readGitInfo(cwd);
@@ -256,6 +260,7 @@ export async function createAgentSetup(
         }
       },
     });
+    ctx.addUsage?.(out.usageByModel);
     return { text: out.text, toolCalls: calls, ok: out.status === 'done' };
   };
   tools.push(createTaskTool(subagents, runSubagent));
@@ -298,6 +303,19 @@ export async function createAgentSetup(
     supportsVision,
     visionModels,
     defaultModel: () => settings.model,
+    budget: () => runtime.settings.resolved.budget,
+    contextWindow: (ref) =>
+      runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.contextWindow,
+    activeTasks: () => {
+      const open = todos.todos.filter((t) => t.status !== 'completed');
+      return open.length === 0
+        ? undefined
+        : open
+            .map(
+              (t) => `- [${t.status === 'in_progress' ? 'in progress' : 'pending'}] ${t.content}`,
+            )
+            .join('\n');
+    },
     onPathTouched,
     hooks,
     ...(settings.context.autoCompact ? { contextLimit } : {}),

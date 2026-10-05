@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createRuntime, type AgentSetup, type Runtime } from '@vinax/core';
+import { createRuntime, projectDataDir, type AgentSetup, type Runtime } from '@vinax/core';
 import { openSession } from '../../src/session.js';
 import { loadCommands } from '../../src/ui/commands/registry.js';
 import { render } from 'ink-testing-library';
@@ -21,6 +21,8 @@ const KEYS = {
   ctrlC: '\x03',
   ctrlR: '\x12',
   ctrlO: '\x0f',
+  ctrlP: '\x10',
+  ctrlG: '\x07',
   paste: (t: string) => `\x1b[200~${t}\x1b[201~`,
 };
 
@@ -114,6 +116,9 @@ async function mount(
     writer: opened.writer,
   };
 }
+
+/** The frame as one line of words: wrapping and box borders removed. */
+const flat = (frame: string): string => frame.replace(/[│╭╮╰╯─]/g, ' ').replace(/\s+/g, ' ');
 
 /** Session titles are generated in the background and may land last; skip those requests. */
 const isTitleRequest = (body: unknown): boolean =>
@@ -481,6 +486,215 @@ describe('ChatScreen agent', () => {
     await waitFor(() => frame().includes('Rewound the conversation and 1 file'), 'rewound');
     expect(await read('a.txt')).toBe('original\n');
     expect(frame()).toContain('> rewrite a.txt');
+  });
+});
+
+describe('ChatScreen rewind safety', () => {
+  const script = {
+    'main-model': [
+      { toolCalls: [call('Read', { file_path: 'a.txt' })] },
+      { toolCalls: [call('Write', { file_path: 'a.txt', content: 'rewritten\n' })] },
+      { text: 'Rewrote it.' },
+    ],
+  };
+
+  async function editThenOpenRewind(m: Awaited<ReturnType<typeof mount>>) {
+    await m.type('rewrite a.txt', KEYS.enter);
+    await waitFor(() => m.frame().includes('Edit a.txt?'), 'prompt');
+    await m.type('1');
+    await waitFor(() => m.frame().includes('Rewrote it.'), 'answer');
+    // the user keeps working on the file in their editor
+    await fs.writeFile(path.join(m.harness.cwd, 'a.txt'), 'rewritten\nmy own line\n');
+    await m.type(KEYS.esc, KEYS.esc);
+    await waitFor(() => m.frame().includes('Rewind to before which prompt?'), 'rewind picker');
+    await m.type(KEYS.enter);
+    await waitFor(() => m.frame().includes('Restore the conversation and 1'), 'restore options');
+    await m.type(KEYS.enter);
+    await waitFor(() => m.frame().includes('changed outside VinaX'), 'conflict screen');
+  }
+
+  it('previews files edited outside VinaX and keeps them on request', async () => {
+    const m = await mount({ files: { 'a.txt': 'original\n' }, groq: { script } });
+    await editThenOpenRewind(m);
+    expect(m.frame()).toContain('a.txt');
+    expect(m.frame()).toContain('edited since VinaX changed it');
+    expect(m.frame()).toContain('Nothing has been changed yet');
+    // show the diff of what would be lost, then keep the user's version
+    await m.type(KEYS.down, KEYS.down, KEYS.enter);
+    await waitFor(() => m.frame().includes('- my own line'), 'diff of the loss');
+    await m.type(KEYS.up, KEYS.up, KEYS.enter);
+    await waitFor(() => m.frame().includes('Rewound the conversation and 0 files'), 'rewound');
+    expect(m.frame()).toContain('Kept your versions of a.txt');
+    expect(await m.read('a.txt')).toBe('rewritten\nmy own line\n');
+  });
+
+  it('overwrites only after an explicit choice, with a backup of the user version', async () => {
+    const m = await mount({ files: { 'a.txt': 'original\n' }, groq: { script } });
+    await editThenOpenRewind(m);
+    await m.type(KEYS.down, KEYS.enter);
+    await waitFor(() => m.frame().includes('Rewound the conversation and 1 file'), 'rewound');
+    expect(await m.read('a.txt')).toBe('original\n');
+    expect(m.frame()).toContain('Previous versions saved in');
+    const backups = path.join(projectDataDir(m.harness.cwd, m.harness.env), 'rewind-backups');
+    const [dir] = await fs.readdir(backups);
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(backups, dir ?? '', 'manifest.json'), 'utf8'),
+    ) as { files: { copy: string }[] };
+    expect(
+      await fs.readFile(path.join(backups, dir ?? '', manifest.files[0]?.copy ?? ''), 'utf8'),
+    ).toBe('rewritten\nmy own line\n');
+  });
+
+  it('cancelling the conflict screen changes nothing', async () => {
+    const m = await mount({ files: { 'a.txt': 'original\n' }, groq: { script } });
+    await editThenOpenRewind(m);
+    await m.type(KEYS.esc);
+    await waitFor(() => !m.frame().includes('changed outside VinaX'), 'closed');
+    expect(await m.read('a.txt')).toBe('rewritten\nmy own line\n');
+    expect(m.frame()).not.toContain('Rewound');
+  });
+});
+
+describe('ChatScreen review workflow', () => {
+  const editScript = {
+    'main-model': [
+      { toolCalls: [call('Read', { file_path: 'a.txt' })] },
+      { toolCalls: [call('Write', { file_path: 'a.txt', content: 'one\nTWO\nthree\n' })] },
+      { toolCalls: [call('Write', { file_path: 'new.txt', content: 'fresh\n' })] },
+      { text: 'Edited both.' },
+    ],
+  };
+
+  async function edited() {
+    const m = await mount({
+      files: { 'a.txt': 'one\ntwo\nthree\n' },
+      groq: { script: editScript },
+      settings: { permissions: { defaultMode: 'acceptEdits' } },
+    });
+    await m.type('edit things', KEYS.enter);
+    await waitFor(() => m.frame().includes('Edited both.'), 'answer');
+    return m;
+  }
+
+  it('shows a helpful empty state before anything changed', async () => {
+    const { frame, type } = await mount();
+    await type(KEYS.ctrlG);
+    await waitFor(() => frame().includes('No file changes to review yet.'), 'empty state');
+    expect(frame()).toContain('Changes made by shell commands are not tracked');
+    await type(KEYS.esc);
+    await waitFor(() => !frame().includes('No file changes'), 'closed');
+    expect(frame()).toContain('Try "');
+  });
+
+  it('lists changed files with counts and diffs, and undoes one file', async () => {
+    const m = await edited();
+    await m.type(KEYS.ctrlG);
+    await waitFor(() => m.frame().includes('Changes this session'), 'changes view');
+    expect(m.frame()).toContain('2 files');
+    expect(m.frame()).toMatch(/M a\.txt\s+\+1 −1/);
+    expect(m.frame()).toMatch(/A new\.txt\s+\+1 −0/);
+    // the first file's diff is shown
+    expect(m.frame()).toContain('- two');
+    expect(m.frame()).toContain('+ TWO');
+    await m.type(KEYS.down);
+    await waitFor(() => m.frame().includes('+ fresh'), 'second diff');
+    await m.type('u');
+    await waitFor(() => m.frame().includes('Undo VinaX'), 'confirm');
+    expect(flat(m.frame())).toContain('it did not exist, so it is deleted');
+    await m.type(KEYS.enter);
+    await waitFor(() => m.frame().includes('Undid VinaX'), 'undone');
+    await expect(m.read('new.txt')).rejects.toThrow(/ENOENT/);
+    expect(await m.read('a.txt')).toBe('one\nTWO\nthree\n');
+    // the model is told about the undo
+    expect(m.setup.agent.messages.at(-1)?.content).toContain('I undid your changes to new.txt');
+  });
+
+  it('flags a file edited outside VinaX and asks before undoing it', async () => {
+    const m = await edited();
+    await fs.writeFile(path.join(m.harness.cwd, 'a.txt'), 'one\nTWO\nthree\nmine\n');
+    await m.type(KEYS.ctrlG);
+    await waitFor(() => m.frame().includes('changed outside VinaX'), 'flag');
+    await m.type('u');
+    await waitFor(() => m.frame().includes('Undo it anyway (backed up first)'), 'confirm');
+    await m.type(KEYS.down, KEYS.enter);
+    await waitFor(() => !m.frame().includes('Undo it anyway'), 'cancelled');
+    expect(await m.read('a.txt')).toBe('one\nTWO\nthree\nmine\n');
+  });
+
+  it('opens the command palette, filters it and runs a command', async () => {
+    const { frame, type } = await mount();
+    await type(KEYS.ctrlP);
+    await waitFor(() => frame().includes('Command palette'), 'palette');
+    expect(frame()).toContain('Review changes');
+    expect(frame()).toContain('Ctrl+G');
+    await type('usage');
+    await waitFor(() => frame().includes('/usage'), 'filtered');
+    expect(frame()).not.toContain('Review changes');
+    await type(KEYS.enter);
+    await waitFor(() => !frame().includes('Command palette'), 'ran');
+  });
+
+  it('puts commands that need an argument into the prompt instead of running them', async () => {
+    const { frame, type } = await mount({
+      files: {
+        '.vinax/commands/review.md':
+          '---\ndescription: Review a file\nargument-hint: <file>\n---\nReview $1.',
+      },
+    });
+    await type(KEYS.ctrlP);
+    await waitFor(() => frame().includes('Command palette'), 'palette');
+    await type('/review');
+    await waitFor(() => frame().includes('/review <file>'), 'match');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('> /review '), 'prompt prefilled');
+  });
+
+  it('searches the transcript, including full tool output, and expands an entry', async () => {
+    const m = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Bash', { command: "printf 'alpha\\n%s-found\\nomega\\n' 42" })] },
+            { text: 'Ran it.' },
+          ],
+        },
+      },
+      settings: { permissions: { allow: ['Bash(printf:*)'] } },
+    });
+    await m.type('run printf', KEYS.enter);
+    await waitFor(() => m.frame().includes('Ran it.'), 'answer');
+    await m.type(KEYS.ctrlO);
+    await waitFor(() => m.frame().includes('Turn details & transcript'), 'browser');
+    expect(m.frame()).toContain('› run printf');
+    expect(m.frame()).toContain('groq:main-model');
+    await m.type('/', '42-found');
+    await waitFor(() => m.frame().includes('1 of'), 'filtered');
+    // the match is in the output, not the title, so the matching line is shown
+    expect(m.frame()).toContain('… 42-found');
+    await m.type(KEYS.enter, KEYS.enter);
+    await waitFor(() => m.frame().includes('omega'), 'expanded output');
+    await m.type(KEYS.esc, KEYS.esc, KEYS.esc);
+    await waitFor(() => !m.frame().includes('Turn details'), 'closed');
+  });
+
+  it('shows working, waiting-for-you and interrupted states in the status line', async () => {
+    const m = await mount({
+      files: { 'a.txt': 'x\n' },
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Write', { file_path: 'a.txt', content: 'y\n' })] },
+            { text: 'never' },
+          ],
+        },
+      },
+    });
+    await m.type('write it', KEYS.enter);
+    await waitFor(() => m.frame().includes('needs your approval'), 'waiting chip');
+    await m.type(KEYS.ctrlC);
+    await waitFor(() => m.frame().includes('⏹ interrupted'), 'interrupted chip');
+    expect(m.frame()).toContain('Esc Esc to rewind');
+    expect(await m.read('a.txt')).toBe('x\n');
   });
 });
 

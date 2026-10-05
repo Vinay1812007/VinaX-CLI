@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import stringWidth from 'string-width';
 
 export function shortenPath(p: string, home: string = os.homedir()): string {
   const rel = path.relative(home, p);
@@ -18,9 +19,39 @@ export function formatTokens(n: number): string {
   return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
 }
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * One line of at most `max` terminal columns, ending in "…" when cut. Columns, not string
+ * length: CJK characters and most emoji take two, combining marks none.
+ */
 export function truncate(text: string, max: number): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, Math.max(1, max - 1))}…`;
+  if (stringWidth(oneLine) <= max) return oneLine;
+  const room = Math.max(1, max - 1);
+  let out = '';
+  let used = 0;
+  for (const { segment } of graphemes.segment(oneLine)) {
+    const w = stringWidth(segment);
+    if (used + w > room) break;
+    out += segment;
+    used += w;
+  }
+  return `${out}…`;
+}
+
+/** `text` padded with spaces to `width` terminal columns (never cut). */
+export function padColumns(text: string, width: number): string {
+  return text + ' '.repeat(Math.max(0, width - stringWidth(text)));
+}
+
+/** "0:07", "1:05:09": a compact running clock for the status line. */
+export function formatClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${String(h)}:${String(m).padStart(2, '0')}:${sec}` : `${String(m)}:${sec}`;
 }
 
 export function formatBytes(n: number): string {

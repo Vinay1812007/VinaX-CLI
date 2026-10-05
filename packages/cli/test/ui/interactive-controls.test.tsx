@@ -86,7 +86,8 @@ async function chat(script: ({ name: string; input: unknown }[] | string)[]) {
   const ref = parseModelRef(runtime.settings.resolved.model);
   vi.spyOn(runtime.router, 'stream').mockImplementation(
     async function* (request): AsyncGenerator<RouterEvent> {
-      messages.push(JSON.stringify(request.prepare?.(ref)?.messages ?? request.messages));
+      messages.push(JSON.stringify(request.prepare?.(ref).messages ?? request.messages));
+      await Promise.resolve();
       yield { type: 'attempt', ref };
       const next = script.shift() ?? 'Done.';
       if (typeof next === 'string') yield { type: 'text', text: next };
@@ -159,15 +160,17 @@ describe('interactive controls', () => {
       />,
     );
     await question.type('\x1b');
-    await vi.waitFor(() => expect(onAnswer).toHaveBeenCalledWith({ cancelled: true }));
+    await vi.waitFor(() => {
+      expect(onAnswer).toHaveBeenCalledWith({ cancelled: true });
+    });
     const onDecide = vi.fn();
     const plan = await terminal(
       <PlanPrompt plan="1. Update the tests" width={80} onDecide={onDecide} />,
     );
     await plan.type('\x1b');
-    await vi.waitFor(() =>
-      expect(onDecide).toHaveBeenCalledWith({ approved: false, feedback: '' }),
-    );
+    await vi.waitFor(() => {
+      expect(onDecide).toHaveBeenCalledWith({ approved: false, feedback: '' });
+    });
   });
 
   it('offers auto mode as an explicit plan approval choice', async () => {
@@ -251,9 +254,13 @@ describe('interactive controls', () => {
     ]);
     await t.type('save the answer');
     await t.type('\r');
-    await vi.waitFor(() => expect(t.frame()).toContain('Create answer.txt?'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Create answer.txt?');
+    });
     await t.type('\x1b[Z');
-    await vi.waitFor(() => expect(t.frame()).toContain('Saved the answer.'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Saved the answer.');
+    });
     expect(t.frame()).toContain('accept edits on');
     expect(await fs.readFile(path.join(t.dir, 'answer.txt'), 'utf8')).toBe('42');
   });
@@ -274,12 +281,18 @@ describe('interactive controls', () => {
     ]);
     await t.type('build the app');
     await t.type('\r');
-    await vi.waitFor(() => expect(t.frame()).toContain('Which framework?'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Which framework?');
+    });
     expect(t.frame()).not.toContain('Which language?');
     await t.type('2');
-    await vi.waitFor(() => expect(t.frame()).toContain('Which language?'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Which language?');
+    });
     await t.type('1');
-    await vi.waitFor(() => expect(t.frame()).toContain('I will use your choices.'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('I will use your choices.');
+    });
     expect(t.messages.at(-1)).toContain('Vue');
     expect(t.messages.at(-1)).toContain('TypeScript');
     expect(t.frame()).toContain('Your answer: Vue');
@@ -301,11 +314,15 @@ describe('interactive controls', () => {
     await t.type('\x1b[Z');
     await t.type('save the answer');
     await t.type('\r');
-    await vi.waitFor(() => expect(checkpoint).toHaveBeenCalled());
+    await vi.waitFor(() => {
+      expect(checkpoint).toHaveBeenCalled();
+    });
     await t.type('\x1b[Z');
     expect(t.frame()).toContain('plan mode on');
     finishCheckpoint();
-    await vi.waitFor(() => expect(t.frame()).toContain('I will stay in plan mode.'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('I will stay in plan mode.');
+    });
     await expect(fs.readFile(path.join(t.dir, 'answer.txt'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });
@@ -320,12 +337,18 @@ describe('interactive controls', () => {
     await t.type('\x1b[Z');
     await t.type('make a plan');
     await t.type('\r');
-    await vi.waitFor(() => expect(t.frame()).toContain('Go ahead with this plan?'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Go ahead with this plan?');
+    });
     await t.type('\x03');
-    await vi.waitFor(() => expect(t.frame()).toContain('Interrupted'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Interrupted');
+    });
     await t.type('just explain');
     await t.type('\r');
-    await vi.waitFor(() => expect(t.frame()).toContain('Here is the explanation.'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Here is the explanation.');
+    });
   });
 
   it('uses auto mode after explicit plan approval and executes the next edit', async () => {
@@ -338,9 +361,13 @@ describe('interactive controls', () => {
     await t.type('\x1b[Z');
     await t.type('make a plan');
     await t.type('\r');
-    await vi.waitFor(() => expect(t.frame()).toContain('Go ahead with this plan?'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Go ahead with this plan?');
+    });
     await t.type('4');
-    await vi.waitFor(() => expect(t.frame()).toContain('Plan completed.'));
+    await vi.waitFor(() => {
+      expect(t.frame()).toContain('Plan completed.');
+    });
     expect(t.frame()).toContain('auto mode on');
     expect(await fs.readFile(path.join(t.dir, 'answer.txt'), 'utf8')).toBe('42');
   });

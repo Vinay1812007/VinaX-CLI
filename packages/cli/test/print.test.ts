@@ -93,7 +93,49 @@ describe('vinax -p', () => {
       subtype: 'init',
       models: ['groq:main-model', 'openrouter:free-model:free'],
     });
-    expect(events[3]).toMatchObject({ result: 'ab', usage: { input_tokens: 9, output_tokens: 2 } });
+    expect(events[3]).toMatchObject({
+      result: 'ab',
+      usage: { input_tokens: 9, output_tokens: 2 },
+      estimated_usage: { input_tokens: 0, output_tokens: 0 },
+      // no explicit price for the mock model: the cost is unknown, never guessed
+      cost: { usd: null, approximate: false, unpriced_models: ['groq:main-model'] },
+    });
+    // nothing but JSON lines on stdout
+    expect(r.stdout.split('\n').filter((l) => l.trim() !== '' && !l.startsWith('{'))).toEqual([]);
+  });
+
+  it('reports a cost only from explicit prices, and estimates unreported usage', async () => {
+    h = await createHarness({
+      settings: { pricing: { 'groq:main-model': { inputPerMillion: 2, outputPerMillion: 8 } } },
+      groq: { script: { 'main-model': [{ text: 'x'.repeat(40), noUsage: true }] } },
+    });
+    const r = await h.run(['-p', 'hi', '--output-format', 'json']);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      usage: { input_tokens: number };
+      estimated_usage: { input_tokens: number; output_tokens: number };
+      cost: { usd: number; approximate: boolean; unpriced_models: string[] };
+    };
+    expect(out.usage.input_tokens).toBe(0);
+    expect(out.estimated_usage.output_tokens).toBe(10);
+    expect(out.estimated_usage.input_tokens).toBeGreaterThan(0);
+    expect(out.cost.approximate).toBe(true);
+    expect(out.cost.unpriced_models).toEqual([]);
+    expect(out.cost.usd).toBeCloseTo((out.estimated_usage.input_tokens * 2 + 10 * 8) / 1e6, 10);
+  });
+
+  it('stops at --token-budget with exit code 1 and says how to continue', async () => {
+    const ls = {
+      toolCalls: [{ name: 'LS', arguments: '{}' }],
+      usage: { prompt_tokens: 4000, completion_tokens: 5 },
+    };
+    h = await createHarness({ groq: { script: { 'main-model': [ls, ls, { text: 'never' }] } } });
+    const r = await h.run(['-p', 'loop', '--token-budget', '5000', '--output-format', 'json']);
+    expect(r.code).toBe(1);
+    const out = JSON.parse(r.stdout) as { subtype: string; error: string };
+    expect(out.subtype).toBe('error');
+    expect(out.error).toContain('Stopped at the token budget');
+    expect(r.stderr).toContain('--token-budget');
   });
 
   it('exits 1 and lists every failure when the whole chain fails', async () => {

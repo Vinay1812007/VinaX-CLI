@@ -86,6 +86,17 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
   const m = parsed.data;
   const zeroPrice =
     m.pricing !== undefined && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0;
+  // a fixed published price only: OpenRouter uses -1 for variable pricing (e.g. routers)
+  const prompt = Number(m.pricing?.prompt);
+  const completion = Number(m.pricing?.completion);
+  const priced =
+    m.pricing !== undefined &&
+    m.pricing.prompt.trim() !== '' &&
+    m.pricing.completion.trim() !== '' &&
+    Number.isFinite(prompt) &&
+    Number.isFinite(completion) &&
+    prompt >= 0 &&
+    completion >= 0;
   return {
     id: m.id,
     contextWindow: m.context_window ?? m.context_length ?? m.max_model_len,
@@ -94,6 +105,7 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
     ...(m.architecture?.input_modalities === undefined
       ? {}
       : { vision: m.architecture.input_modalities.includes('image') }),
+    ...(priced ? { pricing: { prompt, completion } } : {}),
   };
 }
 

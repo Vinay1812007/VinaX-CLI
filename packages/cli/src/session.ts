@@ -1,6 +1,7 @@
 import { VERSION } from './version.js';
 import {
   createAgentSetup,
+  describeSessionIssues,
   projectDataDir,
   SessionStore,
   type AgentSetup,
@@ -49,14 +50,20 @@ export async function openSession(
   });
   if (loaded) {
     setup.agent.restore(loaded);
-    setup.checkpoints.load(loaded.checkpoints);
+    setup.checkpoints.load(loaded.checkpoints, loaded.checkpointResults);
     // a model picked with /model sticks to the session, unless --model overrides it
     if (loaded.model !== undefined && opts.model === undefined) setup.agent.setModel(loaded.model);
   }
   const started = await setup.sessionStart(
     loaded ? 'resume' : choice.kind === 'new' && opts.cleared === true ? 'clear' : 'startup',
   );
-  const notes = [...(note === undefined ? [] : [note]), ...setup.warnings, ...started.warnings];
+  const damage = loaded === undefined ? undefined : describeSessionIssues(loaded);
+  const notes = [
+    ...(note === undefined ? [] : [note]),
+    ...(damage === undefined ? [] : [damage.text]),
+    ...setup.warnings,
+    ...started.warnings,
+  ];
   if (started.blocked) notes.push(`A SessionStart hook reported: ${started.message ?? ''}`);
   return { setup, writer, loaded, notes };
 }

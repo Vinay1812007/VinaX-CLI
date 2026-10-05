@@ -101,7 +101,7 @@ const IS_WINDOWS = process.platform === 'win32';
  * Kills a command and everything it started. Commands run in their own process group, so a
  * `sleep` or dev server spawned by the shell does not outlive a timeout or an interrupt.
  */
-function killTree(pid: number | undefined): void {
+export function killTree(pid: number | undefined): void {
   if (pid === undefined) return;
   if (IS_WINDOWS) {
     execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => undefined);

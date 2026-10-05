@@ -1,7 +1,9 @@
 import { Box, Text } from 'ink';
+import { useEffect, useState } from 'react';
 import stringWidth from 'string-width';
 import type { PermissionMode } from '@vinax/core';
 import { truncate } from '../format.js';
+import { taskChip, type TaskChip, type TaskState } from '../task-state.js';
 import { useTheme, type Theme } from '../theme.js';
 
 /** The footer's mode indicator, like Claude Code's: glyph + name + "on". */
@@ -37,7 +39,32 @@ interface Props {
   hint: string | undefined;
   /** Reasoning effort, when set (e.g. "high"). */
   effort?: string | undefined;
+  /** What the session is doing (working, waiting for you, how the last turn ended). */
+  task?: TaskState | undefined;
+  /** Messages typed while busy, waiting to be sent. */
+  queued?: number;
+  now?: () => number;
   width: number;
+}
+
+/** Re-renders once a second while `active`, so running clocks move. */
+function useTicker(active: boolean, now: () => number): number {
+  const [t, setT] = useState(now());
+  useEffect(() => {
+    if (!active) return;
+    setT(now());
+    const timer = setInterval(() => {
+      setT(now());
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [active]);
+  return active ? t : now();
+}
+
+function chipColor(chip: TaskChip, theme: Theme): string | undefined {
+  return chip.tone === 'muted' ? theme.muted : theme[chip.tone];
 }
 
 export function modeColor(mode: PermissionMode, theme: Theme): string | undefined {
@@ -58,8 +85,22 @@ const CYCLE_HINT = ' (shift+tab to cycle)';
 const SHORTCUTS_HINT = ' · ? for shortcuts';
 const EFFORT_GLYPH: Record<string, string> = { low: '◔', medium: '◑', high: '●' };
 
-export function StatusLine({ mode, model, contextPct, notice, hint, effort, width }: Props) {
+export function StatusLine({
+  mode,
+  model,
+  contextPct,
+  notice,
+  hint,
+  effort,
+  task = { kind: 'idle' },
+  queued = 0,
+  now = Date.now,
+  width,
+}: Props) {
   const theme = useTheme();
+  const ticking = task.kind === 'running' || task.kind === 'waiting';
+  const at = useTicker(ticking, now);
+  const chip = taskChip(task, queued, at);
   const noticeColor =
     notice?.level === 'error'
       ? theme.error
@@ -78,9 +119,12 @@ export function StatusLine({ mode, model, contextPct, notice, hint, effort, widt
   // Fit on one line: drop the shortcuts hint, then the cycle hint, then shorten the model.
   // Widths are terminal columns (⏸ and ⏵ take two), not string lengths.
   const inner = Math.max(1, width - 2);
-  if (stringWidth(left + ctx + eff) + 10 > inner) eff = '';
-  if (stringWidth(left + ctx) + 10 > inner) ctx = '';
-  const fixed = stringWidth(left) + stringWidth(ctx) + stringWidth(eff) + 2;
+  let chipText = chip === undefined ? '' : `${chip.text} · `;
+  if (chip !== undefined && stringWidth(left + chipText + ctx + eff) + 10 > inner)
+    chipText = `${chip.short} · `;
+  if (stringWidth(left + chipText + ctx + eff) + 10 > inner) eff = '';
+  if (stringWidth(left + chipText + ctx) + 10 > inner) ctx = '';
+  const fixed = stringWidth(left) + stringWidth(chipText) + stringWidth(ctx) + stringWidth(eff) + 2;
   const room = (extra: number): number => inner - fixed - extra;
   const want = Math.min(stringWidth(model), 24);
   const showCycle = hint === undefined && room(CYCLE_HINT.length) >= want;
@@ -99,6 +143,12 @@ export function StatusLine({ mode, model, contextPct, notice, hint, effort, widt
           {showShortcuts ? <Text color={theme.muted}>{SHORTCUTS_HINT}</Text> : ''}
         </Text>
         <Text color={theme.muted} wrap="truncate-end">
+          {chip === undefined || chipText === '' ? (
+            ''
+          ) : (
+            <Text color={chipColor(chip, theme)}>{chipText.slice(0, -3)}</Text>
+          )}
+          {chipText === '' ? '' : ' · '}
           {modelShown}
           {eff === '' ? '' : <Text color={theme.accent}>{eff}</Text>}
           {ctx === '' ? '' : <Text color={ctxColor}>{ctx}</Text>}

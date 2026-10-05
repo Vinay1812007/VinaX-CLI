@@ -101,7 +101,13 @@ describe('SessionStore', () => {
     await write(file, 'v2');
     const restored = new CheckpointStore();
     restored.load(store.load(w.id).checkpoints);
-    await restored.restoreTo(1);
+    // nothing recorded what was written, so outside edits cannot be ruled out: ask first
+    expect(await restored.restoreTo(1)).toMatchObject({
+      status: 'conflicts',
+      conflicts: [{ file, status: 'unverified' }],
+    });
+    expect(await fs.readFile(file, 'utf8')).toBe('v2');
+    await restored.restoreTo(1, { resolution: 'overwrite' });
     expect(await fs.readFile(file, 'utf8')).toBe('v1');
   });
 });

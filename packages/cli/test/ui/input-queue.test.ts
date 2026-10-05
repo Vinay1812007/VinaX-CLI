@@ -45,7 +45,9 @@ describe('interactive input queue', () => {
     expect(show).not.toHaveBeenCalled();
     const next = queue.request(
       new AbortController().signal,
-      (done) => done('ready'),
+      (done) => {
+        done('ready');
+      },
       hide,
       'cancelled',
     );

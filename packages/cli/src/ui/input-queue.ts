@@ -3,6 +3,14 @@ export class InputQueue {
   private waiting: (() => void)[] = [];
   private active: (() => void) | undefined;
 
+  /** `onChange` hears how many requests wait behind the one on screen. */
+  constructor(private readonly onChange?: (waiting: number) => void) {}
+
+  /** Requests queued behind the one being shown. */
+  get backlog(): number {
+    return this.waiting.length;
+  }
+
   request<T>(
     signal: AbortSignal,
     show: (answer: (value: T) => void) => void,
@@ -23,8 +31,11 @@ export class InputQueue {
         }
         resolve(value);
         this.next();
+        this.onChange?.(this.waiting.length);
       };
-      const abort = (): void => finish(cancelled);
+      const abort = (): void => {
+        finish(cancelled);
+      };
       const start = (): void => {
         if (signal.aborted) finish(cancelled);
         else show(finish);
@@ -32,6 +43,7 @@ export class InputQueue {
       signal.addEventListener('abort', abort, { once: true });
       this.waiting.push(start);
       this.next();
+      this.onChange?.(this.waiting.length);
     });
   }
 

@@ -50,6 +50,8 @@ export default defineConfig({
           { text: 'Memory', link: '/memory' },
           { text: 'Sessions and context', link: '/sessions' },
           { text: 'Print mode and scripts', link: '/print-mode' },
+          { text: 'Usage, budgets and cost', link: '/usage' },
+          { text: 'Isolated worktrees', link: '/worktrees' },
         ],
       },
       {

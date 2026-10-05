@@ -169,6 +169,7 @@ export async function updateBinary(
     } catch (err) {
       throw new Error(
         `Could not verify ${asset}: ${err instanceof Error ? err.message : String(err)}; nothing was changed.`,
+        { cause: err },
       );
     }
     if (reported.replace(/^v/, '') !== release.version.replace(/^v/, ''))

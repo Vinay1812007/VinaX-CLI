@@ -25,11 +25,22 @@ export {
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
+  type TaskBudget,
   type PermissionAnswer,
   type PermissionRequest,
   type ToolMode,
 } from './agent/agent.js';
-export { CheckpointStore } from './agent/checkpoints.js';
+export {
+  CheckpointError,
+  CheckpointStore,
+  type ConflictResolution,
+  type FileState,
+  type RestoreFilePlan,
+  type RestorePlan,
+  type RestoreResult,
+  type RestoreStatus,
+  type SessionFileChange,
+} from './agent/checkpoints.js';
 export {
   createTaskTool,
   GENERAL_PURPOSE,
@@ -56,7 +67,14 @@ export {
 } from './mcp/config.js';
 export { McpManager, mcpToolName, type McpServerState, type McpStatus } from './mcp/manager.js';
 export { createWebFetchTool, htmlToMarkdown } from './tools/webfetch.js';
-export { applySummary, elideToolOutputs, renderTranscript } from './agent/compact.js';
+export {
+  applySummary,
+  elideToolOutputs,
+  renderTranscript,
+  safeTailStart,
+  userRequests,
+  type PinnedContext,
+} from './agent/compact.js';
 export {
   expandCommand,
   loadCustomCommands,
@@ -74,9 +92,12 @@ export {
   type MemoryFile,
 } from './memory/memory.js';
 export {
+  describeSessionIssues,
+  parseSession,
   SessionStore,
   SessionWriter,
   type LoadedSession,
+  type SessionIssue,
   type SessionEntry,
   type SessionRecorder,
   type SessionSummary,
@@ -247,3 +268,30 @@ export {
   type RouterEvent,
 } from './router/router.js';
 export { createRuntime, type Runtime, type RuntimeOptions } from './runtime.js';
+export { diffDisplay, diffSummary } from './tools/diff.js';
+export { displayPath, resolvePath } from './tools/paths.js';
+export {
+  addUsage,
+  costOf,
+  emptyUsage,
+  formatCost,
+  mergeModelUsage,
+  priceFor,
+  totalTokens,
+  type CostEstimate,
+  type ModelUsage,
+  type Price,
+} from './state/cost.js';
+export { LoopGuard, STUCK_ADVICE, type LoopVerdict } from './agent/loop-guard.js';
+export {
+  defaultWorktreeName,
+  findRepoRoot,
+  WORKTREE_NOT_A_SANDBOX,
+  WorktreeError,
+  WorktreeManager,
+  type ApplyResult,
+  type RemoveResult,
+  type WorktreeChanges,
+  type WorktreeFileChange,
+  type WorktreeInfo,
+} from './git/worktree.js';

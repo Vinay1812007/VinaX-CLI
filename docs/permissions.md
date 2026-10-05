@@ -80,9 +80,27 @@ A compound command such as `a && b | c` is allowed only when **every** part matc
 
 ## Rewind
 
-Press **Esc Esc** on an empty prompt (or run `/rewind`) and pick an earlier prompt. You can restore:
+Press **Esc Esc** on an empty prompt (or run `/rewind`) and pick an earlier prompt. You can restore the conversation, the files, or both. To undo a single file instead, use [Review changes](/interactive-mode#reviewing-changes) (`Ctrl+G`).
 
-- the conversation, the files, or both
-- only files changed through VinaX's own file tools (Edit, MultiEdit, Write), not files changed by shell commands
+What rewind covers:
+
+- **Files changed through VinaX's own file tools** (Edit, MultiEdit, Write). Before a tool changes a file, VinaX saves its content; after the tool runs, it records what it wrote.
+- **Not shell commands.** Effects of `Bash` and `!` commands (installs, generated or deleted files, git operations) are not checkpointed and are never undone. The picker says how many commands ran since the prompt you chose.
+- A file VinaX **cannot read** (no permission, a folder, or not UTF-8 text) is never changed by its file tools, because the change could not be undone. The tool reports why instead.
+
+### Edits made outside VinaX
+
+Before restoring, VinaX compares each file with what it last wrote. If you (or a shell command, or another program) changed a file since then, or between two of VinaX's turns, nothing is changed yet. The picker lists those files with why and how much would change, and asks:
+
+- **Keep my versions**, and restore only the other files,
+- **Overwrite them too**, after copying your current versions to a backup folder,
+- **Show what restoring would change** (the diff), or
+- **Cancel**.
+
+Sessions from older VinaX versions did not record what was written, so their files are shown as `? not verified` and handled the same way.
+
+### Backups and failures
+
+Every file is copied before it is restored, to `~/.vinax/projects/<folder>/rewind-backups/<time>-turn<n>/` with a `manifest.json` listing where each copy came from. The 20 newest backups are kept. If writing a file fails partway, the files already restored are put back, the conversation is left as it was, and the message says what happened (and where the backup is if putting files back also failed).
 
 Checkpoints are saved with the session, so rewind also works after `vinax -c`.

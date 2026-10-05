@@ -15,10 +15,11 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/models`                           | Providers, the current model, the fallback order and aliases; then switch |
 | `/resume`                           | Continue an earlier conversation in this folder                           |
 | `/rewind`                           | Go back to an earlier prompt, restoring files and/or the conversation     |
+| `/changes` (`/diff`)                | Review files changed this session: diffs, and undo per file (`Ctrl+G`)    |
 | `/init`                             | Analyze the project and write a starter `VINAX.md`                        |
 | `/memory`                           | Edit a memory file in your `$EDITOR`                                      |
 | `/status`                           | Session, providers, remaining rate limits and OpenRouter quota            |
-| `/usage`                            | Requests and tokens used today, per provider and model                    |
+| `/usage`                            | This session's reported and estimated tokens and cost; today's usage      |
 | `/doctor`                           | Check the installation, keys, search, shell, git, keychain and terminal   |
 | `/health`                           | A concise, grouped health summary (full details: `/doctor`)               |
 | `/about`                            | Version, runtime, install type, model, gateway, MCP and platform          |
