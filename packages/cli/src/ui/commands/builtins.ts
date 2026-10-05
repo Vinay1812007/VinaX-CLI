@@ -5,7 +5,11 @@ import path from 'node:path';
 import {
   AppStateStore,
   conversationMarkdown,
+  costOf,
   createProvider,
+  formatCost,
+  priceFor,
+  totalTokens,
   formatModelRef,
   HOOK_EVENTS,
   KNOWN_MODELS,
@@ -103,7 +107,7 @@ const help: SlashCommand = {
         '',
         '**Prefixes:** `/` commands · `@path` attach a file or folder · `!cmd` run a shell command · `#note` save a note to memory',
         '',
-        'Press `?` on an empty prompt for keyboard shortcuts. Custom commands live in `.vinax/commands/*.md` and `~/.vinax/commands/*.md`.',
+        'Press `?` on an empty prompt for keyboard shortcuts, `Ctrl+P` to search commands and views, `Ctrl+G` to review changed files and `Ctrl+O` to search the transcript. Custom commands live in `.vinax/commands/*.md` and `~/.vinax/commands/*.md`.',
       ].join('\n'),
     );
   },
@@ -363,6 +367,16 @@ const rewind: SlashCommand = {
   },
 };
 
+const changes: SlashCommand = {
+  name: 'changes',
+  aliases: ['diff'],
+  description: 'Review files changed this session: diffs, and undo per file (Ctrl+G)',
+  source: 'builtin',
+  run(ctx) {
+    ctx.openChanges();
+  },
+};
+
 const status: SlashCommand = {
   name: 'status',
   description: 'Session, providers and remaining rate limits',
@@ -424,11 +438,32 @@ const status: SlashCommand = {
 
 const usage: SlashCommand = {
   name: 'usage',
-  description: 'Requests and tokens used today, per provider',
+  description: 'Tokens and cost for this session, and requests per provider today',
   source: 'builtin',
   run(ctx) {
+    const price = (ref: string) => priceFor(ref, ctx.runtime.settings.resolved, ctx.runtime.models);
+    const session = ctx.sessionUsage();
+    const lines: string[] = ['**This session**', ''];
+    const refs = Object.keys(session);
+    if (refs.length === 0) lines.push('No model calls yet.');
+    for (const ref of refs) {
+      const u = session[ref];
+      if (!u) continue;
+      const reported = totalTokens(u.measured);
+      const estimated = totalTokens(u.estimated);
+      const p = price(ref);
+      lines.push(
+        `- \`${ref}\`: ${formatTokens(u.measured.promptTokens)} in · ${formatTokens(u.measured.completionTokens)} out reported${estimated === 0 ? '' : ` · ~${formatTokens(estimated)} estimated`}${reported + estimated === 0 ? '' : ` · ${p === undefined ? 'price unknown' : `priced from ${p.source === 'settings' ? 'your settings' : 'the provider catalog'}`}`}`,
+      );
+    }
+    if (refs.length > 0) lines.push('', `Cost: **${formatCost(costOf(session, price))}**`);
+    lines.push(
+      '',
+      'Reported = counted by the provider. Estimated = VinaX counted ~4 characters per token where the provider sent no count (or the reply was cut off). Costs use only explicit prices: `pricing` in settings or the provider catalog.',
+      '',
+    );
     const day = ctx.runtime.usage.snapshot();
-    const lines = [`Today (${day.date}, all VinaX sessions):`, ''];
+    lines.push(`**Today** (${day.date}, all VinaX sessions, reported tokens):`, '');
     for (const name of PROVIDER_NAMES) {
       const p = day.providers[name];
       if (!p) continue;
@@ -450,7 +485,7 @@ const usage: SlashCommand = {
       }
       lines.push('');
     }
-    if (lines.length === 2) lines.push('No requests yet today.');
+    if (Object.keys(day.providers).length === 0) lines.push('No requests yet today.');
     ctx.panel('Usage', lines.join('\n'));
   },
 };
@@ -989,6 +1024,7 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   memory,
   resume,
   rewind,
+  changes,
   status,
   usage,
   doctor,

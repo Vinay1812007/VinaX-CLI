@@ -11,8 +11,13 @@ export interface ExitSummary {
   wallMs: number;
   /** Time spent waiting for models and tools. */
   activeMs: number;
+  /** Tokens the providers reported. */
   inputTokens: number;
   outputTokens: number;
+  /** Tokens VinaX had to estimate (responses without a usage report). */
+  estimatedTokens?: number;
+  /** "$0.0123", "unknown (no price for …)"; omitted when no tokens were used. */
+  cost?: string;
   filesChanged: number;
   linesAdded: number;
   linesRemoved: number;
@@ -32,11 +37,20 @@ export function exitSummaryLines(s: ExitSummary): { label: string; value: string
     label: 'Time',
     value: `${formatDuration(s.wallMs)} total · ${formatDuration(s.activeMs)} working · ${String(s.prompts)} prompt${s.prompts === 1 ? '' : 's'} · ${String(s.toolCalls)} tool call${s.toolCalls === 1 ? '' : 's'}`,
   });
-  if (s.inputTokens + s.outputTokens > 0)
+  const estimated = s.estimatedTokens ?? 0;
+  if (s.inputTokens + s.outputTokens + estimated > 0)
     rows.push({
       label: 'Tokens',
-      value: `${formatTokens(s.inputTokens)} in · ${formatTokens(s.outputTokens)} out`,
+      value: [
+        s.inputTokens + s.outputTokens === 0
+          ? undefined
+          : `${formatTokens(s.inputTokens)} in · ${formatTokens(s.outputTokens)} out (reported)`,
+        estimated === 0 ? undefined : `~${formatTokens(estimated)} estimated`,
+      ]
+        .filter((x): x is string => x !== undefined)
+        .join(' · '),
     });
+  if (s.cost !== undefined) rows.push({ label: 'Cost', value: s.cost });
   if (s.filesChanged > 0)
     rows.push({
       label: 'Changes',

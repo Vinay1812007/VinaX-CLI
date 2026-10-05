@@ -315,6 +315,7 @@ describe('TodoWrite and tool specs', () => {
       'KillBash',
       'TodoWrite',
       'ExitPlanMode',
+      'AskUserQuestion',
     ]);
   });
 });

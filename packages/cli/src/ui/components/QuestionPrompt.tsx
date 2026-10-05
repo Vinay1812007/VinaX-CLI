@@ -32,8 +32,12 @@ export function QuestionPrompt({
       {typing ? (
         <LineInput
           placeholder="Type your answer…"
-          onSubmit={(answer) => onAnswer({ answer })}
-          onCancel={() => onAnswer({ cancelled: true })}
+          onSubmit={(answer) => {
+            onAnswer({ answer });
+          }}
+          onCancel={() => {
+            onAnswer({ cancelled: true });
+          }}
         />
       ) : (
         <Select

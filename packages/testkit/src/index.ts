@@ -18,6 +18,8 @@ export interface MockTurn {
   /** JSON error body for non-200 replies. */
   error?: { message: string; type?: string; code?: string };
   usage?: { prompt_tokens: number; completion_tokens: number };
+  /** Send no usage chunk at all, like providers that do not report token counts. */
+  noUsage?: boolean;
   /** Delay before any bytes are sent. */
   delayMs?: number;
   /** Delay between streamed content chunks. */
@@ -42,6 +44,8 @@ export interface MockServerOptions {
     context_window?: number;
     supported_parameters?: string[];
     architecture?: { input_modalities?: string[] };
+    /** US dollars per token as strings, like OpenRouter (`"-1"` = variable). */
+    pricing?: { prompt: string; completion: string };
   }[];
   /** Keys accepted as `Authorization: Bearer <key>`. Empty means any key. */
   apiKeys?: string[];
@@ -139,14 +143,15 @@ async function reply(res: http.ServerResponse, model: string, turn: MockTurn): P
   }
   sse(res, chunk(model, {}, turn.toolCalls && turn.toolCalls.length > 0 ? 'tool_calls' : 'stop'));
   const usage = turn.usage ?? { prompt_tokens: 10, completion_tokens: parts.length };
-  sse(res, {
-    id: 'chatcmpl-mock',
-    object: 'chat.completion.chunk',
-    created: 0,
-    model,
-    choices: [],
-    usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens },
-  });
+  if (turn.noUsage !== true)
+    sse(res, {
+      id: 'chatcmpl-mock',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model,
+      choices: [],
+      usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens },
+    });
   res.write('data: [DONE]\n\n');
   res.end();
 }

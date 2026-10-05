@@ -1,4 +1,6 @@
 import { Box, Text } from 'ink';
+import stringWidth from 'string-width';
+import { padColumns } from '../format.js';
 import { useTheme } from '../theme.js';
 
 const SHORTCUTS: readonly [string, string][] = [
@@ -14,7 +16,9 @@ const SHORTCUTS: readonly [string, string][] = [
   ['Option/Alt+Backspace · Ctrl+W · Alt+D', 'delete word before · before · after'],
   ['Ctrl+U · Ctrl+K · Ctrl+Y', 'delete to line start · to line end · paste it back'],
   ['Ctrl+_', 'undo'],
-  ['Ctrl+O', 'turn details: tools, models, tokens, rate limits'],
+  ['Ctrl+P', 'command palette: search every command and view'],
+  ['Ctrl+G', 'review changed files: diffs, undo one file'],
+  ['Ctrl+O', 'transcript: search, full tool output, models, tokens, rate limits'],
   ['Ctrl+L', 'redraw the screen'],
   ['Mouse / trackpad', 'select text to copy it; /copy copies the last answer'],
   ['Ctrl+C', 'clear the prompt; press twice to exit'],
@@ -23,13 +27,13 @@ const SHORTCUTS: readonly [string, string][] = [
 
 export function ShortcutsHelp() {
   const theme = useTheme();
-  const keyWidth = Math.max(...SHORTCUTS.map(([k]) => k.length)) + 2;
+  const keyWidth = Math.max(...SHORTCUTS.map(([k]) => stringWidth(k))) + 2;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.muted} paddingX={1}>
       <Text bold>Keyboard shortcuts</Text>
       {SHORTCUTS.map(([keys, action]) => (
         <Text key={keys}>
-          <Text color={theme.accent}>{keys.padEnd(keyWidth)}</Text>
+          <Text color={theme.accent}>{padColumns(keys, keyWidth)}</Text>
           {action}
         </Text>
       ))}

@@ -10,6 +10,12 @@ import { configCommand } from './config-command.js';
 import { doctorCommand, healthCommand } from './doctor-command.js';
 import { loginCommand, logoutCommand } from './login-command.js';
 import { mcpCommand } from './mcp-command.js';
+import {
+  enterWorktree,
+  worktreeBanner,
+  worktreeCommand,
+  worktreeNextSteps,
+} from './worktree-command.js';
 import { cleanupOldBinary, detectInstall, runUpdate } from './update.js';
 import { EXIT } from './exit-codes.js';
 import { runInteractive } from './interactive.js';
@@ -28,8 +34,11 @@ interface RootOptions {
   disallowedTools?: string[];
   addDir?: string[];
   maxTurns?: number;
+  tokenBudget?: number;
+  timeBudget?: number;
   continue?: boolean;
   resume?: boolean | string;
+  worktree?: boolean | string;
 }
 
 function parsePositiveInt(value: string): number {
@@ -70,6 +79,8 @@ function sessionOptions(prompt: string | undefined, o: RootOptions): SessionOpti
     disallowedTools: o.disallowedTools ?? [],
     addDirs: o.addDir ?? [],
     maxTurns: o.maxTurns,
+    tokenBudget: o.tokenBudget,
+    timeBudget: o.timeBudget,
     continueLast: o.continue === true,
     resume: o.resume,
   };
@@ -124,6 +135,16 @@ export async function main(
     )
     .option('--add-dir <path>', 'also let tools work in this folder (repeatable)', collect)
     .option('--max-turns <n>', 'stop after this many model calls per prompt', parsePositiveInt)
+    .option(
+      '--token-budget <n>',
+      'stop a task after it uses this many tokens (reported or estimated, sub-agents included)',
+      parsePositiveInt,
+    )
+    .option('--time-budget <seconds>', 'stop a task after this many seconds', parsePositiveInt)
+    .option(
+      '-w, --worktree [name]',
+      'work in an isolated git worktree (created from HEAD if needed); review and apply with vinax worktree',
+    )
     .option('-c, --continue', 'continue the most recent conversation in this folder')
     .option('-r, --resume [session-id]', 'resume a conversation (shows a picker without an id)')
     .option('--verbose', 'write a debug log of every request (API keys redacted)')
@@ -136,18 +157,39 @@ export async function main(
     })
     .exitOverride()
     .action(async (prompt: string | undefined, opts: RootOptions) => {
-      const session = sessionOptions(prompt, opts);
+      let session = sessionOptions(prompt, opts);
+      let runIO = io;
+      if (opts.worktree !== undefined && opts.worktree !== false) {
+        try {
+          const wt = await enterWorktree(io, opts.worktree);
+          runIO = { ...io, cwd: wt.cwd };
+          const banner = worktreeBanner(wt.info, wt.created);
+          session = { ...session, worktree: wt.info.name, notices: [banner] };
+          if (opts.print === true) io.stderr.write(`${paint(io.stderr, 'dim', banner, io.env)}\n`);
+        } catch (e) {
+          io.stderr.write(
+            `${paint(io.stderr, 'red', e instanceof Error ? e.message : String(e), io.env)}\n`,
+          );
+          setExit(EXIT.error);
+          return;
+        }
+      }
       if (opts.print !== true) {
-        setExit(await runInteractive(session, io));
+        setExit(await runInteractive(session, runIO));
         return;
       }
-      setExit(await runPrint({ ...session, outputFormat: opts.outputFormat }, io, signal));
+      setExit(await runPrint({ ...session, outputFormat: opts.outputFormat }, runIO, signal));
+      if (session.worktree !== undefined)
+        io.stderr.write(
+          `${paint(io.stderr, 'dim', `Changes are in worktree ${session.worktree}:\n${worktreeNextSteps(session.worktree).join('\n')}`, io.env)}\n`,
+        );
     });
 
   program.addCommand(configCommand(io, setExit).exitOverride());
   program.addCommand(doctorCommand(io, setExit).exitOverride());
   program.addCommand(healthCommand(io, setExit).exitOverride());
   program.addCommand(mcpCommand(io, setExit).exitOverride());
+  program.addCommand(worktreeCommand(io, setExit).exitOverride());
   program.addCommand(loginCommand(io, setExit));
   program.addCommand(logoutCommand(io, setExit));
   program.addCommand(

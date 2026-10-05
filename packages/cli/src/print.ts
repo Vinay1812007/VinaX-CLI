@@ -1,6 +1,8 @@
 import {
   formatFailureReport,
   attachMentions,
+  costOf,
+  priceFor,
   createRuntime,
   extractImages,
   providerLabel,
@@ -10,6 +12,7 @@ import {
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
+  type CostEstimate,
   type Runtime,
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
@@ -170,7 +173,12 @@ class Output {
     }
   }
 
-  finish(outcome: AgentOutcome | undefined, durationMs: number, error?: string): void {
+  finish(
+    outcome: AgentOutcome | undefined,
+    durationMs: number,
+    error?: string,
+    cost?: CostEstimate,
+  ): void {
     const failed = error !== undefined;
     if (this.format === 'text') {
       if (this.text !== '' && !this.text.endsWith('\n')) this.io.stdout.write('\n');
@@ -188,6 +196,22 @@ class Output {
               output_tokens: outcome.usage.completionTokens,
             }
           : null,
+        // tokens the provider did not report, counted by VinaX (~4 characters per token)
+        estimated_usage: outcome
+          ? {
+              input_tokens: outcome.estimatedUsage.promptTokens,
+              output_tokens: outcome.estimatedUsage.completionTokens,
+            }
+          : null,
+        // only from explicit prices (settings `pricing` or the provider catalog); null = unknown
+        cost:
+          cost === undefined
+            ? null
+            : {
+                usd: cost.usd ?? null,
+                approximate: cost.approximate,
+                unpriced_models: cost.unpriced,
+              },
         session_id: this.sessionId ?? null,
         num_turns: outcome?.steps ?? 0,
         tool_calls: this.toolCalls,
@@ -328,15 +352,18 @@ export async function runPrint(
       ...(withImages.images.length === 0 ? {} : { images: withImages.images }),
     });
     const elapsed = Date.now() - started;
+    const cost = costOf(outcome.usageByModel, (ref) =>
+      priceFor(ref, runtime.settings.resolved, runtime.models),
+    );
     switch (outcome.status) {
       case 'done':
-        out.finish(outcome, elapsed);
+        out.finish(outcome, elapsed, undefined, cost);
         return EXIT.ok;
       case 'interrupted':
-        out.finish(outcome, elapsed, 'Interrupted');
+        out.finish(outcome, elapsed, 'Interrupted', cost);
         return EXIT.interrupted;
       default:
-        out.finish(outcome, elapsed, outcome.error ?? `Stopped: ${outcome.status}`);
+        out.finish(outcome, elapsed, outcome.error ?? `Stopped: ${outcome.status}`, cost);
         return EXIT.error;
     }
   } finally {

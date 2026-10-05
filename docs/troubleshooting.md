@@ -64,6 +64,18 @@ Many terminals send the same code for Enter and Shift+Enter. `\` followed by Ent
 Option/Alt+Enter, always inserts a new line. Shift+Enter works in terminals that report it: kitty,
 iTerm2, WezTerm, VS Code and Windows Terminal.
 
+### Rewind or undo says files "changed outside VinaX"
+
+VinaX found that a file differs from what it last wrote: you edited it, a shell command changed it, or (for sessions from older versions) it cannot tell. Nothing has been changed. Choose **Show what restoring would change** to see the difference, then keep your versions or overwrite them. Overwritten versions are copied to `~/.vinax/projects/<folder>/rewind-backups/` first. See [Rewind](/permissions#rewind).
+
+### A resumed session reports damaged lines
+
+The session file has lines VinaX could not use. They were skipped and the rest was loaded; the notice lists the line numbers and the file's path, and the file is not modified. An interrupted last write is moved to `<session>.jsonl.torn` instead. See [Damaged session files](/sessions#damaged-session-files).
+
+### A task stopped "at the budget" or "going in circles"
+
+Budgets come from `budget.tokens` / `budget.seconds` in settings or `--token-budget` / `--time-budget`. A task that keeps repeating a failing call is stopped so it does not burn tokens. In both cases what was done is kept: send a message to continue. See [Usage, budgets and cost](/usage).
+
 ### Windows
 
 VinaX runs commands in Git Bash when it is installed, otherwise in PowerShell. Install

@@ -22,6 +22,7 @@ import { loadCommands } from './ui/commands/registry.js';
 import { cliSettings, type SessionOptions } from './session-options.js';
 import { pickTips } from './ui/tips.js';
 import { writeExitSummary, type ExitSummary } from './exit-summary.js';
+import { worktreeNextSteps } from './worktree-command.js';
 import { startupAnnouncements } from './updates.js';
 import { VERSION } from './version.js';
 
@@ -48,12 +49,14 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
         ...(opts.model === undefined ? {} : { modelOverride: opts.model }),
       });
     },
-    openSession: (runtime, choice, cleared) =>
-      openSession(runtime, choice, {
+    openSession: async (runtime, choice, cleared) => {
+      const opened = await openSession(runtime, choice, {
         maxTurns: opts.maxTurns,
         model: opts.model,
         cleared: cleared === true,
-      }),
+      });
+      return { ...opened, notes: [...(opts.notices ?? []), ...opened.notes] };
+    },
     listSessions: (runtime) => sessionStore(runtime).list(),
     loadCommands,
     onboarding: {
@@ -105,6 +108,13 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
     );
     return EXIT.usage;
   }
+  // the interactive UI redraws with cursor movement, which a dumb terminal cannot do
+  if (io.env.TERM === 'dumb') {
+    io.stderr.write(
+      'TERM=dumb cannot show the interactive UI. Use vinax -p "<prompt>" here, or run VinaX in a terminal emulator.\n',
+    );
+    return EXIT.usage;
+  }
   let code: number = EXIT.ok;
   let summary: ExitSummary | undefined;
   const instance = render(
@@ -131,5 +141,9 @@ export async function runInteractive(opts: SessionOptions, io: CliIO): Promise<n
   );
   await instance.waitUntilExit();
   if (summary !== undefined) writeExitSummary(io, summary);
+  if (opts.worktree !== undefined)
+    io.stdout.write(
+      `Your changes are in worktree ${opts.worktree}, not in your checkout:\n${worktreeNextSteps(opts.worktree).join('\n')}\n`,
+    );
   return code;
 }

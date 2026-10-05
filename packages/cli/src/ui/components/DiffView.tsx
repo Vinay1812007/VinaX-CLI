@@ -9,22 +9,38 @@ interface Props {
   /** Lines shown before "… N more lines". */
   maxLines: number;
   width: number;
+  /** Lines scrolled past from the top. */
+  offset?: number;
+  /** Where to see the rest, after "… N more lines". */
+  moreHint?: string;
 }
 
 /** A coloured unified diff with line numbers. */
-export function DiffView({ diff, maxLines, width }: Props) {
+export function DiffView({
+  diff,
+  maxLines,
+  width,
+  offset = 0,
+  moreHint = 'ctrl+o for details',
+}: Props) {
   const theme = useTheme();
   const all = diff.hunks.flatMap((h, i) => [
     ...(i > 0 ? [{ kind: 'gap' as const }] : []),
     ...h.lines.map((l) => ({ kind: 'line' as const, line: l })),
   ]);
-  const shown = all.slice(0, maxLines);
+  const start = Math.min(Math.max(0, offset), Math.max(0, all.length - maxLines));
+  const shown = all.slice(start, start + maxLines);
   const numWidth = Math.max(
     3,
     ...diff.hunks.flatMap((h) => h.lines.map((l) => String(l.newLine ?? l.oldLine ?? '').length)),
   );
   return (
     <Box flexDirection="column">
+      {start > 0 ? (
+        <Text color={theme.muted}>
+          {' '.repeat(numWidth)} ↑ {start} lines above
+        </Text>
+      ) : null}
       {shown.map((row, i) => {
         if (row.kind === 'gap') {
           return (
@@ -49,9 +65,9 @@ export function DiffView({ diff, maxLines, width }: Props) {
           </Text>
         );
       })}
-      {all.length > shown.length ? (
+      {all.length > start + shown.length ? (
         <Text color={theme.muted}>
-          {' '.repeat(numWidth)} … {all.length - shown.length} more lines (ctrl+o for details)
+          {' '.repeat(numWidth)} … {all.length - start - shown.length} more lines ({moreHint})
         </Text>
       ) : null}
     </Box>

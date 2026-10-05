@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { splitCommands, type SimpleCommand } from '../permissions/shell-parse.js';
 import type { ShellInfo } from './shell.js';
 import { countLines, truncateMiddle } from './truncate.js';
-import { defineTool, type AnyTool } from './types.js';
+import { defineTool, TIME_BUDGET_ABORT, type AnyTool } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -111,7 +111,12 @@ export function createBashTools(shell: ShellInfo): AnyTool[] {
         notes.push(
           `[timed out after ${String(Math.round((i.timeout ?? DEFAULT_TIMEOUT_MS) / 1000))}s]`,
         );
-      if (r.interrupted) notes.push('[interrupted by the user]');
+      if (r.interrupted)
+        notes.push(
+          ctx.signal.reason === TIME_BUDGET_ABORT
+            ? '[stopped: the task reached its time budget]'
+            : '[interrupted by the user]',
+        );
       if (r.exitCode !== undefined && r.exitCode !== 0)
         notes.push(`[exit code ${String(r.exitCode)}]`);
       const body = r.output.trim() === '' ? '(no output)' : r.output.replace(/\s+$/, '');

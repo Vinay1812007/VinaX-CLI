@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import type { Env } from '../config/paths.js';
 import type { HookEvent, HookMatcher } from '../config/schema.js';
-import type { ShellInfo } from '../tools/shell.js';
+import { killTree, type ShellInfo } from '../tools/shell.js';
 
 export interface HookResult {
   /** A hook said no (exit code 2, or `{"decision":"block"}`). */
@@ -14,9 +14,16 @@ export interface HookResult {
   context: string[];
   /** Hooks that failed without blocking (bad exit code, timeout). */
   warnings: string[];
+  /** The run was interrupted: the running hook was stopped and later ones were skipped. */
+  cancelled: boolean;
 }
 
 const DEFAULT_TIMEOUT_S = 60;
+
+/** Reads the flag through a call so TypeScript does not narrow it across awaits. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
 
 /** `Bash`, `Edit|Write`, `Read, Grep` are name lists; anything else is a regular expression. */
 export function matcherMatches(matcher: string | undefined, toolName: string | undefined): boolean {
@@ -84,6 +91,7 @@ export class HookRunner {
       approved: false,
       context: [],
       warnings: [],
+      cancelled: false,
     };
     if (!this.has(event, opts.toolName)) return result;
     const payload = JSON.stringify({
@@ -96,19 +104,44 @@ export class HookRunner {
     for (const group of this.config[event] ?? []) {
       if (!matcherMatches(group.matcher, opts.toolName)) continue;
       for (const hook of group.hooks) {
-        const r = await execa(this.opts.shell.path, shellArgs(this.opts.shell, hook.command), {
+        if (opts.signal?.aborted === true) {
+          result.cancelled = true;
+          return result;
+        }
+        // Its own process group, so stopping it also stops whatever it started (which would
+        // otherwise keep the output pipe open and the turn waiting).
+        const child = execa(this.opts.shell.path, shellArgs(this.opts.shell, hook.command), {
           cwd: this.opts.cwd,
           env: { ...this.opts.env, VINAX_PROJECT_DIR: this.opts.cwd, VINAX_HOOK_EVENT: event },
           extendEnv: false,
           input: payload,
           reject: false,
-          timeout: (hook.timeout ?? DEFAULT_TIMEOUT_S) * 1000,
-          ...(opts.signal === undefined ? {} : { cancelSignal: opts.signal }),
+          detached: process.platform !== 'win32',
           windowsHide: true,
         });
+        const state = { timedOut: false };
+        const timer = setTimeout(
+          () => {
+            state.timedOut = true;
+            killTree(child.pid);
+          },
+          (hook.timeout ?? DEFAULT_TIMEOUT_S) * 1000,
+        );
+        const onAbort = (): void => {
+          killTree(child.pid);
+        };
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
+        const r = await child.finally(() => {
+          clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
+        });
+        if (isAborted(opts.signal)) {
+          result.cancelled = true;
+          return result;
+        }
         const stdout = typeof r.stdout === 'string' ? r.stdout.trim() : '';
         const stderr = typeof r.stderr === 'string' ? r.stderr.trim() : '';
-        if (r.timedOut) {
+        if (state.timedOut) {
           result.warnings.push(`${event} hook timed out: ${hook.command}`);
           continue;
         }

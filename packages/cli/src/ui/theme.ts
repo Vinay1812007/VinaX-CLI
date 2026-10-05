@@ -122,11 +122,12 @@ export const THEME_LABELS: Record<ThemeName, string> = {
   colorblind: 'Colour-blind friendly (dark)',
 };
 
+/** `NO_COLOR` (any non-empty value) or a terminal that declares itself `dumb`. */
 export function colorDisabled(env: Env): boolean {
-  return env.NO_COLOR !== undefined && env.NO_COLOR !== '';
+  return (env.NO_COLOR !== undefined && env.NO_COLOR !== '') || env.TERM === 'dumb';
 }
 
-/** `NO_COLOR` always wins over the configured theme. */
+/** `NO_COLOR` and `TERM=dumb` always win over the configured theme. */
 export function resolveTheme(name: ThemeName, env: Env): Theme {
   return colorDisabled(env) ? mono : THEMES[name];
 }

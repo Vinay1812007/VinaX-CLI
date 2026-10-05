@@ -1,4 +1,4 @@
-import type { FailureReport, ToolDisplay } from '@vinax/core';
+import type { AgentOutcome, FailureReport, ModelUsage, ToolDisplay } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
 
 export type TranscriptItem =
@@ -26,6 +26,13 @@ export type TranscriptItem =
   | { id: number; kind: 'summary'; text: string }
   /** The model reasoned before answering: "✻ Thought for 4s". */
   | { id: number; kind: 'thought'; durationMs: number };
+
+/** A transcript item before it is given its id. */
+export type NewTranscriptItem = TranscriptItem extends infer T
+  ? T extends { id: number }
+    ? Omit<T, 'id'>
+    : never
+  : never;
 
 export interface ToolRecord {
   name: string;
@@ -61,12 +68,18 @@ export function restoreItems(views: readonly unknown[]): TranscriptItem[] {
 export interface TurnRecord {
   prompt: string;
   model: string | undefined;
+  /** Tokens the provider reported. */
   inputTokens: number | undefined;
   outputTokens: number | undefined;
+  /** Tokens VinaX had to estimate (no usage report, or a reply cut off). */
+  estimatedTokens?: number;
+  /** Measured and estimated tokens per model, for pricing. */
+  usageByModel?: Record<string, ModelUsage>;
   durationMs: number;
+  /** Models switched to, with why: "openrouter:x (Groq 429: rate limited)". */
   fallbacks: string[];
   tools: ToolRecord[];
-  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked';
+  status: AgentOutcome['status'];
 }
 
 /**

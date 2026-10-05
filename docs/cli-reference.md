@@ -20,6 +20,7 @@
 | `vinax health`                            | A concise, grouped health summary; exits 1 if a check fails                       |
 | `vinax config …`                          | View and edit settings and keys (below)                                           |
 | `vinax mcp …`                             | Manage [MCP servers](/mcp) (below)                                                |
+| `vinax worktree …`                        | Review, apply and remove [isolated worktrees](/worktrees) (below)                 |
 
 ## Flags
 
@@ -33,6 +34,9 @@
 | `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`                                                                  |
 | `--add-dir <path>`                        | Also let tools work in this folder (repeatable)                                                         |
 | `--max-turns <n>`                         | Stop after this many model calls per prompt                                                             |
+| `--token-budget <n>`                      | Stop a task after this many tokens, reported or estimated ([budgets](/usage#budgets))                   |
+| `--time-budget <seconds>`                 | Stop a task after this many seconds                                                                     |
+| `-w, --worktree [name]`                   | Work in an [isolated git worktree](/worktrees), created from `HEAD` if needed                           |
 | `-c, --continue`                          | Continue the most recent conversation in this folder                                                    |
 | `-r, --resume [session-id]`               | Resume a conversation                                                                                   |
 | `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/`, keys redacted                                   |
@@ -61,6 +65,15 @@
 | `remove <name>`                   | Remove a server                                                   |
 
 `add` and `remove` take `--scope user` (default) or `--scope project`.
+
+## vinax worktree
+
+| Subcommand                | What it does                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `list`                    | VinaX worktrees of this repository and whether they have changes                    |
+| `diff <name> [--stat]`    | Everything the worktree changed: commits, edits and new files                       |
+| `apply <name>`            | Copy the changes into your checkout; nothing is written unless all of it applies    |
+| `remove <name> [--force]` | Delete the worktree and its branch; refuses with unapplied changes unless `--force` |
 
 ## Exit codes
 

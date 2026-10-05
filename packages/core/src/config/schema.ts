@@ -122,6 +122,28 @@ export const settingsSchema = z.strictObject({
       autoCompact: z.boolean().optional(),
     })
     .optional(),
+  /** Limits for one task (one prompt and everything VinaX does for it, sub-agents included). */
+  budget: z
+    .strictObject({
+      /** Tokens (input + output, measured or estimated) before VinaX stops and reports. */
+      tokens: z.number().int().positive().optional(),
+      /** Seconds of work before VinaX stops and reports. */
+      seconds: z.number().int().positive().optional(),
+    })
+    .optional(),
+  /**
+   * Prices you know, in US dollars per million tokens, by model ref. Costs are only shown for
+   * models with explicit prices (from here or the provider's catalog); otherwise "unknown".
+   */
+  pricing: z
+    .record(
+      modelRefSchema,
+      z.strictObject({
+        inputPerMillion: z.number().min(0),
+        outputPerMillion: z.number().min(0),
+      }),
+    )
+    .optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -160,6 +182,9 @@ export interface ResolvedSettings {
   updateCheck: boolean;
   showTips: boolean;
   context: { maxTokens: number; autoCompact: boolean };
+  budget: { tokens: number | undefined; seconds: number | undefined };
+  /** USD per million tokens, keyed by canonical model ref. */
+  pricing: Record<string, { inputPerMillion: number; outputPerMillion: number }>;
   gateway: { url: string | undefined; timeoutMs: number };
   hooks: Partial<Record<HookEvent, HookMatcher[]>>;
   disableAllHooks: boolean;
@@ -199,6 +224,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   updateCheck: true,
   showTips: true,
   context: { maxTokens: 24_000, autoCompact: true },
+  budget: { tokens: undefined, seconds: undefined },
+  pricing: {},
   gateway: { url: undefined, timeoutMs: 120_000 },
   hooks: {},
   disableAllHooks: false,
@@ -229,6 +256,13 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     updateCheck: s.updateCheck ?? d.updateCheck,
     showTips: s.showTips ?? d.showTips,
     context: { ...d.context, ...s.context },
+    budget: {
+      tokens: s.budget?.tokens ?? d.budget.tokens,
+      seconds: s.budget?.seconds ?? d.budget.seconds,
+    },
+    pricing: Object.fromEntries(
+      Object.entries(s.pricing ?? {}).map(([ref, price]) => [canonical(ref), price]),
+    ),
     gateway: {
       url: s.gateway?.url ?? d.gateway.url,
       timeoutMs: s.gateway?.timeoutMs ?? d.gateway.timeoutMs,

@@ -184,24 +184,26 @@ When a turn fails, an error card names each model tried, the kind of failure (au
 missing key, rate limit, temporary provider error, network, model not available…) and what to try
 next.
 
-| Key                                                 | Action                                                         |
-| --------------------------------------------------- | -------------------------------------------------------------- |
-| `Enter`                                             | Send (typing while a reply streams queues the next prompt)     |
-| `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line (`Shift+Enter` needs a terminal that reports it)      |
-| `↑` / `↓`                                           | Move between lines, then walk this project's history           |
-| `Ctrl+R`                                            | Search prompt history (press again for older matches)          |
-| `Shift+Tab`                                         | Cycle ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto            |
-| `Esc`                                               | Stop the current reply; what was written is kept               |
-| `Esc Esc`                                           | Clear the prompt; on an empty prompt, open the rewind picker   |
-| `Ctrl+V`                                            | Paste an image from the clipboard                              |
-| `Option/Alt+←` `→`, `Ctrl+A` `Ctrl+E`               | Word left/right, line start/end                                |
-| `Option/Alt+Backspace` `Ctrl+W`, `Alt+D`            | Delete the word before / after the cursor                      |
-| `Ctrl+U` `Ctrl+K`, `Ctrl+Y`, `Ctrl+_`               | Delete to line start/end, paste it back, undo                  |
-| `Ctrl+O`                                            | Turn details: model, tokens, time, fallbacks, live rate limits |
-| `Ctrl+L`                                            | Redraw the screen                                              |
-| `?` (empty prompt)                                  | Show all shortcuts                                             |
-| `Ctrl+C`                                            | Clear the prompt; press again within 2s to exit                |
-| `Ctrl+D`                                            | Exit (on an empty prompt)                                      |
+| Key                                                 | Action                                                       |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| `Enter`                                             | Send (typing while a reply streams queues the next prompt)   |
+| `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line (`Shift+Enter` needs a terminal that reports it)    |
+| `↑` / `↓`                                           | Move between lines, then walk this project's history         |
+| `Ctrl+R`                                            | Search prompt history (press again for older matches)        |
+| `Shift+Tab`                                         | Cycle ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto          |
+| `Esc`                                               | Stop the current reply; what was written is kept             |
+| `Esc Esc`                                           | Clear the prompt; on an empty prompt, open the rewind picker |
+| `Ctrl+V`                                            | Paste an image from the clipboard                            |
+| `Option/Alt+←` `→`, `Ctrl+A` `Ctrl+E`               | Word left/right, line start/end                              |
+| `Option/Alt+Backspace` `Ctrl+W`, `Alt+D`            | Delete the word before / after the cursor                    |
+| `Ctrl+U` `Ctrl+K`, `Ctrl+Y`, `Ctrl+_`               | Delete to line start/end, paste it back, undo                |
+| `Ctrl+P`                                            | Command palette: search every command and view               |
+| `Ctrl+G`                                            | Review changed files: diffs, undo one file                   |
+| `Ctrl+O`                                            | Transcript: search, full tool output, models, tokens, limits |
+| `Ctrl+L`                                            | Redraw the screen                                            |
+| `?` (empty prompt)                                  | Show all shortcuts                                           |
+| `Ctrl+C`                                            | Clear the prompt; press again within 2s to exit              |
+| `Ctrl+D`                                            | Exit (on an empty prompt)                                    |
 
 **Images.** Drag an image file into the terminal, type or paste its path, use `@shot.png`, or
 copy a screenshot and press `Ctrl+V`. It becomes an `[Image #1]` chip, and that turn goes to a
@@ -316,6 +318,16 @@ Commands containing `$(…)` or backticks always ask.
 - the conversation, the files, or both
 - only the files changed through VinaX's file tools, not files changed by shell commands
 
+Files edited outside VinaX since it changed them are listed first, with the difference, and never
+overwritten without asking; overwritten versions are backed up. `Ctrl+G` (`/changes`) reviews and
+undoes changed files one at a time.
+
+**Budgets, loops and worktrees.** `--token-budget` / `--time-budget` (or `budget` in settings) cap
+each task; a task that keeps repeating a failing call stops with an explanation; costs appear only
+for models with explicit prices. `vinax --worktree [name]` works in an isolated git worktree that you
+review and apply with `vinax worktree diff|apply|remove` (it isolates file edits; it is not a
+sandbox).
+
 ## Commands, prefixes and memory
 
 Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run).
@@ -328,8 +340,9 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/model [provider:model \| alias]` | Switch the model for this session (searchable picker, grouped by provider)                                                |
 | `/models`                          | Providers, current model and alias, fallback order, aliases; then switch                                                  |
 | `/resume`, `/rewind`               | Continue an earlier conversation; go back to an earlier prompt                                                            |
+| `/changes`                         | Review files changed this session: diffs, and undo per file (`Ctrl+G`)                                                    |
 | `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                                                                |
-| `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; requests and tokens today                                               |
+| `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; reported/estimated tokens and cost, requests today                      |
 | `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
 | `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
 | `/update`, `/changelog`            | Check for a newer release and how to update; what's new in recent releases                                                |
@@ -529,6 +542,8 @@ vinax -p "summarize src/" --output-format stream-json --max-turns 10
 | `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`.                                 |
 | `--add-dir <path>`                        | Let tools work in another folder too (repeatable).                      |
 | `--max-turns <n>`                         | Stop after this many model calls per prompt.                            |
+| `--token-budget <n>`, `--time-budget <s>` | Stop a task after this many tokens / seconds.                           |
+| `-w, --worktree [name]`                   | Work in an isolated git worktree; see `vinax worktree`.                 |
 | `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/` (keys redacted). |
 | `-v, --version`                           | Print the version.                                                      |
 

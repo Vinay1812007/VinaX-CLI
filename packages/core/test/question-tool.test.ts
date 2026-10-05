@@ -23,7 +23,7 @@ describe('AskUserQuestion', () => {
   it('reports cancellation and provides a headless fallback without inventing an answer', async () => {
     const cancelled = await askUserTool.run(input, {
       signal: new AbortController().signal,
-      host: { askQuestion: async () => ({ cancelled: true }) },
+      host: { askQuestion: () => Promise.resolve({ cancelled: true }) },
     } as unknown as ToolContext);
     expect(cancelled.summary).toBe('Skipped');
     expect(cancelled.ok).toBe(false);
