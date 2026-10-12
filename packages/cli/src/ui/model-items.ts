@@ -57,6 +57,32 @@ export function providerSummaries(runtime: Runtime): ProviderSummary[] {
   }));
 }
 
+/**
+ * What the picker says a model costs. A catalog price is the only hard evidence either way, so
+ * providers whose catalog publishes none get a tier reminder rather than a guess. Groq is left
+ * without a hint: its catalog carries no prices and its tier depends on the account.
+ */
+function pricingHint(
+  provider: ProviderName,
+  info: Partial<Pick<ModelInfo, 'free' | 'pricing'>>,
+): string | undefined {
+  if (info.free === true) return 'free';
+  if (info.pricing !== undefined) return 'paid';
+  switch (provider) {
+    case 'gemini':
+    case 'mistral':
+      return 'free/paid tier · check account';
+    case 'openai':
+    case 'claude':
+    case 'deepseek':
+      return 'paid API';
+    case 'openrouter':
+      return 'pricing unknown';
+    default:
+      return undefined;
+  }
+}
+
 function row(
   provider: ProviderName,
   info: Pick<ModelInfo, 'id' | 'contextWindow' | 'supportsTools' | 'vision'> &
@@ -77,20 +103,10 @@ function row(
     vision: info.vision ?? known?.vision ?? false,
     status,
     current: ref === current,
-    ...(provider === 'openrouter' ||
-    ['openai', 'claude', 'deepseek', 'gemini', 'mistral'].includes(provider)
-      ? {
-          pricingHint: info.free
-            ? 'free'
-            : info.pricing
-              ? 'paid'
-              : ['gemini', 'mistral'].includes(provider)
-                ? 'free/paid tier · check account'
-                : ['openai', 'claude', 'deepseek'].includes(provider)
-                  ? 'paid API'
-                  : 'pricing unknown',
-        }
-      : {}),
+    ...(() => {
+      const hint = pricingHint(provider, info);
+      return hint === undefined ? {} : { pricingHint: hint };
+    })(),
   };
 }
 

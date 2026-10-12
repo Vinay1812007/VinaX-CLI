@@ -11,7 +11,7 @@ export const PROJECT_URL = 'https://github.com/Vinay1812007/VinaX-CLI';
 
 const PER_PROVIDER: Record<
   ProviderName,
-  { keyCheck: KeyCheckMethod; headers?: Record<string, string> }
+  { keyCheck: KeyCheckMethod; headers?: Record<string, string>; freeCatalog?: boolean }
 > = {
   groq: { keyCheck: { path: '/models' } },
   // OpenRouter's /models is public, so /key is the call that actually proves the key works.
@@ -20,8 +20,9 @@ const PER_PROVIDER: Record<
     headers: { 'HTTP-Referer': PROJECT_URL, 'X-Title': 'VinaX CLI' },
   },
   // NVIDIA's /models is public too and it has no key-info endpoint, so a one-token completion
-  // is the cheapest request that needs a valid key.
-  nvidia: { keyCheck: { completionModel: 'openai/gpt-oss-20b' } },
+  // is the cheapest request that needs a valid key. Its catalog carries no pricing because every
+  // hosted NIM endpoint is free to call, so mark the whole catalog free rather than "price unknown".
+  nvidia: { keyCheck: { completionModel: 'openai/gpt-oss-20b' }, freeCatalog: true },
   gemini: { keyCheck: { path: '/models' } },
   openai: { keyCheck: { path: '/models' } },
   // DeepSeek and Mistral implement the OpenAI chat-completions protocol.
@@ -57,6 +58,7 @@ export function createProvider(
     logger: deps.logger,
     keyCheck: extra.keyCheck,
     ...(extra.headers ? { defaultHeaders: extra.headers } : {}),
+    ...(extra.freeCatalog === true ? { freeCatalog: true } : {}),
   });
 }
 
@@ -76,6 +78,7 @@ export function createGatewayProvider(
     logger: deps.logger,
     keyCheck: { path: '/models' },
     gateway,
+    ...(PER_PROVIDER[name].freeCatalog === true ? { freeCatalog: true } : {}),
   });
 }
 

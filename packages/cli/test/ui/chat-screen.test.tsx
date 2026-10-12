@@ -946,7 +946,8 @@ describe('ChatScreen extensibility (M5)', () => {
     await type('/model', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes('type to filter'), 'model picker');
     expect(frame()).toContain('NVIDIA · nvidia.com');
-    expect(frame()).toContain('NVD_CHAT_OSS_20_B · 131K ctx');
+    // NVIDIA publishes no prices because every hosted NIM endpoint is free.
+    expect(frame()).toContain('NVD_CHAT_OSS_20_B · free · 131K ctx');
     expect(frame()).not.toContain('nvidia/embed-qa');
     await type('nvd_');
     await waitFor(() => frame().includes('⌕ nvd_ · 1 of'), 'filtered');

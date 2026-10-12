@@ -221,8 +221,14 @@ describe('model picker items', () => {
         .slice(0, 2)
         .map((i) => [i.group, i.label, i.hint, i.current === true, i.disabled === true]),
     ).toEqual([
-      ['Groq · groq.com', 'openai/gpt-oss-120b', '131K ctx', false, false],
-      ['NVIDIA · nvidia.com', 'openai/gpt-oss-20b', 'NVD_CHAT_OSS_20_B · 131K ctx', true, false],
+      ['Groq · groq.com', 'openai/gpt-oss-120b', 'free · 131K ctx', false, false],
+      [
+        'NVIDIA · nvidia.com',
+        'openai/gpt-oss-20b',
+        'NVD_CHAT_OSS_20_B · free · 131K ctx',
+        true,
+        false,
+      ],
     ]);
     expect(list.some((i) => i.value === 'gemini:gemini-2.5-flash')).toBe(true);
   });

@@ -185,6 +185,29 @@ describe('OpenAICompatibleProvider', () => {
       { id: 'b:free', contextWindow: undefined, supportsTools: true, free: true },
     ]);
   });
+
+  // NVIDIA's /models reports only id/owned_by — no pricing — so without freeCatalog every one of
+  // its free NIM endpoints would be listed as paid.
+  it('marks a whole catalog free when the provider publishes no prices', async () => {
+    server = await startMockServer({
+      apiKeys: ['gsk_goodkey000000'],
+      models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.1-8b-instruct' }],
+    });
+    const provider = new OpenAICompatibleProvider({
+      name: 'nvidia',
+      baseURL: server.url,
+      apiKey: 'gsk_goodkey000000',
+      timeoutMs: 5000,
+      ledger: new RateLimitLedger(() => 30),
+      logger: noopLogger,
+      keyCheck: { path: '/models' },
+      freeCatalog: true,
+    });
+    expect((await provider.listModels()).map((m) => [m.id, m.free])).toEqual([
+      ['openai/gpt-oss-20b', true],
+      ['meta/llama-3.1-8b-instruct', true],
+    ]);
+  });
 });
 
 describe('ModelCatalog', () => {

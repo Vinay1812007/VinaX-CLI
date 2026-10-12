@@ -25,6 +25,12 @@ export interface OpenAICompatibleOptions {
   defaultHeaders?: Record<string, string>;
   /** How to prove a key works (`/models` is public on some providers). */
   keyCheck: KeyCheckMethod;
+  /**
+   * Every endpoint in this provider's catalog is free to call, so the catalog needs no price to
+   * prove it. NVIDIA's hosted NIM endpoints are all free (rate-limited) and its `/models` reports
+   * only `id`/`owned_by`, which would otherwise leave every model looking paid.
+   */
+  freeCatalog?: boolean;
   now?: () => number;
   /** Set when requests go through the VinaX gateway, which names models `<provider>:<id>`. */
   gateway?: GatewayClient;
@@ -88,7 +94,7 @@ function toWire(m: ChatMessage): ChatCompletionMessageParam {
   }
 }
 
-function toModelInfo(raw: unknown): ModelInfo | undefined {
+function toModelInfo(raw: unknown, freeCatalog = false): ModelInfo | undefined {
   const parsed = catalogEntrySchema.safeParse(raw);
   if (
     !parsed.success ||
@@ -114,7 +120,7 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
     id: m.id,
     contextWindow: m.context_window ?? m.context_length ?? m.max_model_len ?? m.max_context_length,
     supportsTools: m.capabilities?.function_calling ?? m.supported_parameters?.includes('tools'),
-    free: m.id.endsWith(':free') || zeroPrice,
+    free: freeCatalog || m.id.endsWith(':free') || zeroPrice,
     ...(m.architecture?.input_modalities === undefined
       ? m.capabilities?.vision === undefined
         ? {}
@@ -193,7 +199,10 @@ export class OpenAICompatibleProvider implements Provider {
     if (status !== 200)
       throw new Error(`${providerLabel(this.name)} /models returned HTTP ${status}`);
     const parsed = catalogSchema.parse(body);
-    const models = parsed.data.map(toModelInfo).filter((m): m is ModelInfo => m !== undefined);
+    const free = this.opts.freeCatalog === true;
+    const models = parsed.data
+      .map((m) => toModelInfo(m, free))
+      .filter((m): m is ModelInfo => m !== undefined);
     if (!this.opts.gateway) return models;
     const prefix = `${this.name}:`;
     return models
