@@ -1,5 +1,14 @@
 # @sirimillavinay/vinax
 
+## 1.0.6
+
+- test: expect the plugin root as written on Windows
+- test: don't pin the tool duration in the Ctrl+X test
+- feat: plugins and marketplaces
+- feat: output styles — change how VinaX answers, not how it works
+- feat: roll usage up over days and price each model in /usage
+- feat: expand shortened tool output and diffs with Ctrl+X
+
 ## 1.0.5
 
 - feat: keep the model's reasoning so it can be reread
