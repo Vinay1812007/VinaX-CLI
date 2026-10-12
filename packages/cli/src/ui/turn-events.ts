@@ -70,11 +70,20 @@ export function createTurnTracker(sink: TurnSink): {
   const toolStarts = new Map<string, number>();
   let model: string | undefined;
   let thinkingSince: number | undefined;
+  // The live line only keeps the last 600 characters; this keeps the whole thing so the finished
+  // "Thought for Ns" line still has something to show when it is opened.
+  let thinkingText = '';
 
   const endThinking = (): void => {
     if (thinkingSince === undefined) return;
-    push({ kind: 'thought', durationMs: now() - thinkingSince });
+    const text = thinkingText.trim();
+    push({
+      kind: 'thought',
+      durationMs: now() - thinkingSince,
+      ...(text === '' ? {} : { text }),
+    });
     thinkingSince = undefined;
+    thinkingText = '';
     setStreaming((st) => st && { ...st, thinking: undefined });
   };
   const commitTail = (): void => {
@@ -93,6 +102,7 @@ export function createTurnTracker(sink: TurnSink): {
       case 'reasoning': {
         thinkingSince ??= now();
         const add = ev.text;
+        thinkingText += add;
         setStreaming((st) => st && { ...st, thinking: `${st.thinking ?? ''}${add}`.slice(-600) });
         return;
       }

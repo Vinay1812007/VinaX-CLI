@@ -24,8 +24,11 @@ export type TranscriptItem =
   | { id: number; kind: 'error'; report: FailureReport }
   /** End of a turn that used tools: "Updated 3 files · 7 tool calls · 12s". */
   | { id: number; kind: 'summary'; text: string }
-  /** The model reasoned before answering: "✻ Thought for 4s". */
-  | { id: number; kind: 'thought'; durationMs: number };
+  /**
+   * The model reasoned before answering: "✻ Thought for 4s". `text` is the reasoning itself,
+   * kept so it can be reread in the Ctrl+O browser (absent in sessions from older versions).
+   */
+  | { id: number; kind: 'thought'; durationMs: number; text?: string };
 
 /** A transcript item before it is given its id. */
 export type NewTranscriptItem = TranscriptItem extends infer T

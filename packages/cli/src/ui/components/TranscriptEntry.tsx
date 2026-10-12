@@ -53,6 +53,6 @@ export function TranscriptEntry({
     case 'summary':
       return <TurnSummary text={item.text} />;
     case 'thought':
-      return <ThoughtLine durationMs={item.durationMs} />;
+      return <ThoughtLine durationMs={item.durationMs} hasText={item.text !== undefined} />;
   }
 }

@@ -1069,6 +1069,12 @@ describe('ChatScreen extensibility (M5)', () => {
     await type('ponder', KEYS.enter);
     await waitFor(() => frame().includes('thought it through'), 'answer');
     expect(frame()).toMatch(/✻ Thought for \d+s/);
+    // The reasoning itself is kept, not just its duration, so it can be reread.
+    expect(frame()).toContain('ctrl+o to read it');
+    await type(KEYS.ctrlO);
+    await waitFor(() => frame().includes('Thought for 1s'), 'thought entry in the browser');
+    await type(KEYS.up, KEYS.enter);
+    await waitFor(() => frame().includes('let me think'), 'reasoning expanded');
     const body = agentRequests(harness).at(-1)?.body as { reasoning_effort?: string };
     expect(body.reasoning_effort).toBe('high');
     const saved = JSON.parse(

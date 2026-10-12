@@ -203,13 +203,13 @@ export function TurnSummary({ text }: { text: string }) {
 }
 
 /** Left behind after the model reasoned: "✻ Thought for 4s". */
-export function ThoughtLine({ durationMs }: { durationMs: number }) {
+export function ThoughtLine({ durationMs, hasText }: { durationMs: number; hasText?: boolean }) {
   const theme = useTheme();
   const secs = Math.max(1, Math.round(durationMs / 1000));
   return (
     <Box marginTop={1}>
       <Text color={theme.muted} italic>
-        ✻ Thought for {secs}s
+        ✻ Thought for {secs}s{hasText === true ? ' · ctrl+o to read it' : ''}
       </Text>
     </Box>
   );

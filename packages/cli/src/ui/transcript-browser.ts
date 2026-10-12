@@ -117,9 +117,19 @@ export function browseEntries(
           tone: 'muted',
         });
         break;
+      case 'thought':
+        // Reasoning is collapsed to one line in the chat; this is where it can be read in full.
+        if (item.text !== undefined && item.text !== '')
+          out.push({
+            key: String(item.id),
+            kind: 'panel',
+            title: `Thought for ${String(Math.max(1, Math.round(item.durationMs / 1000)))}s`,
+            body: item.text,
+            tone: 'muted',
+          });
+        break;
       case 'welcome':
       case 'summary':
-      case 'thought':
         break;
     }
   }
