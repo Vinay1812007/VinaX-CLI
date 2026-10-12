@@ -167,9 +167,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   });
 
   const usage = new UsageTracker(env);
-  process.once('exit', () => {
-    usage.flush();
-  });
   let gatewayLink = gateway;
   const useGatewayFor = (name: ProviderName): boolean => {
     if (!gatewayLink || !resolved.providers[name].enabled) return false;

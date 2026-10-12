@@ -14,6 +14,14 @@ export interface DayUsage {
   providers: Partial<Record<ProviderName, UsageCounts & { models: Record<string, UsageCounts> }>>;
 }
 
+// Runtimes are created freely by the CLI and by consumers of the core package. Keep one process
+// exit listener instead of adding one per runtime, and only retain trackers that have data left
+// to persist.
+const pendingTrackers = new Set<UsageTracker>();
+process.once('exit', () => {
+  for (const tracker of pendingTrackers) tracker.flush();
+});
+
 function empty(): UsageCounts {
   return { requests: 0, promptTokens: 0, completionTokens: 0 };
 }
@@ -46,6 +54,7 @@ export class UsageTracker {
     const current = this.pending.get(key) ?? empty();
     add(current, delta);
     this.pending.set(key, current);
+    pendingTrackers.add(this);
     this.timer ??= setTimeout(() => {
       this.flush();
     }, 1000);
@@ -78,7 +87,10 @@ export class UsageTracker {
   flush(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    if (this.pending.size === 0) return;
+    if (this.pending.size === 0) {
+      pendingTrackers.delete(this);
+      return;
+    }
     const date = this.today();
     const day = this.read(date);
     for (const [key, delta] of this.pending) {
@@ -93,6 +105,8 @@ export class UsageTracker {
       fs.writeFileSync(this.file(date), `${JSON.stringify(day, null, 2)}\n`);
     } catch {
       // usage stats are best-effort
+    } finally {
+      pendingTrackers.delete(this);
     }
   }
 
