@@ -1,5 +1,9 @@
 # @sirimillavinay/vinax
 
+## 1.0.5
+
+- feat: keep the model's reasoning so it can be reread
+
 ## 1.0.4
 
 - feat: seven more providers, free-only model lists, key-page redirect
