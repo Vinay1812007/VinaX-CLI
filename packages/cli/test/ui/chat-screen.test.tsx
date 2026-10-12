@@ -696,7 +696,8 @@ describe('ChatScreen review workflow', () => {
     await m.type('run printf', KEYS.enter);
     await waitFor(() => m.frame().includes('Ran it.'), 'answer');
     // the entry is one summary line, which offers the output it is not showing
-    expect(flat(m.frame())).toContain('4 lines · 0.0s (ctrl+x to expand)');
+    // (the duration varies by machine: Windows CI takes 0.1s)
+    expect(flat(m.frame())).toMatch(/4 lines · [\d.]+s \(ctrl\+x to expand\)/);
     expect(m.frame()).not.toContain('row3');
     await m.type(KEYS.ctrlX);
     await waitFor(() => m.frame().includes('row3'), 'expanded output');
