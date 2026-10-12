@@ -70,6 +70,7 @@ vinax config unset model
 | ----------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------- |
 | `model`                                   | `groq:openai/gpt-oss-120b`                    | Main model: a `provider:model` ref or an [alias](/models#aliases)                 |
 | `smallModel`                              | `groq:openai/gpt-oss-20b`                     | Model for titles, summaries and compaction                                        |
+| `planModel`                               | unset                                         | Model for plan mode; unset uses the main model                                    |
 | `fallbackChain`                           | see [Models](/models)                         | Models tried after the main one                                                   |
 | `providers.<name>.enabled`                | `true`                                        | Turn a provider off (`groq`, `openrouter` or `nvidia`)                            |
 | `providers.<name>.baseUrl`                | the provider's API                            | Point a provider at another OpenAI-compatible endpoint                            |

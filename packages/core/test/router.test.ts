@@ -181,6 +181,56 @@ describe('Router', () => {
     ]);
   });
 
+  it('routes plan mode to planModel, and like a normal turn when none is set', () => {
+    const { router } = setup({});
+    expect(router.chain('plan').map(formatModelRef)).toEqual(
+      router.chain('main').map(formatModelRef),
+    );
+    const withPlan = new Router({
+      settings: { ...settings, planModel: 'groq:thinker' },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map(),
+    });
+    expect(withPlan.chain('plan').map(formatModelRef)).toEqual([
+      'groq:thinker',
+      'groq:main',
+      'groq:backup',
+      'openrouter:free-a:free',
+    ]);
+    // Only plan turns get it; ordinary and small turns are untouched.
+    expect(withPlan.chain('main').map(formatModelRef)[0]).toBe('groq:main');
+    expect(withPlan.chain('small').map(formatModelRef)[0]).toBe('groq:small');
+  });
+
+  it('puts discovered free models ahead of paid ones across providers in auto mode', () => {
+    const model = (id: string, free: boolean) => ({
+      id,
+      contextWindow: undefined,
+      supportsTools: undefined,
+      free,
+    });
+    const router = new Router({
+      settings: { ...settings, model: 'groq:main', fallbackChain: [] },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map([
+        ['groq', {} as never],
+        ['nvidia', {} as never],
+      ]),
+      // Groq is walked first and has a paid model; without a global free-first grouping it would
+      // outrank NVIDIA's free ones purely because its provider comes first.
+      models: new Map([
+        ['groq', [model('main', false), model('groq-paid', false)]],
+        ['nvidia', [model('nv-free-a', true), model('nv-free-b', true)]],
+      ]),
+    });
+    expect(router.chain('main', 'auto').map(formatModelRef)).toEqual([
+      'groq:main',
+      'nvidia:nv-free-a',
+      'nvidia:nv-free-b',
+      'groq:groq-paid',
+    ]);
+  });
+
   it('streams from the head of the chain', async () => {
     const { router } = setup({ main: [{ text: ['Hel', 'lo'] }] });
     const events = await collect(router.stream(req()));

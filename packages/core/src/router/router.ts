@@ -86,8 +86,11 @@ export interface RouteRequest {
   messages: readonly ChatMessage[];
   signal: AbortSignal;
   maxTokens?: number;
-  /** `small` routes titles/summaries/compaction to the cheaper model first. */
-  purpose?: 'main' | 'small';
+  /**
+   * `small` routes titles/summaries/compaction to the cheaper model first; `plan` routes plan
+   * mode to `planModel` when one is configured.
+   */
+  purpose?: 'main' | 'small' | 'plan';
   /** Overrides the head of the chain (e.g. `--model`). */
   model?: string;
   /** Replaces the settings' fallback chain for this request (e.g. other vision models). */
@@ -139,17 +142,26 @@ export class Router {
   }
 
   chain(
-    purpose: 'main' | 'small' = 'main',
+    purpose: 'main' | 'small' | 'plan' = 'main',
     override?: string,
     fallbacks: readonly string[] = this.deps.settings.fallbackChain,
   ): ModelRef[] {
     const s = this.deps.settings;
+    // The model this purpose prefers ahead of the main one. Plan mode only has one when the user
+    // configured `planModel`, so by default plan mode routes exactly like a normal turn.
+    const lead = purpose === 'small' ? s.smallModel : purpose === 'plan' ? s.planModel : undefined;
     if (override === 'auto') {
-      const preferred = [s.model, ...fallbacks];
-      const discovered = [...(this.deps.models ?? [])].flatMap(([p, list]) =>
-        chatModels(list, p).map((m) => `${p}:${m.id}`),
-      );
-      const candidates = [...new Set([...preferred, ...discovered])]
+      const preferred = [...(lead === undefined ? [] : [lead]), s.model, ...fallbacks];
+      const free: string[] = [];
+      const paid: string[] = [];
+      for (const [p, list] of this.deps.models ?? []) {
+        for (const m of chatModels(list, p)) (m.free ? free : paid).push(`${p}:${m.id}`);
+      }
+      // Configured defaults come first, then discovered free models before other models. Grouping
+      // this way is what makes the preference global: `chatModels` only sorts free-first inside a
+      // single provider, so concatenating providers would otherwise put one provider's paid models
+      // ahead of the next provider's free ones.
+      const candidates = [...new Set([...preferred, ...free, ...paid])]
         .filter((r) => !this.deps.skip?.has(r))
         .map(parseModelRef)
         .filter(
@@ -158,11 +170,10 @@ export class Router {
             (!this.deps.models?.has(r.provider) ||
               this.deps.models.get(r.provider)?.some((m) => m.id === r.model)),
         );
-      // Configured defaults come first, then discovered free models before other models.
       return candidates;
     }
     const head = override ?? s.model;
-    const refs = purpose === 'small' ? [s.smallModel, head, ...fallbacks] : [head, ...fallbacks];
+    const refs = lead === undefined ? [head, ...fallbacks] : [lead, head, ...fallbacks];
     const unique = [...new Set(refs)].filter((r) => !(this.deps.skip?.has(r) ?? false));
     return unique.map(parseModelRef);
   }

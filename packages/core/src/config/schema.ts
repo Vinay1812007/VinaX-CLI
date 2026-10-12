@@ -86,6 +86,8 @@ export const settingsSchema = z.strictObject({
   model: modelRefSchema.optional(),
   /** Cheaper model for titles, summaries and compaction. */
   smallModel: modelRefSchema.optional(),
+  /** Model for plan mode, where reasoning matters more than speed. Unset: the main model. */
+  planModel: modelRefSchema.optional(),
   /** Tried in order after the main model fails or is rate-limited. */
   fallbackChain: z.array(modelRefSchema).optional(),
   /** Answers prompts that carry images when the main model cannot see them. */
@@ -179,6 +181,8 @@ export interface RouterSettings {
 export interface ResolvedSettings {
   model: string;
   smallModel: string;
+  /** Unset means plan mode uses the main model, so there is no default to fall back to. */
+  planModel: string | undefined;
   fallbackChain: string[];
   visionModel: string | undefined;
   providers: Record<ProviderName, ProviderSettings>;
@@ -211,6 +215,7 @@ export interface ResolvedSettings {
 export const DEFAULT_SETTINGS: ResolvedSettings = {
   model: 'groq:openai/gpt-oss-120b',
   smallModel: 'groq:openai/gpt-oss-20b',
+  planModel: undefined,
   fallbackChain: [
     'groq:qwen/qwen3.8-27b',
     'openrouter:qwen/qwen3.8-27b:free',
@@ -269,6 +274,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
   return {
     model: canonical(s.model ?? d.model),
     smallModel: canonical(s.smallModel ?? d.smallModel),
+    planModel: s.planModel === undefined ? d.planModel : canonical(s.planModel),
     fallbackChain: (s.fallbackChain ?? d.fallbackChain).map(canonical),
     visionModel: s.visionModel === undefined ? d.visionModel : canonical(s.visionModel),
     providers: {

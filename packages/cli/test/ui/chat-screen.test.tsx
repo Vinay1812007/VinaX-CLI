@@ -823,7 +823,7 @@ describe('ChatScreen workflow (M4)', () => {
     await waitFor(() => frame().includes('◆ Auto works'), 'auto answer');
     await type('/model', KEYS.esc, KEYS.enter);
     await waitFor(
-      () => frame().includes('Choose an available model automatically'),
+      () => frame().includes('Prefer free models, fall back automatically'),
       'auto picker option',
     );
   });

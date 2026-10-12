@@ -709,6 +709,9 @@ export class Agent {
       const events = this.deps.router.stream({
         messages: this.messages,
         signal,
+        // Plan mode gets its own model when one is configured; the router falls back to the main
+        // model when it is not, so this is a no-op for anyone who never set `planModel`.
+        ...(mode === 'plan' ? { purpose: 'plan' as const } : {}),
         ...(this.effort === undefined ? {} : { reasoningEffort: this.effort }),
         prepare,
         onToolFormatError: (ref) =>

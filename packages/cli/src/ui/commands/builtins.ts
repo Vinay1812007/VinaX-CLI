@@ -147,9 +147,12 @@ function switchModel(ctx: CommandContext, input: string): void {
   if (input.trim().toLowerCase() === 'auto') {
     ctx.setup.agent.setModel('auto');
     ctx.session.record({ type: 'model', model: 'auto' });
+    // Read it back: the getter resolves `auto` to the head of the chain the router would use, so
+    // this names the model the next turn actually goes to rather than leaving it a mystery.
+    const picked = ctx.setup.agent.model;
     ctx.notice(
       'info',
-      'Auto model selection enabled: use available configured models and fall back when needed. Provider billing still applies.',
+      `Auto model selection enabled: free models are preferred, and VinaX falls back when one is rate-limited or unavailable.${picked === undefined ? '' : ` Starting with \`${picked}\`.`} Provider billing still applies.`,
     );
     return;
   }
@@ -187,7 +190,7 @@ async function pickModel(ctx: CommandContext, title: string): Promise<string | u
     {
       label: 'Auto',
       value: 'auto',
-      hint: 'Choose an available model automatically · provider billing applies',
+      hint: 'Prefer free models, fall back automatically · provider billing applies',
       current: ctx.setup.agent.modelSelection === 'auto',
     },
     ...modelSelectItems(ctx.runtime, current).map((item) => ({
@@ -265,13 +268,19 @@ const models: SlashCommand = {
       const a = modelAlias(ref);
       lines.push(`${String(i + 1)}. \`${ref}\`${a === undefined ? '' : ` (${a})`} — ${status}`);
     }
+    lines.push(
+      '',
+      '**Special-purpose models**',
+      `- Small (titles, summaries, compaction): \`${r.smallModel}\``,
+      `- Plan mode: ${r.planModel === undefined ? 'the main model — set `planModel` to use a stronger one for planning' : `\`${r.planModel}\``}`,
+    );
     lines.push('', '**Aliases**');
     for (const k of KNOWN_MODELS)
       if (k.alias !== undefined)
         lines.push(`- \`${k.alias}\` → \`${k.provider}:${k.model}\` · ${k.label}`);
     lines.push(
       '',
-      'Change the default with `vinax config set model <ref|alias>` and the order with `fallbackChain` in settings.',
+      'Change the default with `vinax config set model <ref|alias>` and the order with `fallbackChain` in settings. `/model auto` prefers free models and falls back on its own.',
     );
     ctx.panel('Models', lines.join('\n'));
     const ref = await pickModel(ctx, 'Switch model? (Esc keeps the current one)');
@@ -291,6 +300,7 @@ const showEffectiveSettings = (ctx: CommandContext): void => {
         {
           model: r.model,
           smallModel: r.smallModel,
+          ...(r.planModel === undefined ? {} : { planModel: r.planModel }),
           fallbackChain: r.fallbackChain,
           theme: r.theme,
           editorMode: r.editorMode,

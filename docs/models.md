@@ -2,7 +2,7 @@
 
 ## Auto selection
 
-Use `/model auto`, or choose **Auto** in `/model`, to select an available model from configured providers. Defaults and fallbacks are tried first, followed by chat models from live provider catalogs. Provider billing applies. Permission mode is independent and does not change when you select a model.
+Use `/model auto`, or choose **Auto** in `/model`, to select an available model from configured providers. Defaults and fallbacks are tried first, then free models from the live provider catalogs, then paid ones. The free-first preference is global, so a free model at one provider outranks a paid model at another. Provider billing still applies to anything the catalog does not report as free. Permission mode is independent and does not change when you select a model.
 
 The picker includes free and paid chat models. Gemini and Mistral billing depends on the account tier; paid API use requires provider credits. Unknown context sizes do not hide models. Non-chat endpoints such as embeddings, audio and image generation are excluded. OpenAI models requiring the Responses API (including Codex and deep research) are excluded from this Chat Completions client.
 
@@ -14,11 +14,12 @@ Claude uses the native [Messages streaming API](https://platform.claude.com/docs
 
 VinaX never hardcodes a model list. Defaults live in [settings](/settings). At startup each one is checked against the provider's live `/models` list, which is cached for 24 hours. Models that no longer exist are skipped with a warning.
 
-| Setting         | Default                                                                                                                                          | Used for                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| `model`         | `groq:openai/gpt-oss-120b`                                                                                                                       | The agent loop                                  |
-| `smallModel`    | `groq:openai/gpt-oss-20b`                                                                                                                        | Titles, summaries, compaction, WebFetch answers |
-| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:openai/gpt-oss-20b` | When the main model is limited or failing       |
+| Setting         | Default                                                                                                                                          | Used for                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `model`         | `groq:openai/gpt-oss-120b`                                                                                                                       | The agent loop                                     |
+| `smallModel`    | `groq:openai/gpt-oss-20b`                                                                                                                        | Titles, summaries, compaction, WebFetch answers    |
+| `planModel`     | unset (the main model)                                                                                                                           | Plan mode, where reasoning matters more than speed |
+| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:openai/gpt-oss-20b` | When the main model is limited or failing          |
 
 Models are written `provider:model-id`, with a provider from the table below. Switch for one session with `/model` or `--model`, or permanently with `vinax config set model groq:openai/gpt-oss-20b`.
 
