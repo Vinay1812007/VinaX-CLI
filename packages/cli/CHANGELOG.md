@@ -1,5 +1,10 @@
 # @sirimillavinay/vinax
 
+## 1.0.2
+
+- feat: prefer free models in auto mode and add a plan-mode model
+- fix: mark NVIDIA's catalog free so its models list as free
+
 ## 1.0.1
 
 ### Patch Changes
