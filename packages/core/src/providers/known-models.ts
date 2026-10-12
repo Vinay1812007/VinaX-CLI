@@ -24,6 +24,52 @@ export interface KnownModel {
 
 export const KNOWN_MODELS: readonly KnownModel[] = [
   {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    alias: 'GEMINI_FLASH',
+    label: 'Gemini 2.5 Flash',
+    contextWindow: 1_000_000,
+    vision: true,
+  },
+  {
+    provider: 'gemini',
+    model: 'gemini-2.5-pro',
+    alias: 'GEMINI_PRO',
+    label: 'Gemini 2.5 Pro',
+    contextWindow: 1_000_000,
+    vision: true,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4.1-mini',
+    alias: 'GPT_4_1_MINI',
+    label: 'GPT-4.1 mini',
+    contextWindow: 1_000_000,
+    vision: true,
+  },
+  {
+    provider: 'claude',
+    model: 'claude-sonnet-4-5',
+    alias: 'CLAUDE_SONNET',
+    label: 'Claude Sonnet',
+    contextWindow: 200_000,
+    vision: true,
+  },
+  {
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    alias: 'DEEPSEEK_CHAT',
+    label: 'DeepSeek Chat',
+    contextWindow: 128_000,
+  },
+  {
+    provider: 'mistral',
+    model: 'mistral-small-latest',
+    alias: 'MISTRAL_SMALL',
+    label: 'Mistral Small',
+    contextWindow: 128_000,
+  },
+  {
     provider: 'nvidia',
     model: 'openai/gpt-oss-20b',
     alias: 'NVD_CHAT_OSS_20_B',
@@ -55,12 +101,22 @@ const PROVIDER_SYNONYMS: Readonly<Record<string, ProviderName>> = {
   'groq.com': 'groq',
   'openrouter.ai': 'openrouter',
   'nvidia.com': 'nvidia',
+  'ai.google.dev': 'gemini',
+  'openai.com': 'openai',
+  'anthropic.com': 'claude',
+  'deepseek.com': 'deepseek',
+  'mistral.ai': 'mistral',
 };
 
 const PROVIDER_HOSTS: Readonly<Record<ProviderName, string>> = {
   groq: 'groq.com',
   openrouter: 'openrouter.ai',
   nvidia: 'nvidia.com',
+  gemini: 'ai.google.dev',
+  openai: 'openai.com',
+  claude: 'anthropic.com',
+  deepseek: 'deepseek.com',
+  mistral: 'mistral.ai',
 };
 
 /** The provider's home domain, shown next to its name (e.g. "NVIDIA · nvidia.com"). */

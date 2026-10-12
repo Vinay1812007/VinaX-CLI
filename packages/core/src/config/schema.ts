@@ -1,7 +1,16 @@
 import { z } from 'zod';
 import { normalizeModelRef } from '../providers/known-models.js';
 
-export const PROVIDER_NAMES = ['groq', 'openrouter', 'nvidia'] as const;
+export const PROVIDER_NAMES = [
+  'groq',
+  'openrouter',
+  'nvidia',
+  'gemini',
+  'openai',
+  'claude',
+  'deepseek',
+  'mistral',
+] as const;
 export const providerNameSchema = z.enum(PROVIDER_NAMES);
 export type ProviderName = z.infer<typeof providerNameSchema>;
 
@@ -86,6 +95,11 @@ export const settingsSchema = z.strictObject({
       groq: providerSettingsSchema.optional(),
       openrouter: providerSettingsSchema.optional(),
       nvidia: providerSettingsSchema.optional(),
+      gemini: providerSettingsSchema.optional(),
+      openai: providerSettingsSchema.optional(),
+      claude: providerSettingsSchema.optional(),
+      deepseek: providerSettingsSchema.optional(),
+      mistral: providerSettingsSchema.optional(),
     })
     .optional(),
   router: routerSettingsSchema.optional(),
@@ -211,6 +225,18 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     // artificial local RPM ceiling: its response headers and 429s remain authoritative.
     // Set providers.nvidia.rpm explicitly when using a self-hosted NIM that needs one.
     nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1', rpm: Infinity },
+    // These providers enforce their own account and paid/free-tier limits. VinaX does not
+    // invent a lower local cap; response headers and 429s determine backoff.
+    gemini: {
+      enabled: true,
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      rpm: Infinity,
+    },
+    openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', rpm: Infinity },
+    // Claude has a native Messages API adapter; the default is Anthropic's public endpoint.
+    claude: { enabled: true, baseUrl: 'https://api.anthropic.com/v1', rpm: Infinity },
+    deepseek: { enabled: true, baseUrl: 'https://api.deepseek.com', rpm: Infinity },
+    mistral: { enabled: true, baseUrl: 'https://api.mistral.ai/v1', rpm: Infinity },
   },
   router: {
     maxRetries: 2,
@@ -249,6 +275,11 @@ export function resolveSettings(s: Settings): ResolvedSettings {
       groq: { ...d.providers.groq, ...s.providers?.groq },
       openrouter: { ...d.providers.openrouter, ...s.providers?.openrouter },
       nvidia: { ...d.providers.nvidia, ...s.providers?.nvidia },
+      gemini: { ...d.providers.gemini, ...s.providers?.gemini },
+      openai: { ...d.providers.openai, ...s.providers?.openai },
+      claude: { ...d.providers.claude, ...s.providers?.claude },
+      deepseek: { ...d.providers.deepseek, ...s.providers?.deepseek },
+      mistral: { ...d.providers.mistral, ...s.providers?.mistral },
     },
     router: { ...d.router, ...s.router },
     permissions: { ...d.permissions, ...s.permissions },

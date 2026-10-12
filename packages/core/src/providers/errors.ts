@@ -34,6 +34,11 @@ const LABEL: Record<ProviderName, string> = {
   groq: 'Groq',
   openrouter: 'OpenRouter',
   nvidia: 'NVIDIA',
+  gemini: 'Gemini',
+  openai: 'OpenAI',
+  claude: 'Claude',
+  deepseek: 'DeepSeek',
+  mistral: 'Mistral',
 };
 
 export function providerLabel(name: ProviderName): string {

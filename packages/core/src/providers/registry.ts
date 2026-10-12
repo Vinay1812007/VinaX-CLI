@@ -2,6 +2,7 @@ import type { ResolvedSettings } from '../config/schema.js';
 import type { SecretStore } from '../config/secrets.js';
 import type { Logger } from '../log/logger.js';
 import { GatewayClient } from './gateway.js';
+import { AnthropicProvider } from './anthropic.js';
 import { OpenAICompatibleProvider, type KeyCheckMethod } from './openai-compatible.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import { PROVIDER_NAMES, type Provider, type ProviderName } from './types.js';
@@ -21,7 +22,17 @@ const PER_PROVIDER: Record<
   // NVIDIA's /models is public too and it has no key-info endpoint, so a one-token completion
   // is the cheapest request that needs a valid key.
   nvidia: { keyCheck: { completionModel: 'openai/gpt-oss-20b' } },
+  gemini: { keyCheck: { path: '/models' } },
+  openai: { keyCheck: { path: '/models' } },
+  // DeepSeek and Mistral implement the OpenAI chat-completions protocol.
+  deepseek: { keyCheck: { path: '/models' } },
+  mistral: { keyCheck: { path: '/models' } },
+  // Anthropic's native API is deliberately not probed through its incompatible endpoint. A
+  // configured OpenAI-compatible proxy can still supply a model list and requests.
+  claude: { keyCheck: { path: '/models' } },
 };
+
+const GATEWAY_PROVIDER_NAMES: readonly ProviderName[] = ['groq', 'openrouter', 'nvidia'];
 
 export function createProvider(
   name: ProviderName,
@@ -29,6 +40,14 @@ export function createProvider(
   deps: { settings: ResolvedSettings; ledger: RateLimitLedger; logger: Logger },
 ): Provider {
   const conf = deps.settings.providers[name];
+  if (name === 'claude')
+    return new AnthropicProvider(
+      conf.baseUrl,
+      apiKey,
+      deps.settings.router.requestTimeoutMs,
+      deps.ledger,
+      deps.logger,
+    );
   const extra = PER_PROVIDER[name];
   return new OpenAICompatibleProvider({
     name,
@@ -95,7 +114,7 @@ export async function createProviders(deps: {
     const key = await deps.secrets.get(name);
     if (key !== undefined) {
       providers.set(name, createProvider(name, key.value, deps));
-    } else if (gateway) {
+    } else if (gateway && GATEWAY_PROVIDER_NAMES.includes(name)) {
       providers.set(name, createGatewayProvider(name, gateway.client, gateway.token, deps));
       viaGateway.add(name);
     } else {

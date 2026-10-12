@@ -14,7 +14,6 @@ import {
   createProviders,
 } from './providers/registry.js';
 import {
-  PROVIDER_NAMES,
   formatModelRef,
   type ModelInfo,
   type Provider,
@@ -224,7 +223,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       for (const p of viaGateway) providers.delete(p);
       viaGateway.clear();
       gatewayLink = { client: createGatewayClient(resolved, url), token };
-      for (const name of PROVIDER_NAMES) if (!providers.has(name)) useGatewayFor(name);
+      for (const name of ['groq', 'openrouter', 'nvidia'] as const)
+        if (!providers.has(name)) useGatewayFor(name);
     },
     settings,
     logger,

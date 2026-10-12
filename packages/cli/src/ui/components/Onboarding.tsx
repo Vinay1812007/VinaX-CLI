@@ -65,6 +65,11 @@ const KEY_PAGES: Record<ProviderName, string> = {
   groq: 'https://console.groq.com/keys',
   openrouter: 'https://openrouter.ai/keys',
   nvidia: 'https://build.nvidia.com',
+  gemini: 'https://aistudio.google.com/app/apikey',
+  openai: 'https://platform.openai.com/api-keys',
+  claude: 'https://console.anthropic.com/settings/keys',
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  mistral: 'https://console.mistral.ai/api-keys',
 };
 
 /** Chat-capable models: enough context, tool support not ruled out, and free on OpenRouter. */
@@ -302,10 +307,11 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
       <Frame step={step}>
         <Text bold>Which provider do you want to use?</Text>
         <Text color={theme.muted}>
-          Groq and OpenRouter have free tiers. You can add others later with /login.
+          Groq, OpenRouter and Gemini offer free options. Add paid-provider keys at any time with
+          /login.
         </Text>
         <Box marginTop={1}>
-          <Select<ProviderName[] | 'gateway'>
+          <Select<ProviderName[]>
             items={[
               { label: 'Groq', value: ['groq'], hint: 'fastest · ~8K tokens/min per model' },
               {
@@ -318,24 +324,23 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
                 value: ['nvidia'],
                 hint: 'nvidia.com · openai/gpt-oss-20b (NVD_CHAT_OSS_20_B)',
               },
+              { label: 'Gemini', value: ['gemini'], hint: 'Google models · free and paid tiers' },
+              { label: 'OpenAI', value: ['openai'], hint: 'GPT models · paid API' },
+              { label: 'Claude', value: ['claude'], hint: 'Anthropic models · paid API' },
+              { label: 'DeepSeek', value: ['deepseek'], hint: 'DeepSeek models · paid API' },
+              {
+                label: 'Mistral',
+                value: ['mistral'],
+                hint: 'Mistral models · free and paid tiers',
+              },
               {
                 label: 'Groq + OpenRouter',
                 value: ['groq', 'openrouter'],
                 hint: 'recommended: Groq first, OpenRouter as fallback',
               },
-              {
-                label: 'A VinaX gateway',
-                value: 'gateway',
-                hint: 'no keys needed: someone runs a shared gateway for you',
-              },
             ]}
             initialIndex={3}
             onSelect={(list) => {
-              if (list === 'gateway') {
-                setGateway({ phase: 'url' });
-                setStep('gateway');
-                return;
-              }
               setProviders(list);
               setKeyIndex(0);
               setKeyState({ phase: 'entry' });

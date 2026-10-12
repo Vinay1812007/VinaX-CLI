@@ -159,25 +159,16 @@ describe('onboarding', () => {
     expect(saved.keys).toEqual([]);
   });
 
-  it('can connect to a VinaX gateway instead of entering keys', async () => {
+  it('does not offer a VinaX gateway during onboarding', async () => {
     const { deps, saved } = fakeOnboarding();
     const { frame, type } = mountApp(deps);
     await waitFor(() => frame().includes('Choose a colour theme'), 'theme step');
-    await type('\r', '5');
-    await waitFor(() => frame().includes('Connect to a VinaX gateway'), 'gateway step');
-    expect(frame()).toContain('setup 3/4');
-    await type('https://gw.example.com/', '\r');
-    await waitFor(() => frame().includes('gateway token'), 'token entry');
-    await type('vxg_bad', '\r');
-    await waitFor(() => frame().includes('the gateway rejected that token'), 'rejected');
-    expect(frame()).not.toContain('vxg_bad');
-    await type('vxg_good', '\r');
-    await waitFor(() => frame().includes('Connected to gateway v0.1.0 — 3 models'), 'connected');
     await type('\r');
-    await waitFor(() => frame().includes("You're all set"), 'done step');
-    expect(frame()).toContain('gateway https://gw.example.com');
-    expect(frame()).not.toContain('Without a key');
-    expect(saved.gateway).toEqual(['https://gw.example.com vxg_good']);
+    await waitFor(() => frame().includes('Which provider do you want to use?'), 'provider step');
+    expect(frame()).not.toContain('VinaX gateway');
+    expect(frame()).toContain('Gemini');
+    expect(frame()).toContain('Claude');
+    expect(saved.gateway).toEqual([]);
     expect(saved.keys).toEqual([]);
   });
 

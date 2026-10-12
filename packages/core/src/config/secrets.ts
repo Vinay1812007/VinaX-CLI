@@ -10,6 +10,11 @@ export const SECRET_ENV_VARS: Record<SecretName, string> = {
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  claude: 'ANTHROPIC_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
   gateway: 'VINAX_GATEWAY_TOKEN',
 };
 

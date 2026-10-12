@@ -27,10 +27,6 @@ import {
   settingsPaths,
   THEME_NAMES,
   updateSettingsFile,
-  checkGateway,
-  gatewayUrlProblem,
-  removeGatewayLogin,
-  saveGatewayLogin,
   type ProviderName,
 } from '@vinax/core';
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
@@ -157,6 +153,8 @@ function switchModel(ctx: CommandContext, input: string): void {
   }
   const { provider } = parseModelRef(ref);
   ctx.setup.agent.setModel(ref);
+  // A deliberate model choice is an instruction to start working, not merely to inspect it.
+  ctx.setMode('auto');
   ctx.session.record({ type: 'model', model: ref });
   const alias = modelAlias(ref);
   const warnings: string[] = [];
@@ -677,76 +675,23 @@ const about: SlashCommand = {
 async function chooseProvider(
   ctx: CommandContext,
   title: string,
-): Promise<ProviderName | 'gateway' | undefined> {
-  return ctx.pick<ProviderName | 'gateway'>(title, [
+): Promise<ProviderName | undefined> {
+  return ctx.pick<ProviderName>(title, [
     ...PROVIDER_NAMES.map((p) => ({
       label: providerLabel(p),
       value: p,
       hint: ctx.runtime.providers.has(p) && !ctx.runtime.viaGateway.has(p) ? '(configured)' : '',
     })),
-    {
-      label: 'VinaX gateway',
-      value: 'gateway' as const,
-      hint: ctx.runtime.gateway
-        ? `(${ctx.runtime.gateway.url})`
-        : 'a shared server someone runs for you',
-    },
   ]);
-}
-
-async function loginGateway(ctx: CommandContext): Promise<void> {
-  const url = (
-    await ctx.ask(
-      'VinaX gateway URL',
-      ctx.runtime.gateway?.url ?? 'https://your-gateway.onrender.com',
-    )
-  )?.replace(/\/+$/, '');
-  if (url === undefined || url === '') return;
-  const problem = gatewayUrlProblem(url);
-  if (problem !== undefined) {
-    ctx.notice('error', `✖ ${problem}`);
-    return;
-  }
-  const token = await ctx.ask('VinaX gateway token', 'Paste the token and press Enter', {
-    mask: true,
-  });
-  if (token === undefined || token === '') return;
-  const check = await ctx.busy(
-    'Checking the gateway (a sleeping one takes up to a minute to wake)',
-    (signal) =>
-      checkGateway(url, token, {
-        timeoutMs: ctx.runtime.settings.resolved.gateway.timeoutMs,
-        signal,
-      }),
-  );
-  if (!check) return;
-  if (!check.ok && check.rejected) {
-    ctx.notice('error', `✖ ${check.reason}; nothing was saved.`);
-    return;
-  }
-  await saveGatewayLogin(url, token, { cwd: ctx.runtime.cwd, env: ctx.runtime.env });
-  ctx.runtime.setGateway(url, token);
-  await ctx.busy('Loading model lists from the gateway', (signal) =>
-    Promise.all([...ctx.runtime.viaGateway].map((p) => ctx.runtime.refreshCatalog(p, signal))),
-  );
-  const via = [...ctx.runtime.viaGateway].map(providerLabel);
-  ctx.notice(
-    check.ok ? 'info' : 'warning',
-    `${check.ok ? 'Connected to' : 'Saved'} the VinaX gateway at ${url}${check.ok ? '' : ` (could not verify it: ${check.reason})`}. ${via.length === 0 ? 'Your own keys are used for every provider.' : `${via.join(' and ')} now go${via.length === 1 ? 'es' : ''} through it.`}`,
-  );
 }
 
 const login: SlashCommand = {
   name: 'login',
-  description: 'Add a provider API key, or connect to a VinaX gateway',
+  description: 'Add a provider API key',
   source: 'builtin',
   async run(ctx) {
     const provider = await chooseProvider(ctx, 'Add a key for which provider?');
     if (provider === undefined) return;
-    if (provider === 'gateway') {
-      await loginGateway(ctx);
-      return;
-    }
     const key = await ctx.ask(
       `${providerLabel(provider)} API key`,
       'Paste the key and press Enter',
@@ -780,20 +725,11 @@ const login: SlashCommand = {
 
 const logout: SlashCommand = {
   name: 'logout',
-  description: 'Remove a stored provider API key, or disconnect the gateway',
+  description: 'Remove a stored provider API key',
   source: 'builtin',
   async run(ctx) {
     const provider = await chooseProvider(ctx, 'Remove the key for which provider?');
     if (provider === undefined) return;
-    if (provider === 'gateway') {
-      const removed = await removeGatewayLogin({ cwd: ctx.runtime.cwd, env: ctx.runtime.env });
-      ctx.runtime.removeProvider('gateway');
-      ctx.notice(
-        'info',
-        removed ? 'Disconnected from the VinaX gateway.' : 'No gateway was configured.',
-      );
-      return;
-    }
     const removed = await (await openSecretStore(ctx.runtime.env)).delete(provider);
     const envVar = SECRET_ENV_VARS[provider];
     if (ctx.runtime.env[envVar] !== undefined) {

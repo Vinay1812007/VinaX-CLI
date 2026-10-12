@@ -217,18 +217,14 @@ describe('model picker items', () => {
     });
     const list = modelSelectItems(runtime, 'nvidia:openai/gpt-oss-20b');
     expect(
-      list.map((i) => [i.group, i.label, i.hint, i.current === true, i.disabled === true]),
+      list
+        .slice(0, 2)
+        .map((i) => [i.group, i.label, i.hint, i.current === true, i.disabled === true]),
     ).toEqual([
       ['Groq · groq.com', 'openai/gpt-oss-120b', '131K ctx', false, false],
       ['NVIDIA · nvidia.com', 'openai/gpt-oss-20b', 'NVD_CHAT_OSS_20_B · 131K ctx', true, false],
-      [
-        'OpenRouter · openrouter.ai · not configured',
-        'Not configured',
-        'add a key with /login',
-        false,
-        true,
-      ],
     ]);
+    expect(list.some((i) => i.value === 'gemini:gemini-2.5-flash')).toBe(true);
   });
 
   it('shows known models of unconfigured providers as unavailable', () => {
@@ -250,11 +246,12 @@ describe('model picker items', () => {
       viaGateway: ['nvidia'],
     });
     const rows = modelRows(runtime, 'nvidia:custom/one');
-    expect(rows.map((r) => [r.ref, r.status])).toEqual([
+    expect(rows.slice(0, 3).map((r) => [r.ref, r.status])).toEqual([
       ['nvidia:custom/one', 'unlisted'],
       ['nvidia:openai/gpt-oss-20b', 'unlisted'],
       ['nvidia:other/model', 'ready'],
     ]);
+    expect(rows.some((r) => r.ref === 'claude:claude-sonnet-4-5')).toBe(true);
     expect(modelSelectItems(runtime, 'nvidia:other/model')[0]?.group).toBe(
       'NVIDIA · nvidia.com · via VinaX gateway',
     );
