@@ -1,5 +1,11 @@
 # @sirimillavinay/vinax
 
+## 1.0.0
+
+### Major Changes
+
+- Release VinaX 1.0.0 with NVIDIA routing that no longer imposes a local RPM ceiling, clearer live task token reporting, and safer project permission-rule persistence.
+
 ## 0.5.0
 
 ### Minor Changes
