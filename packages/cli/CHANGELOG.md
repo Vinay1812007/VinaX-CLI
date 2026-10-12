@@ -1,5 +1,9 @@
 # @sirimillavinay/vinax
 
+## 1.0.4
+
+- feat: seven more providers, free-only model lists, key-page redirect
+
 ## 1.0.3
 
 - feat: add /context and warn before auto-compaction
