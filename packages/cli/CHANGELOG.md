@@ -1,5 +1,9 @@
 # @sirimillavinay/vinax
 
+## 1.0.3
+
+- feat: add /context and warn before auto-compaction
+
 ## 1.0.2
 
 - feat: prefer free models in auto mode and add a plan-mode model
