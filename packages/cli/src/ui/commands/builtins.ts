@@ -403,6 +403,70 @@ const changes: SlashCommand = {
   },
 };
 
+const BAR_WIDTH = 22;
+
+/**
+ * A proportional bar. Panels render Markdown, which carries no per-slice colour, so each row gets
+ * its own bar instead of one colour-coded grid. Anything non-zero keeps at least one block so a
+ * small-but-present slice never looks empty.
+ */
+function bar(share: number, width = BAR_WIDTH): string {
+  if (!Number.isFinite(share) || share <= 0) return '░'.repeat(width);
+  const filled = Math.min(width, Math.max(1, Math.round(share * width)));
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
+}
+
+const contextCommand: SlashCommand = {
+  name: 'context',
+  description: 'Show what is filling the context window',
+  source: 'builtin',
+  run(ctx) {
+    const { runtime, setup } = ctx;
+    const b = setup.agent.contextBreakdown(ctx.mode());
+    const model = setup.agent.model ?? runtime.settings.resolved.model;
+    const budgeted = Number.isFinite(b.limit);
+    const share = (n: number) => (budgeted ? n / b.limit : 0);
+    const pct = (n: number) => `${String(Math.round(share(n) * 100))}%`;
+    const lines: string[] = [
+      `**Model** \`${model}\``,
+      '',
+      budgeted
+        ? `**${formatTokens(b.used)}** of **${formatTokens(b.limit)}** tokens · ${pct(b.used)} used`
+        : `**${formatTokens(b.used)}** tokens · no context budget is configured`,
+      '',
+      '| Part | | Tokens | Share |',
+      '| --- | --- | ---: | ---: |',
+    ];
+    const rows = b.slices.filter((s) => s.tokens > 0 || s.key === 'messages');
+    for (const s of rows)
+      lines.push(
+        `| ${s.label} | \`${bar(share(s.tokens))}\` | ${formatTokens(s.tokens)} | ${pct(s.tokens)} |`,
+      );
+    if (budgeted) {
+      const free = Math.max(0, b.limit - b.used);
+      lines.push(`| Free | \`${bar(share(free))}\` | ${formatTokens(free)} | ${pct(free)} |`);
+    }
+    lines.push('');
+    if (b.compactAt === undefined)
+      lines.push(
+        'Auto-compaction is off (`context.autoCompact`), so the conversation is never summarized for you. Use `/compact` before you run out.',
+      );
+    else if (b.used >= b.compactAt)
+      lines.push(
+        `Past the auto-compaction point (${formatTokens(b.compactAt)}): the next turn summarizes older history to make room.`,
+      );
+    else
+      lines.push(
+        `Auto-compaction starts at ${formatTokens(b.compactAt)} — **${formatTokens(b.compactAt - b.used)}** to go.`,
+      );
+    lines.push(
+      '',
+      'Counts are estimates (~3.5 characters per token) of the *next* request, so they move as the conversation grows. `/compact` summarizes now; `/clear` starts fresh.',
+    );
+    ctx.panel('Context', lines.join('\n'));
+  },
+};
+
 const status: SlashCommand = {
   name: 'status',
   description: 'Session, providers and remaining rate limits',
@@ -990,6 +1054,7 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   rewind,
   changes,
   status,
+  contextCommand,
   usage,
   doctor,
   health,

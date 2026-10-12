@@ -834,3 +834,48 @@ describe('Agent compaction', () => {
     expect(JSON.stringify(last?.messages[1])).toContain('data:image/png;base64');
   });
 });
+
+describe('context breakdown', () => {
+  it('attributes memory and tools, and adds up to the request estimate', async () => {
+    const memoryText = `# Project rules\n${'Always run the linter before committing. '.repeat(40)}`;
+    const c = await start({
+      files: { 'VINAX.md': memoryText },
+      settings: { context: { maxTokens: 40_000 } },
+      groq: { script: { main: [{ text: 'noted' }] } },
+    });
+    const before = c.setup.agent.contextBreakdown('default');
+    const slice = (key: string) => before.slices.find((s) => s.key === key)?.tokens ?? 0;
+
+    // The slices account for the whole estimate, so /context can never disagree with the
+    // percentage in the status line.
+    const summed = before.slices.reduce((n, s) => n + s.tokens, 0) + before.overhead;
+    expect(summed).toBe(before.used);
+    expect(before.used).toBe(c.setup.agent.requestTokens('default'));
+
+    // Memory is carved out of the system prompt rather than double-counted inside it.
+    expect(slice('memory')).toBeGreaterThan(100);
+    expect(slice('system')).toBeGreaterThan(0);
+    expect(slice('tools')).toBeGreaterThan(0);
+    expect(slice('messages')).toBe(0);
+
+    expect(before.limit).toBe(40_000);
+    expect(before.compactAt).toBeCloseTo(40_000 * 0.85, 5);
+
+    // Talking to the model moves tokens into the messages slice, and nowhere else.
+    expect((await run(c, 'hello')).status).toBe('done');
+    const after = c.setup.agent.contextBreakdown('default');
+    expect(after.slices.find((s) => s.key === 'messages')?.tokens).toBeGreaterThan(0);
+    expect(after.slices.find((s) => s.key === 'memory')?.tokens).toBe(slice('memory'));
+    expect(after.used).toBeGreaterThan(before.used);
+  });
+
+  it('reports no budget when auto-compaction is off', async () => {
+    const c = await start({
+      settings: { context: { autoCompact: false } },
+      groq: { script: { main: [{ text: 'ok' }] } },
+    });
+    const b = c.setup.agent.contextBreakdown('default');
+    expect(b.compactAt).toBeUndefined();
+    expect(b.limit).toBe(Number.POSITIVE_INFINITY);
+  });
+});

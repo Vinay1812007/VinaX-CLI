@@ -10,7 +10,7 @@ import {
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
-import { estimateTokens } from '../context/tokens.js';
+import { estimateTextTokens, estimateTokens } from '../context/tokens.js';
 import { AbortError } from '../router/backoff.js';
 import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
@@ -130,6 +130,25 @@ export interface TaskBudget {
   seconds?: number | undefined;
 }
 
+/** One line of `/context`: a part of the next request, and what it costs. */
+export interface ContextSlice {
+  key: 'system' | 'memory' | 'skills' | 'tools' | 'messages';
+  label: string;
+  tokens: number;
+}
+
+export interface ContextBreakdown {
+  slices: ContextSlice[];
+  /** Fixed per-request overhead that belongs to no slice. */
+  overhead: number;
+  /** Total of the slices plus overhead; equals `requestTokens(mode)`. */
+  used: number;
+  /** `Infinity` when no context budget applies. */
+  limit: number;
+  /** Where auto-compaction kicks in, or undefined when it is switched off. */
+  compactAt: number | undefined;
+}
+
 export interface AgentDeps {
   router: Router;
   tools: readonly AnyTool[];
@@ -137,6 +156,11 @@ export interface AgentDeps {
   context: Omit<ToolContext, 'signal' | 'onProgress'>;
   checkpoints: CheckpointStore;
   systemPrompt: (mode: PermissionMode, toolInstructions?: string) => string;
+  /**
+   * The parts of the system prompt worth reporting separately in `/context`. They are already
+   * inside `systemPrompt`; this only says how much of it they account for.
+   */
+  promptParts?: () => { memory: string; skills: string };
   /** From the model catalog: `false` means the model has no native tool calling. */
   supportsTools?: (ref: ModelRef) => boolean | undefined;
   /** Whether a model accepts images; images are replaced by a note for models that do not. */
@@ -220,7 +244,13 @@ function kTokens(n: number): string {
 const MAX_STOP_HOOK_RETRIES = 3;
 
 /** Auto-compaction starts when the request reaches this share of the context budget. */
-const COMPACT_AT = 0.85;
+export const COMPACT_AT = 0.85;
+
+/**
+ * Where the UI warns that auto-compaction is coming. Far enough below {@link COMPACT_AT} to leave
+ * room to act, close enough that it is not crying wolf.
+ */
+export const COMPACT_WARN_AT = 0.75;
 
 interface Prepared {
   call: ToolCall;
@@ -332,6 +362,42 @@ export class Agent {
       [{ role: 'system', content: this.deps.systemPrompt(mode) }, ...this.messages],
       specs,
     );
+  }
+
+  /**
+   * Where the next request's tokens go, for `/context`. The slices add up to
+   * {@link requestTokens}, so the panel and the status-line percentage never disagree.
+   */
+  contextBreakdown(mode: PermissionMode): ContextBreakdown {
+    const active = this.deps.tools.filter((t) =>
+      mode === 'plan' ? t.readOnly : t.name !== 'ExitPlanMode',
+    );
+    const specs = active.map(toolSpec);
+    const prompt = this.deps.systemPrompt(mode);
+    const parts = this.deps.promptParts?.() ?? { memory: '', skills: '' };
+    // estimateTokens seeds every total with the same 3-token request overhead, so subtracting it
+    // leaves just the contribution of the messages or tools that were passed in.
+    const BASE = estimateTokens([]);
+    const systemAll = estimateTokens([{ role: 'system', content: prompt }]) - BASE;
+    const memory = estimateTextTokens(parts.memory);
+    const skills = estimateTextTokens(parts.skills);
+    const tools = estimateTokens([], specs) - BASE;
+    const messages = estimateTokens(this.messages) - BASE;
+    const limit = this.deps.contextLimit?.() ?? Number.POSITIVE_INFINITY;
+    return {
+      slices: [
+        // Memory and skills are carved out of the prompt, so the remainder is the fixed scaffold.
+        { key: 'system', label: 'System prompt', tokens: Math.max(0, systemAll - memory - skills) },
+        { key: 'memory', label: 'Project memory', tokens: memory },
+        { key: 'skills', label: 'Skills', tokens: skills },
+        { key: 'tools', label: `Tool definitions (${String(specs.length)})`, tokens: tools },
+        { key: 'messages', label: `Messages (${String(this.messages.length)})`, tokens: messages },
+      ],
+      overhead: BASE,
+      used: this.requestTokens(mode),
+      limit,
+      compactAt: this.deps.contextLimit === undefined ? undefined : limit * COMPACT_AT,
+    };
   }
 
   /**

@@ -841,6 +841,34 @@ describe('ChatScreen workflow (M4)', () => {
     await waitFor(() => frame().includes('✔ Node.js'), 'doctor');
   });
 
+  it('breaks the context window down in /context', async () => {
+    const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
+    await type('hi', KEYS.enter);
+    await waitFor(() => frame().includes('◆ ok'), 'answer');
+    await type('/context', KEYS.enter);
+    await waitFor(() => frame().includes('Context'), 'context panel');
+    expect(frame()).toContain('System prompt');
+    expect(frame()).toContain('Tool definitions');
+    expect(frame()).toContain('Messages');
+    expect(frame()).toContain('Free');
+    // The bars are drawn, and the auto-compaction point is stated before it is reached.
+    expect(frame()).toMatch(/[█░]/);
+    expect(frame()).toContain('Auto-compaction starts at');
+  });
+
+  it('warns that auto-compaction is approaching before it happens', async () => {
+    // The system prompt and tools alone (~3.3k tokens) have to land between the 75% warning and
+    // the 85% compaction point: 4100 puts them at ~80%, leaving room on both sides for the
+    // prompt to drift. If this starts failing, re-check that share before widening anything.
+    const { frame, type } = await mount({
+      settings: { context: { maxTokens: 4100 } },
+      groq: { script: { 'main-model': [{ text: 'ok' }] } },
+    });
+    await type('hi', KEYS.enter);
+    await waitFor(() => frame().includes('Older history is summarized automatically'), 'warning');
+    expect(frame()).toContain('/compact');
+  });
+
   it('records the session for resuming and asks the app to clear', async () => {
     const { frame, type, onClear, writer, harness } = await mount({
       groq: { script: { 'main-model': [{ text: 'saved answer' }] } },

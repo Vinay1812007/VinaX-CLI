@@ -21,10 +21,14 @@ export {
 } from './config/paths.js';
 export {
   Agent,
+  COMPACT_AT,
+  COMPACT_WARN_AT,
   INTERRUPTED_MARKER,
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
+  type ContextBreakdown,
+  type ContextSlice,
   type TaskBudget,
   type PermissionAnswer,
   type PermissionRequest,

@@ -11,6 +11,7 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/help`                             | Commands and keyboard shortcuts                                           |
 | `/clear` (`/new`)                   | Start a new conversation. The old one stays available in `/resume`        |
 | `/compact [focus]`                  | Summarize the conversation to free up context                             |
+| `/context`                          | What is filling the context window, and when auto-compaction starts       |
 | `/model [provider:model \| alias]`  | Switch the model for this session (with a searchable picker)              |
 | `/models`                           | Providers, the current model, the fallback order and aliases; then switch |
 | `/resume`                           | Continue an earlier conversation in this folder                           |

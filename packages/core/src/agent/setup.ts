@@ -195,6 +195,10 @@ export async function createAgentSetup(
       toolInstructions,
     );
   };
+  const promptParts = (): { memory: string; skills: string } => ({
+    memory: memory.text(),
+    skills: skillsSection ?? '',
+  });
   const supportsTools = (ref: ModelRef): boolean | undefined =>
     runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.supportsTools ??
     (knownModel(ref.provider, ref.model)?.tools === false ? false : undefined);
@@ -299,6 +303,7 @@ export async function createAgentSetup(
     checkpoints,
     context,
     systemPrompt: basePrompt,
+    promptParts,
     supportsTools,
     supportsVision,
     visionModels,

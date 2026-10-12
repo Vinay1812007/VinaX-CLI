@@ -10,6 +10,8 @@ import {
   generateTitle,
   modelAlias,
   parseModelRef,
+  COMPACT_AT,
+  COMPACT_WARN_AT,
   costOf,
   formatCost,
   mergeModelUsage,
@@ -190,6 +192,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const exitArmedAt = useRef<number | undefined>(undefined);
   const lastEscAt = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** True once the approaching-auto-compaction warning has been shown for the current fill. */
+  const compactWarned = useRef(false);
 
   const history = useMemo(
     () => PromptHistory.forProject(projectDataDir(runtime.cwd, runtime.env)),
@@ -250,11 +254,28 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const refreshContext = (): void => {
     const limit = setup.contextLimit();
-    setContextPct(
-      Number.isFinite(limit)
-        ? Math.min(100, Math.round((agent.requestTokens(modeRef.current) / limit) * 100))
-        : undefined,
-    );
+    if (!Number.isFinite(limit)) {
+      setContextPct(undefined);
+      return;
+    }
+    const used = agent.requestTokens(modeRef.current);
+    setContextPct(Math.min(100, Math.round((used / limit) * 100)));
+    // Say so *before* compaction happens: it rewrites history, and someone who is nearly done
+    // may prefer to finish the thought, /compact with a focus, or /clear on their own terms.
+    const share = used / limit;
+    if (share >= COMPACT_WARN_AT && share < COMPACT_AT) {
+      if (!compactWarned.current) {
+        compactWarned.current = true;
+        push({
+          kind: 'notice',
+          level: 'warning',
+          text: `Context is ${String(Math.round(share * 100))}% full. Older history is summarized automatically at ${String(Math.round(COMPACT_AT * 100))}% — run /context to see what is filling it, or /compact to choose what survives.`,
+        });
+      }
+    } else if (share < COMPACT_WARN_AT) {
+      // Compaction (or /clear) freed room, so the next approach is worth announcing again.
+      compactWarned.current = false;
+    }
   };
 
   const flashHint = (text: string): void => {
