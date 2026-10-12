@@ -31,6 +31,7 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/copy [n]`                          | Copy the last answer, or its nth code block, to the clipboard             |
 | `/skills`                            | [Skills](/skills) VinaX can load for specific tasks                       |
 | `/output-style [name \| new <name>]` | How VinaX writes its answers: default, explanatory, learning, or yours    |
+| `/plugin [...]`                      | [Plugins](/plugins): marketplaces, install, enable, disable, uninstall    |
 | `/login`, `/logout`                  | Add or remove a provider key, or connect or disconnect a gateway          |
 | `/settings` (`/config`)              | Change settings in a panel: model, effort, mode, theme and more           |
 | `/permissions`                       | Permission mode and rules: view, add, remove, change mode                 |

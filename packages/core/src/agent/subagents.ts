@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { parseFrontmatter } from '../commands/custom.js';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { pluginContribDirs } from '../plugins/plugins.js';
 import { normalizeModelRef } from '../providers/known-models.js';
 import { defineTool, type ToolContext } from '../tools/types.js';
 
@@ -14,7 +15,7 @@ export interface SubagentDef {
   model: string | undefined;
   /** Its role, appended to the system prompt. */
   prompt: string;
-  source: 'builtin' | 'project' | 'user';
+  source: 'builtin' | 'project' | 'user' | 'plugin';
   file?: string;
 }
 
@@ -43,7 +44,9 @@ export async function loadSubagents(
 ): Promise<{ agents: SubagentDef[]; errors: string[] }> {
   const byName = new Map<string, SubagentDef>([[GENERAL_PURPOSE.name, GENERAL_PURPOSE]]);
   const errors: string[] = [];
+  // later sources win a name clash, so plugins go first: your own files beat a plugin's
   const sources = [
+    ...pluginContribDirs(env, 'agents').map((dir) => ({ dir, source: 'plugin' as const })),
     { dir: path.join(vinaxHome(env), 'agents'), source: 'user' as const },
     { dir: path.join(cwd, '.vinax', 'agents'), source: 'project' as const },
   ];

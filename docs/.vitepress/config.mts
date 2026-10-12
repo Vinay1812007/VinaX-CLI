@@ -64,6 +64,7 @@ export default defineConfig({
           { text: 'Sub-agents', link: '/sub-agents' },
           { text: 'Skills', link: '/skills' },
           { text: 'Output styles', link: '/output-styles' },
+          { text: 'Plugins', link: '/plugins' },
         ],
       },
       {

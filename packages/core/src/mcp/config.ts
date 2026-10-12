@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { activePlugins, expandPluginRoot } from '../plugins/plugins.js';
 
 const stdioServerSchema = z.strictObject({
   type: z.literal('stdio').optional(),
@@ -21,7 +22,7 @@ export type McpServerConfig = z.infer<typeof mcpServerSchema>;
 
 const mcpFileSchema = z.strictObject({ mcpServers: z.record(z.string(), mcpServerSchema) });
 
-export type McpScope = 'user' | 'project';
+export type McpScope = 'user' | 'project' | 'plugin';
 
 export interface McpServerEntry {
   name: string;
@@ -53,6 +54,25 @@ async function readFile(
   }
 }
 
+/** A plugin cannot know where it was installed, so `${CLAUDE_PLUGIN_ROOT}` is filled in for it. */
+function withPluginRoot(config: McpServerConfig, dir: string): McpServerConfig {
+  const x = (v: string): string => expandPluginRoot(v, dir);
+  const map = (r: Record<string, string> | undefined) =>
+    r === undefined ? undefined : Object.fromEntries(Object.entries(r).map(([k, v]) => [k, x(v)]));
+  if ('command' in config) {
+    const env = map(config.env);
+    return {
+      ...config,
+      command: x(config.command),
+      ...(config.args === undefined ? {} : { args: config.args.map(x) }),
+      ...(env === undefined ? {} : { env }),
+      ...(config.cwd === undefined ? {} : { cwd: x(config.cwd) }),
+    };
+  }
+  const headers = map(config.headers);
+  return { ...config, url: x(config.url), ...(headers === undefined ? {} : { headers }) };
+}
+
 /** Servers from `~/.vinax/mcp.json` and `.vinax/mcp.json`; a project server overrides a user one. */
 export async function loadMcpConfig(
   cwd: string,
@@ -60,6 +80,13 @@ export async function loadMcpConfig(
 ): Promise<{ servers: McpServerEntry[]; errors: string[] }> {
   const byName = new Map<string, McpServerEntry>();
   const errors: string[] = [];
+  // plugins first: a server the user configured themselves wins over one a plugin ships
+  for (const plugin of activePlugins(env)) {
+    const { servers, error } = await readFile(path.join(plugin.dir, '.mcp.json'));
+    if (error !== undefined) errors.push(error);
+    for (const [name, config] of Object.entries(servers))
+      byName.set(name, { name, scope: 'plugin', config: withPluginRoot(config, plugin.dir) });
+  }
   for (const scope of ['user', 'project'] as const) {
     const { servers, error } = await readFile(mcpConfigPath(scope, cwd, env));
     if (error !== undefined) errors.push(error);

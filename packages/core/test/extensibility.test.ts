@@ -13,18 +13,29 @@ import {
 } from '@vinax/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  addMarketplace,
   AppStateStore,
   createAgentSetup,
   createRuntime,
   detectShell,
   HookRunner,
   htmlToMarkdown,
+  loadCustomCommands,
+  loadSkills,
+  loadMcpConfig,
   loadSubagents,
+  installPlugin,
+  listPlugins,
   matcherMatches,
   McpManager,
   mcpToolName,
+  pluginHooks,
   ReadTracker,
+  readPluginConfig,
+  removeMarketplace,
+  setPluginEnabled,
   ShellSession,
+  uninstallPlugin,
   type AgentEvent,
   type AgentHost,
   type AgentSetup,
@@ -552,5 +563,152 @@ describe('output styles', () => {
       'Unknown output style "missing" in settings; answering in "default" instead.',
     );
     expect(setup.outputStyle().name).toBe('default');
+  });
+});
+
+describe('plugins', () => {
+  /** A local marketplace with one plugin that contributes one of everything. */
+  async function marketplace(): Promise<string> {
+    const dir = path.join(root, 'market');
+    await write(
+      path.join(dir, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'house',
+        plugins: [{ name: 'toolkit', source: './toolkit', description: 'Our house toolkit' }],
+      }),
+    );
+    const p = path.join(dir, 'toolkit');
+    await write(
+      path.join(p, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'toolkit', description: 'Our house toolkit', version: '1.2.0' }),
+    );
+    await write(
+      path.join(p, 'commands', 'ship.md'),
+      '---\ndescription: Ship it\n---\nShip $ARGUMENTS.',
+    );
+    await write(
+      path.join(p, 'agents', 'auditor.md'),
+      '---\nname: auditor\ndescription: Audits things\n---\nBe thorough.',
+    );
+    await write(
+      path.join(p, 'skills', 'release', 'SKILL.md'),
+      '---\nname: release\ndescription: How we cut a release\n---\nTag, then publish.',
+    );
+    await write(
+      path.join(p, 'hooks', 'hooks.json'),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: 'command', command: 'echo ${CLAUDE_PLUGIN_ROOT}/greet.sh' }] },
+          ],
+        },
+      }),
+    );
+    return dir;
+  }
+
+  it('installs a plugin from a marketplace and loads everything it contributes', async () => {
+    const dir = await marketplace();
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    const added = await addMarketplace(env, dir);
+    expect(added).toMatchObject({ name: 'house' });
+    const installed = await installPlugin(env, 'toolkit', 'house');
+    expect(installed).toMatchObject({ plugin: { id: 'toolkit@house', enabled: true } });
+
+    const { setup } = await setupWith({});
+    expect(setup.skills.find((s) => s.name === 'release')).toMatchObject({ source: 'plugin' });
+    expect(setup.subagents.find((a) => a.name === 'auditor')).toMatchObject({ source: 'plugin' });
+    const { commands } = await loadCustomCommands(cwd, env);
+    expect(commands.find((c) => c.name === 'ship')).toMatchObject({ scope: 'plugin' });
+    // a plugin cannot know where it was installed, so ${CLAUDE_PLUGIN_ROOT} is filled in for it
+    const hook = pluginHooks(env).hooks.SessionStart?.[0]?.hooks[0]?.command ?? '';
+    expect(hook).toBe(
+      `echo ${path.join(home, 'plugins', 'installed', 'house', 'toolkit')}/greet.sh`,
+    );
+  });
+
+  it('stops contributing when disabled, and leaves nothing behind when uninstalled', async () => {
+    const dir = await marketplace();
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    await addMarketplace(env, dir);
+    await installPlugin(env, 'toolkit', 'house');
+
+    await setPluginEnabled(env, 'toolkit@house', false);
+    expect((await loadSkills(cwd, env)).skills.find((s) => s.name === 'release')).toBeUndefined();
+    expect(pluginHooks(env).hooks.SessionStart).toBeUndefined();
+    expect(listPlugins(env)[0]).toMatchObject({ enabled: false, missing: false });
+
+    await setPluginEnabled(env, 'toolkit@house', true);
+    expect((await loadSkills(cwd, env)).skills.find((s) => s.name === 'release')).toBeDefined();
+
+    await uninstallPlugin(env, 'toolkit@house');
+    expect(listPlugins(env)).toEqual([]);
+    expect((await loadSkills(cwd, env)).skills.find((s) => s.name === 'release')).toBeUndefined();
+  });
+
+  it('refuses a folder that is not a marketplace, and a plugin the marketplace does not have', async () => {
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    const missing = await addMarketplace(env, path.join(root, 'nope'));
+    expect('error' in missing && missing.error).toContain('does not exist');
+    await fs.mkdir(path.join(root, 'plain'), { recursive: true });
+    const plain = await addMarketplace(env, path.join(root, 'plain'));
+    expect('error' in plain && plain.error).toContain('has no .vinax-plugin/marketplace.json');
+    await addMarketplace(env, await marketplace());
+    expect(await installPlugin(env, 'missing', 'house')).toMatchObject({
+      error: '"house" has no plugin called "missing".',
+    });
+    // nothing was installed, so nothing is listed
+    expect(listPlugins(env)).toEqual([]);
+  });
+
+  it('loses a name clash with your own command, agent or skill', async () => {
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    await addMarketplace(env, await marketplace());
+    await installPlugin(env, 'toolkit', 'house');
+    await write(path.join(home, 'commands', 'ship.md'), '---\ndescription: Mine\n---\nMine.');
+    await write(
+      path.join(cwd, '.vinax', 'agents', 'auditor.md'),
+      '---\nname: auditor\ndescription: Mine\n---\nMine.',
+    );
+    await write(
+      path.join(cwd, '.vinax', 'skills', 'release', 'SKILL.md'),
+      '---\nname: release\ndescription: Mine\n---\nMine.',
+    );
+    const { commands } = await loadCustomCommands(cwd, env);
+    expect(commands.find((c) => c.name === 'ship')).toMatchObject({ scope: 'user' });
+    const { agents } = await loadSubagents(cwd, env);
+    expect(agents.find((a) => a.name === 'auditor')).toMatchObject({ source: 'project' });
+    const { skills } = await loadSkills(cwd, env);
+    expect(skills.find((x) => x.name === 'release')).toMatchObject({ source: 'project' });
+  });
+
+  it('starts the MCP servers of a plugin from where the plugin was installed', async () => {
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    const dir = await marketplace();
+    await write(
+      path.join(dir, 'toolkit', '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          kit: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server.js'] },
+        },
+      }),
+    );
+    await addMarketplace(env, dir);
+    await installPlugin(env, 'toolkit', 'house');
+    const { servers } = await loadMcpConfig(cwd, env);
+    const kit = servers.find((x) => x.name === 'kit');
+    expect(kit?.scope).toBe('plugin');
+    expect(kit?.config).toMatchObject({
+      args: [path.join(home, 'plugins', 'installed', 'house', 'toolkit', 'server.js')],
+    });
+  });
+
+  it('removing a marketplace uninstalls what came from it', async () => {
+    const env = { VINAX_HOME: home, ...systemEnv() };
+    await addMarketplace(env, await marketplace());
+    await installPlugin(env, 'toolkit', 'house');
+    expect(await removeMarketplace(env, 'house')).toEqual({ removed: 1 });
+    expect(listPlugins(env)).toEqual([]);
+    expect(readPluginConfig(env).marketplaces).toEqual({});
   });
 });

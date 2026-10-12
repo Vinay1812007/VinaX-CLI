@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { projectDataDir } from '../config/paths.js';
-import type { PermissionMode } from '../config/schema.js';
+import {
+  HOOK_EVENTS,
+  type HookEvent,
+  type HookMatcher,
+  type PermissionMode,
+} from '../config/schema.js';
+import { pluginHooks } from '../plugins/plugins.js';
 import { HookRunner, type HookResult } from '../hooks/runner.js';
 import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
 import { McpManager } from '../mcp/manager.js';
@@ -165,7 +171,17 @@ export async function createAgentSetup(
   const warnings: string[] = [];
   let currentMode: PermissionMode = settings.permissions.defaultMode;
 
-  const hooks = new HookRunner(settings.hooks, {
+  // Plugin hooks are added to the ones in settings, never instead of them: installing a plugin
+  // must not be able to switch off a hook the user wrote.
+  const fromPlugins = pluginHooks(env);
+  warnings.push(...fromPlugins.errors);
+  const allHooks: Partial<Record<HookEvent, HookMatcher[]>> = { ...settings.hooks };
+  for (const event of HOOK_EVENTS) {
+    const added = fromPlugins.hooks[event];
+    if (added !== undefined) allHooks[event] = [...(allHooks[event] ?? []), ...added];
+  }
+
+  const hooks = new HookRunner(allHooks, {
     cwd,
     env,
     shell: shellInfo,
@@ -291,8 +307,10 @@ export async function createAgentSetup(
     const { servers, errors } = await loadMcpConfig(cwd, env);
     warnings.push(...errors);
     const state = new AppStateStore(env);
+    // A project's .vinax/mcp.json arrives with the code, so it is approved per folder. Your own
+    // mcp.json and a plugin you chose to install were both deliberate, so they just run.
     await mcp.start(servers, (entry: McpServerEntry) =>
-      entry.scope === 'user' ? Promise.resolve(true) : state.isMcpApproved(cwd, entry.name),
+      entry.scope === 'project' ? state.isMcpApproved(cwd, entry.name) : Promise.resolve(true),
     );
     tools.push(...mcp.tools());
     for (const s of mcp.servers) {

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { pluginContribDirs } from '../plugins/plugins.js';
 import { normalizeModelRef } from '../providers/known-models.js';
 import { matchBashSpecifier, parseRule } from '../permissions/rules.js';
 import { inWorkspace, resolvePath } from '../tools/paths.js';
@@ -16,7 +17,7 @@ export interface CustomCommand {
   model: string | undefined;
   body: string;
   file: string;
-  scope: 'project' | 'user';
+  scope: 'project' | 'user' | 'plugin';
 }
 
 type FrontmatterValue = string | string[];
@@ -113,7 +114,9 @@ export async function loadCustomCommands(
 ): Promise<{ commands: CustomCommand[]; errors: string[] }> {
   const errors: string[] = [];
   const byName = new Map<string, CustomCommand>();
+  // later sources win a name clash, so plugins go first: your own files beat a plugin's
   const sources = [
+    ...pluginContribDirs(env, 'commands').map((dir) => ({ dir, scope: 'plugin' as const })),
     { dir: path.join(vinaxHome(env), 'commands'), scope: 'user' as const },
     { dir: path.join(cwd, '.vinax', 'commands'), scope: 'project' as const },
   ];

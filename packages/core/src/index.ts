@@ -109,6 +109,23 @@ export {
 } from './session/store.js';
 export { generateTitle } from './session/title.js';
 export {
+  activePlugins,
+  addMarketplace,
+  installPlugin,
+  listPlugins,
+  pluginHooks,
+  pluginsDir,
+  readMarketplace,
+  readPluginConfig,
+  removeMarketplace,
+  setPluginEnabled,
+  uninstallPlugin,
+  updateMarketplace,
+  type InstalledPlugin,
+  type MarketplaceEntry,
+  type PluginManifest,
+} from './plugins/plugins.js';
+export {
   BUILTIN_OUTPUT_STYLES,
   DEFAULT_ANSWERING,
   DEFAULT_OUTPUT_STYLE,

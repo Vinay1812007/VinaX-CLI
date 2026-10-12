@@ -1181,6 +1181,44 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(await fs.readFile(file, 'utf8')).toBe('mine');
   });
 
+  it('adds a marketplace and installs a plugin with /plugin', async () => {
+    const { frame, type, harness } = await mount({
+      files: {
+        'market/.claude-plugin/marketplace.json': JSON.stringify({
+          name: 'house',
+          plugins: [{ name: 'toolkit', source: './toolkit', description: 'Our house toolkit' }],
+        }),
+        'market/toolkit/.claude-plugin/plugin.json': JSON.stringify({
+          name: 'toolkit',
+          description: 'Our house toolkit',
+          version: '1.2.0',
+        }),
+        'market/toolkit/commands/ship.md': '---\ndescription: Ship it\n---\nShip it.',
+      },
+    });
+    await type('/plugin', KEYS.enter);
+    await waitFor(() => frame().includes('Plugins'), 'empty panel');
+    expect(flat(frame())).toContain('None yet');
+    await type(`/plugin marketplace add ${path.join(harness.cwd, 'market')}`, KEYS.enter);
+    await waitFor(() => frame().includes('Marketplace house'), 'marketplace panel');
+    expect(flat(frame())).toContain('/plugin install toolkit@house');
+    await type('/plugin install toolkit@house', KEYS.enter);
+    await waitFor(() => frame().includes('Installed toolkit@house'), 'installed');
+    expect(flat(frame())).toContain('it adds commands');
+    await type('/plugin', KEYS.enter);
+    await waitFor(() => flat(frame()).includes('✔ enabled toolkit@house'), 'listed');
+    await type('/plugin disable toolkit@house', KEYS.enter);
+    await waitFor(() => frame().includes('Disabled toolkit@house'), 'disabled');
+    await type('/plugin uninstall toolkit@house', KEYS.enter);
+    await waitFor(() => frame().includes('Uninstalled toolkit@house'), 'uninstalled');
+    expect(
+      await fs
+        .access(path.join(harness.home, 'plugins', 'installed', 'house', 'toolkit'))
+        .then(() => true)
+        .catch(() => false),
+    ).toBe(false);
+  });
+
   it('changes settings in the /settings panel', async () => {
     const { frame, type, harness } = await mount();
     await type('/settings', KEYS.esc, KEYS.enter);

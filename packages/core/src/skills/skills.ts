@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { parseFrontmatter } from '../commands/custom.js';
 import { vinaxHome, type Env } from '../config/paths.js';
+import { pluginContribDirs } from '../plugins/plugins.js';
 import { defineTool } from '../tools/types.js';
 
 /**
@@ -17,7 +18,7 @@ export interface SkillDef {
   body: string;
   /** The skill's folder (other files there can be read on demand). */
   dir: string;
-  source: 'project' | 'user';
+  source: 'project' | 'user' | 'plugin';
 }
 
 const MAX_SKILL_CHARS = 20_000;
@@ -28,6 +29,8 @@ export function skillDirs(cwd: string, env: Env): { dir: string; source: SkillDe
     { dir: path.join(cwd, '.vinax', 'skills'), source: 'project' },
     { dir: path.join(cwd, '.claude', 'skills'), source: 'project' },
     { dir: path.join(vinaxHome(env), 'skills'), source: 'user' },
+    // a plugin's skills come last, so a project or personal skill of the same name wins
+    ...pluginContribDirs(env, 'skills').map((dir) => ({ dir, source: 'plugin' as const })),
   ];
 }
 

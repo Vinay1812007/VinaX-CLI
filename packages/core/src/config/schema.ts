@@ -56,7 +56,7 @@ const hookCommandSchema = z.strictObject({
   /** Seconds before the hook is stopped (default 60). */
   timeout: z.number().int().positive().max(600).optional(),
 });
-const hookMatcherSchema = z.strictObject({
+export const hookMatcherSchema = z.strictObject({
   /** Tool name, `A|B` list, or a regular expression (tool events only). */
   matcher: z.string().optional(),
   hooks: z.array(hookCommandSchema).min(1),

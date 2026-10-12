@@ -62,6 +62,7 @@ import {
   settingsCommand,
   skills,
 } from './extra.js';
+import { plugin } from './plugins.js';
 import type { CommandContext, SlashCommand } from './types.js';
 
 const INIT_PROMPT = `Study this codebase and write a VINAX.md file in the project root that will help future VinaX sessions work here. Cover:
@@ -1119,6 +1120,7 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   }),
   effort,
   outputStyle,
+  plugin,
   permissionsCommand,
   copy,
   skills,

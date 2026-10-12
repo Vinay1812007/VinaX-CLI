@@ -75,7 +75,7 @@ export interface SlashCommand {
   aliases?: readonly string[];
   description: string;
   argumentHint?: string | undefined;
-  source: 'builtin' | 'project' | 'user';
+  source: 'builtin' | 'project' | 'user' | 'plugin';
   run: (ctx: CommandContext) => void | Promise<void>;
 }
 
