@@ -109,6 +109,15 @@ export {
 } from './session/store.js';
 export { generateTitle } from './session/title.js';
 export {
+  BUILTIN_OUTPUT_STYLES,
+  DEFAULT_ANSWERING,
+  DEFAULT_OUTPUT_STYLE,
+  loadOutputStyles,
+  styleId,
+  styleTemplate,
+  type OutputStyle,
+} from './agent/output-styles.js';
+export {
   usageTotals,
   UsageTracker,
   type DayUsage,

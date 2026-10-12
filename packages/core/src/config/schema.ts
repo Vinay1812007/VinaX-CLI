@@ -104,6 +104,11 @@ export const settingsSchema = z.strictObject({
    * enough without them, and a paid model is still selectable by typing its ref.
    */
   freeModelsOnly: z.boolean().optional(),
+  /**
+   * How VinaX writes its answers: a built-in style (`default`, `explanatory`, `learning`,
+   * `concise`) or one of your own from `.vinax/output-styles/`.
+   */
+  outputStyle: z.string().optional(),
   providers: z
     .strictObject({
       groq: providerSettingsSchema.optional(),
@@ -219,6 +224,7 @@ export interface ResolvedSettings {
   updateCheck: boolean;
   showTips: boolean;
   freeModelsOnly: boolean;
+  outputStyle: string;
   context: { maxTokens: number; autoCompact: boolean };
   budget: { tokens: number | undefined; seconds: number | undefined };
   /** USD per million tokens, keyed by canonical model ref. */
@@ -293,6 +299,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   updateCheck: true,
   showTips: true,
   freeModelsOnly: true,
+  outputStyle: 'default',
   context: { maxTokens: 24_000, autoCompact: true },
   budget: { tokens: undefined, seconds: undefined },
   pricing: {},
@@ -339,6 +346,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     updateCheck: s.updateCheck ?? d.updateCheck,
     showTips: s.showTips ?? d.showTips,
     freeModelsOnly: s.freeModelsOnly ?? d.freeModelsOnly,
+    outputStyle: s.outputStyle ?? d.outputStyle,
     context: { ...d.context, ...s.context },
     budget: {
       tokens: s.budget?.tokens ?? d.budget.tokens,

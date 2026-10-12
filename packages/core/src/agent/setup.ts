@@ -32,6 +32,7 @@ import {
   type SubagentDef,
   type SubagentRunner,
 } from './subagents.js';
+import { DEFAULT_OUTPUT_STYLE, loadOutputStyles, type OutputStyle } from './output-styles.js';
 import { buildSystemPrompt, readGitInfo, type GitInfo } from './system-prompt.js';
 
 /** Model calls a sub-agent may make for one Task. */
@@ -71,6 +72,11 @@ export interface AgentSetup {
   subagents: readonly SubagentDef[];
   /** Installed skills (SKILL.md folders). */
   skills: readonly SkillDef[];
+  /** Output styles found for this project, built-in ones first. */
+  outputStyles: readonly OutputStyle[];
+  /** The style answers are written in now, and a setter that takes effect on the next turn. */
+  outputStyle: () => OutputStyle;
+  setOutputStyle: (name: string) => boolean;
   /** Problems loading MCP config or sub-agent files. */
   warnings: string[];
   /** Runs SessionStart hooks; their output is added to the conversation as context. */
@@ -173,6 +179,16 @@ export async function createAgentSetup(
 
   const { skills, errors: skillErrors } = await loadSkills(cwd, env);
   warnings.push(...skillErrors);
+  const { styles: outputStyles, errors: styleErrors } = await loadOutputStyles(cwd, env);
+  warnings.push(...styleErrors);
+  // the list always has the built-in styles, so there is something to fall back to
+  const findStyle = (name: string): OutputStyle | undefined =>
+    outputStyles.find((s) => s.name === name);
+  let style = findStyle(settings.outputStyle) ?? DEFAULT_OUTPUT_STYLE;
+  if (settings.outputStyle !== style.name)
+    warnings.push(
+      `Unknown output style "${settings.outputStyle}" in settings; answering in "${style.name}" instead.`,
+    );
   const skillsSection = skillsPromptSection(skills);
   const tools: AnyTool[] = [
     ...createToolset({ shell: shellInfo, todos }),
@@ -190,6 +206,7 @@ export async function createAgentSetup(
         git,
         memory: memory.text(),
         ...(skillsSection === undefined ? {} : { skills: skillsSection }),
+        answering: style.prompt,
       },
       mode,
       toolInstructions,
@@ -346,6 +363,14 @@ export async function createAgentSetup(
     mcp,
     subagents,
     skills,
+    outputStyles,
+    outputStyle: () => style,
+    setOutputStyle(name) {
+      const found = findStyle(name);
+      if (found === undefined) return false;
+      style = found;
+      return true;
+    },
     warnings,
     async sessionStart(source) {
       const r = await hooks.run('SessionStart', { source });

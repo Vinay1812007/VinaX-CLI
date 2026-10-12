@@ -1,8 +1,14 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   parseRule,
   REASONING_EFFORTS,
+  styleId,
+  styleTemplate,
   THEME_NAMES,
   updateSettingsFile,
+  vinaxHome,
+  type OutputStyle,
   type PermissionMode,
   type ReasoningEffort,
   type ThemeName,
@@ -111,6 +117,13 @@ function settingsRows(ctx: CommandContext): SettingRow[] {
       labels: { dark: 'dark', light: 'light', colorblind: 'colour-blind friendly' },
     },
     {
+      key: 'outputStyle',
+      label: 'Output style',
+      value: ctx.setup.outputStyle().name,
+      options: ctx.setup.outputStyles.map((o) => o.name),
+      hint: ctx.setup.outputStyle().description,
+    },
+    {
       key: 'editorMode',
       label: 'Editor mode',
       value: ctx.editorMode(),
@@ -176,6 +189,14 @@ export function settingsCommand(
               r.theme = value as ThemeName;
             });
             break;
+          case 'outputStyle':
+            ctx.setup.setOutputStyle(value);
+            await saveUserSetting(ctx, 'outputStyle', value === 'default' ? undefined : value);
+            remember(ctx, (r) => {
+              r.outputStyle = value;
+            });
+            // the hint under the row names the style that is now chosen
+            return settingsRows(ctx);
           case 'editorMode':
             ctx.setEditorMode(value as 'normal' | 'vim');
             await saveUserSetting(ctx, 'editorMode', value);
@@ -403,6 +424,94 @@ export const skills: SlashCommand = {
         '',
         'VinaX sees each skill’s name and description and loads the full instructions (with the Skill tool) when a task calls for it.',
       ].join('\n'),
+    );
+  },
+};
+
+const SOURCE_HINT: Record<OutputStyle['source'], string> = {
+  builtin: 'built in',
+  user: 'yours',
+  project: 'this project',
+};
+
+/** Writes a starter style file and tells the user where to edit it. */
+async function newOutputStyle(ctx: CommandContext, raw: string): Promise<void> {
+  const name = styleId(raw);
+  if (name === '' || !/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+    ctx.notice('error', 'A style name may only use lower-case letters, digits, - and _.');
+    return;
+  }
+  const scope = await ctx.pick('Where should the style live?', [
+    { label: 'This project', value: 'project' as const, hint: '.vinax/output-styles/ — shared' },
+    { label: 'Just me', value: 'user' as const, hint: '~/.vinax/output-styles/ — every project' },
+  ]);
+  if (scope === undefined) return;
+  const dir =
+    scope === 'project'
+      ? path.join(ctx.runtime.cwd, '.vinax', 'output-styles')
+      : path.join(vinaxHome(ctx.runtime.env), 'output-styles');
+  const file = path.join(dir, `${name}.md`);
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    // never silently overwrite a style someone has already written
+    await fs.writeFile(file, styleTemplate(name), { flag: 'wx' });
+  } catch (err) {
+    ctx.notice(
+      'error',
+      (err as NodeJS.ErrnoException).code === 'EEXIST'
+        ? `${shortenPath(file)} already exists — edit it, then run /output-style ${name}.`
+        : `Could not write ${shortenPath(file)}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  ctx.notice(
+    'info',
+    `Wrote ${shortenPath(file)}. Edit it, then start a new session (styles are read at startup) and run /output-style ${name}.`,
+  );
+}
+
+export const outputStyle: SlashCommand = {
+  name: 'output-style',
+  argumentHint: '[name | new <name>]',
+  description: 'How VinaX writes its answers (default, explanatory, learning, concise, yours)',
+  source: 'builtin',
+  async run(ctx) {
+    const styles = ctx.setup.outputStyles;
+    const current = ctx.setup.outputStyle();
+    const args = ctx.args.trim();
+    const makeNew = /^new\b/.exec(args);
+    if (makeNew) {
+      await newOutputStyle(ctx, args.slice(makeNew[0].length).trim());
+      return;
+    }
+    let chosen: string | undefined;
+    if (args !== '') {
+      const wanted = styleId(args);
+      if (!styles.some((s) => s.name === wanted)) {
+        ctx.notice(
+          'error',
+          `No output style called "${args}". Available: ${styles.map((s) => s.name).join(', ')}. Write your own with /output-style new <name>.`,
+        );
+        return;
+      }
+      chosen = wanted;
+    } else {
+      chosen = await ctx.pick(
+        'How should VinaX answer?',
+        styles.map((s) => ({
+          label: `${s.name}${s.name === current.name ? '  (current)' : ''}`,
+          value: s.name,
+          hint: `${s.description} · ${SOURCE_HINT[s.source]}`,
+        })),
+      );
+    }
+    if (chosen === undefined) return;
+    ctx.setup.setOutputStyle(chosen);
+    await saveUserSetting(ctx, 'outputStyle', chosen === 'default' ? undefined : chosen);
+    const now = ctx.setup.outputStyle();
+    ctx.notice(
+      'info',
+      `Answers will be written in the "${now.name}" style from the next message: ${now.description.charAt(0).toLowerCase()}${now.description.slice(1)}. How VinaX works is unchanged.`,
     );
   },
 };

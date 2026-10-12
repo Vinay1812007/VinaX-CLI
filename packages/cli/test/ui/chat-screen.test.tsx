@@ -1139,6 +1139,48 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(saved.reasoningEffort).toBe('high');
   });
 
+  it('changes how answers are written with /output-style, and keeps the choice', async () => {
+    const { frame, type, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'explained' }] } },
+    });
+    await type('/output-style', KEYS.enter);
+    await waitFor(() => frame().includes('How should VinaX answer?'), 'picker');
+    expect(flat(frame())).toContain('default (current)');
+    expect(flat(frame())).toContain('Leaves you a TODO(human) to write');
+    await type(KEYS.down, KEYS.down, KEYS.enter);
+    await waitFor(() => frame().includes('"explanatory" style'), 'notice');
+    await type('why', KEYS.enter);
+    await waitFor(() => frame().includes('explained'), 'answer');
+    const system = lastChatBody(harness)?.messages[0]?.content ?? '';
+    expect(system).toContain('explain the reasoning behind what you are doing');
+    expect(system).not.toContain('Be brief and direct.');
+    // how the work is done is the same whatever the style
+    expect(system).toContain('Read a file before editing it.');
+    const saved = JSON.parse(
+      await fs.readFile(path.join(harness.home, 'settings.json'), 'utf8'),
+    ) as { outputStyle?: string };
+    expect(saved.outputStyle).toBe('explanatory');
+    await type('/status', KEYS.enter);
+    await waitFor(() => frame().includes('output style: explanatory'), 'status');
+  });
+
+  it('writes a starter file for a style of your own with /output-style new', async () => {
+    const { frame, type, harness } = await mount();
+    await type('/output-style new house-style', KEYS.enter);
+    await waitFor(() => frame().includes('Where should the style live?'), 'scope picker');
+    await type(KEYS.enter);
+    await waitFor(() => flat(frame()).includes('house-style.md'), 'written');
+    const file = path.join(harness.cwd, '.vinax', 'output-styles', 'house-style.md');
+    expect(await fs.readFile(file, 'utf8')).toContain('name: house-style');
+    // a style already written is never overwritten by a second run
+    await fs.writeFile(file, 'mine');
+    await type('/output-style new house-style', KEYS.enter);
+    await waitFor(() => frame().includes('Where should the style live?'), 'scope picker again');
+    await type(KEYS.enter);
+    await waitFor(() => frame().includes('already exists'), 'refused');
+    expect(await fs.readFile(file, 'utf8')).toBe('mine');
+  });
+
   it('changes settings in the /settings panel', async () => {
     const { frame, type, harness } = await mount();
     await type('/settings', KEYS.esc, KEYS.enter);

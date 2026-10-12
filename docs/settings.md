@@ -72,6 +72,7 @@ vinax config unset model
 | `smallModel`                              | `groq:openai/gpt-oss-20b`                     | Model for titles, summaries and compaction                                        |
 | `planModel`                               | unset                                         | Model for plan mode; unset uses the main model                                    |
 | `freeModelsOnly`                          | `true`                                        | List only free and free-tier models in `/model` and `/models`                     |
+| `outputStyle`                             | `default`                                     | How answers are written: `default`, `explanatory`, `learning`, `concise` or yours |
 | `fallbackChain`                           | see [Models](/models)                         | Models tried after the main one                                                   |
 | `providers.<name>.enabled`                | `true`                                        | Turn any provider off by name (see [Models](/models))                             |
 | `providers.<name>.baseUrl`                | the provider's API                            | Point a provider at another OpenAI-compatible endpoint                            |

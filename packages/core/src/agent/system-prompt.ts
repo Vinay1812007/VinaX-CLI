@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import type { PermissionMode } from '../config/schema.js';
+import { DEFAULT_ANSWERING } from './output-styles.js';
 
 export interface GitInfo {
   branch: string;
@@ -133,6 +134,11 @@ export interface PromptEnvironment {
   memory?: string;
   /** The skills section (names and descriptions), when any skills are installed. */
   skills?: string;
+  /**
+   * The answering rules of the chosen [output style](./output-styles.js). Left out, VinaX's own
+   * are used. A style only changes how answers are written, never how the work is done.
+   */
+  answering?: string;
 }
 
 const CORE = `You are VinaX, a coding agent that works in the user's terminal. You help with software engineering: understanding code, fixing bugs, adding features, running tests and using git.
@@ -158,12 +164,7 @@ const CORE = `You are VinaX, a coding agent that works in the user's terminal. Y
 - "Review my changes": read \`git diff\` and \`git diff --staged\`, then report bugs and risks by file:line, most serious first.
 - "Commit": check \`git status\` and the diff, stage only files that belong to the change, and write a concise message in the style of the recent commits. Never commit or push unless the user asked.
 - "Explain this diff": describe what changed and why it matters, not line-by-line restatements.
-- Never rewrite published history, force-push or discard changes unless the user explicitly asked.
-
-# Answering
-- Be brief and direct. Use GitHub-flavored Markdown with language tags on code blocks.
-- Point to code as path:line.
-- When the task is done, summarize what changed and how you checked it in a few lines.`;
+- Never rewrite published history, force-push or discard changes unless the user explicitly asked.`;
 
 const PLAN_MODE = `# Plan mode is on
 You may only read, search and ask clarifying questions. Do not try to change files or run commands. For a task that changes code, call ExitPlanMode with a short step-by-step plan once you understand the task, and wait for approval. For ordinary questions, answer directly without asking for plan approval.`;
@@ -175,6 +176,7 @@ export function buildSystemPrompt(
 ): string {
   const sections = [
     CORE,
+    env.answering ?? DEFAULT_ANSWERING,
     ...(mode === 'plan' ? [PLAN_MODE] : []),
     [
       '# Environment',

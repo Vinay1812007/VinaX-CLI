@@ -480,3 +480,77 @@ describe('WebFetch', () => {
     }
   });
 });
+
+describe('output styles', () => {
+  it('lists the built-in styles and answers in the default one', async () => {
+    const { setup, groq } = await setupWith({ groq: { script: { main: [{ text: 'hi' }] } } });
+    expect(setup.outputStyles.map((s) => s.name)).toEqual([
+      'default',
+      'concise',
+      'explanatory',
+      'learning',
+    ]);
+    expect(setup.outputStyle().name).toBe('default');
+    await run(setup, 'hello');
+    const system = chatBodies(groq)[0]?.messages[0]?.content ?? '';
+    expect(system).toContain('Be brief and direct.');
+    expect(system).not.toContain('TODO(human)');
+  });
+
+  it('writes answers in the style the settings name, without changing how work is done', async () => {
+    const { setup, groq } = await setupWith({
+      groq: { script: { main: [{ text: 'hi' }] } },
+      settings: { outputStyle: 'learning' },
+    });
+    expect(setup.outputStyle().name).toBe('learning');
+    await run(setup, 'hello');
+    const system = chatBodies(groq)[0]?.messages[0]?.content ?? '';
+    expect(system).toContain('TODO(human)');
+    expect(system).not.toContain('Be brief and direct.');
+    // the style replaces the answering rules only; the working rules are still there
+    expect(system).toContain('Read a file before editing it.');
+    expect(system).toContain('Never invent command output or test results.');
+  });
+
+  it('loads styles from the project and the user, project first, and takes effect on the next turn', async () => {
+    await write(
+      path.join(home, 'output-styles', 'house.md'),
+      '---\nname: house\ndescription: The user copy\n---\nAnswer like the user file.',
+    );
+    await write(
+      path.join(cwd, '.vinax', 'output-styles', 'house.md'),
+      '---\nname: House\ndescription: The project copy\n---\nAnswer like the project file.',
+    );
+    const { setup, groq } = await setupWith({
+      groq: { script: { main: [{ text: 'a' }, { text: 'b' }] } },
+    });
+    const house = setup.outputStyles.find((s) => s.name === 'house');
+    expect(house).toMatchObject({ description: 'The project copy', source: 'project' });
+    // a body with no heading of its own still lands as the answering section
+    expect(house?.prompt).toBe('# Answering\nAnswer like the project file.');
+
+    await run(setup, 'first');
+    expect(chatBodies(groq)[0]?.messages[0]?.content).toContain('Be brief and direct.');
+    expect(setup.setOutputStyle('house')).toBe(true);
+    expect(setup.setOutputStyle('nope')).toBe(false);
+    await run(setup, 'second');
+    const system = chatBodies(groq).at(-1)?.messages[0]?.content ?? '';
+    expect(system).toContain('Answer like the project file.');
+    expect(system).not.toContain('Be brief and direct.');
+  });
+
+  it('explains a style file it cannot use, and a style setting that names nothing', async () => {
+    await write(path.join(cwd, '.vinax', 'output-styles', 'empty.md'), '---\nname: empty\n---\n');
+    await write(
+      path.join(cwd, '.vinax', 'output-styles', 'bad.md'),
+      '---\nname: Not A Name!\n---\nBody.',
+    );
+    const { setup } = await setupWith({ settings: { outputStyle: 'missing' } });
+    expect(setup.warnings.join('\n')).toContain('empty.md: the file has no instructions');
+    expect(setup.warnings.join('\n')).toContain('bad.md: style names may only use');
+    expect(setup.warnings.join('\n')).toContain(
+      'Unknown output style "missing" in settings; answering in "default" instead.',
+    );
+    expect(setup.outputStyle().name).toBe('default');
+  });
+});

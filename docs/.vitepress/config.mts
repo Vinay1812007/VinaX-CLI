@@ -63,6 +63,7 @@ export default defineConfig({
           { text: 'MCP servers', link: '/mcp' },
           { text: 'Sub-agents', link: '/sub-agents' },
           { text: 'Skills', link: '/skills' },
+          { text: 'Output styles', link: '/output-styles' },
         ],
       },
       {

@@ -57,6 +57,7 @@ import {
   copy,
   effort,
   openPermissions,
+  outputStyle,
   permissionsCommand,
   settingsCommand,
   skills,
@@ -478,6 +479,7 @@ const status: SlashCommand = {
       `**Session** ${ctx.sessionTitle() ?? '(untitled)'} · \`${ctx.session.id}\``,
       `- model: \`${setup.agent.model ?? runtime.settings.resolved.model}\` · mode: ${ctx.mode()} · context: ${ctx.contextPct() === undefined ? 'n/a' : `${String(ctx.contextPct())}%`} of ${formatTokens(setup.contextLimit())} tokens`,
       `- memory: ${setup.memory.files.length === 0 ? 'none' : setup.memory.files.map((f) => `\`${shortenPath(f.path)}\``).join(', ')}`,
+      `- output style: ${setup.outputStyle().name} — ${setup.outputStyle().description} (\`/output-style\`)`,
       '',
     ];
     const store = await openSecretStore(runtime.env);
@@ -1116,6 +1118,7 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
     if (ref !== undefined) switchModel(ctx, ref);
   }),
   effort,
+  outputStyle,
   permissionsCommand,
   copy,
   skills,
