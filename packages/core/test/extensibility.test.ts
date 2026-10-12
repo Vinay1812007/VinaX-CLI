@@ -699,7 +699,8 @@ describe('plugins', () => {
     const kit = servers.find((x) => x.name === 'kit');
     expect(kit?.scope).toBe('plugin');
     expect(kit?.config).toMatchObject({
-      args: [path.join(home, 'plugins', 'installed', 'house', 'toolkit', 'server.js')],
+      // the variable is replaced as written; Windows accepts the mixed separators
+      args: [`${path.join(home, 'plugins', 'installed', 'house', 'toolkit')}/server.js`],
     });
   });
 
