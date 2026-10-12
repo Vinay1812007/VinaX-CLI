@@ -106,6 +106,7 @@ See [Permissions](/permissions#modes) for the details.
 | `Ctrl+_`                                            | Undo                                                                                |
 | `Ctrl+P`                                            | [Command palette](#command-palette): search every command and view                  |
 | `Ctrl+G`                                            | [Review changes](#reviewing-changes): changed files, diffs, undo one file           |
+| `Ctrl+X`                                            | [Expand](#shortened-output) the last shortened tool output or diff, where it was    |
 | `Ctrl+O`                                            | [Transcript](#transcript-and-turn-details): search, full tool output, turn details  |
 | `Ctrl+L`                                            | Redraw the screen                                                                   |
 | `?` (on an empty prompt)                            | Show all shortcuts                                                                  |
@@ -183,6 +184,14 @@ A session with no prompts just prints `✻ Bye!`. Reported and estimated tokens 
 | `Esc`                    | Close                             |
 
 A file that changed outside VinaX after it last wrote it (in your editor, or by a shell command) is marked `✎ changed outside VinaX`. Undoing it asks first, and your current version is saved to a backup folder before it is replaced. VinaX is told about the undo so it reads the file again. Only changes made with VinaX's file tools appear here; changes made by shell commands are not tracked. Undo is not available while VinaX is still working.
+
+## Shortened output
+
+A finished tool call is one line — `▸ Bash npm test` and its result — and a diff is cut to 24 lines. Whatever is left out is offered where it was cut: `… 18 more lines (ctrl+x to expand)` under a diff, `(ctrl+x to expand)` after a summary.
+
+`Ctrl+X` prints it in full. Because the transcript is written into your terminal's scrollback and never redrawn, the expansion is appended below rather than growing the entry in place, so nothing you have already read moves. Pressing `Ctrl+X` again expands the call before it, and so on backwards; when nothing is left it says so.
+
+Expanded output is part of the transcript, so `Ctrl+O` finds it too. A diff is expanded from the transcript itself, so it still works in a resumed session; plain tool output is only kept for calls made since VinaX started, and an expansion says so when it is gone.
 
 ## Transcript and turn details
 

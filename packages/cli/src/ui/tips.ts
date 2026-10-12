@@ -7,6 +7,7 @@ export const TIPS: readonly string[] = [
   'Rate-limited on Groq? VinaX switches down your fallback chain automatically',
   'Pipe text in from scripts: git diff | vinax -p "write a commit message"',
   'Press Ctrl+O to see which model answered each turn and how many tokens it used',
+  'Output cut short? Press Ctrl+X to print the whole thing where it was shortened',
   'Shift+Tab cycles manual → accept edits → plan → auto mode',
   'Type /model and start typing to search models by name, alias or provider',
   'Use NVIDIA with --model NVD_CHAT_OSS_20_B once NVIDIA_API_KEY is set',

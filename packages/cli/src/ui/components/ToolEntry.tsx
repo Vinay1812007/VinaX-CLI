@@ -5,7 +5,8 @@ import { truncate } from '../format.js';
 import { toolOutcome, withDuration } from '../phases.js';
 import { renderMarkdown } from '../markdown.js';
 import { useTheme } from '../theme.js';
-import { DiffView } from './DiffView.js';
+import { EXPAND_MAX_LINES } from '../expand.js';
+import { DIFF_PREVIEW_LINES, DiffView, diffRows } from './DiffView.js';
 import { TodoList } from './TodoList.js';
 
 function Header({
@@ -30,6 +31,15 @@ function Header({
   );
 }
 
+/**
+ * What to add after a tool's summary when the output is not shown. Most summaries already count
+ * the lines ("Exit 0 · 4 lines"), so the count is only repeated when the summary left it out.
+ */
+export function hiddenHint(summary: string, hidden: number): string {
+  const counted = summary.includes(`${String(hidden)} line`);
+  return counted ? ' (ctrl+x to expand)' : ` … +${String(hidden)} lines (ctrl+x to expand)`;
+}
+
 /** A finished tool call: status line, one-line result, and a diff/checklist/plan when relevant. */
 export function ToolEntry({
   name,
@@ -38,6 +48,7 @@ export function ToolEntry({
   summary,
   display,
   durationMs,
+  hidden = 0,
   width,
 }: {
   name: string;
@@ -46,6 +57,8 @@ export function ToolEntry({
   summary: string;
   display: ToolDisplay | undefined;
   durationMs?: number | undefined;
+  /** Lines this entry does not show, offered with Ctrl+X (diffs say so under the diff instead). */
+  hidden?: number;
   width: number;
 }) {
   const theme = useTheme();
@@ -65,10 +78,20 @@ export function ToolEntry({
       <Text color={outcome === 'ok' ? theme.muted : color} wrap="truncate-end">
         {'  └ '}
         {withDuration(summary, durationMs)}
+        {display === undefined && hidden > 0 ? (
+          <Text color={theme.muted}>{hiddenHint(summary, hidden)}</Text>
+        ) : (
+          ''
+        )}
       </Text>
       {display?.kind === 'diff' ? (
         <Box paddingLeft={4}>
-          <DiffView diff={display} maxLines={24} width={width - 4} />
+          <DiffView
+            diff={display}
+            maxLines={DIFF_PREVIEW_LINES}
+            width={width - 4}
+            moreHint="ctrl+x to expand"
+          />
         </Box>
       ) : null}
       {display?.kind === 'todos' ? (
@@ -137,6 +160,46 @@ export function RunningTool({
           {l}
         </Text>
       ))}
+    </Box>
+  );
+}
+
+/** A tool result reprinted in full, after Ctrl+X asked for the lines the entry left out. */
+export function ExpandedOutput({
+  title,
+  diff,
+  text,
+  width,
+}: {
+  title: string;
+  diff?: Extract<ToolDisplay, { kind: 'diff' }> | undefined;
+  text?: string | undefined;
+  width: number;
+}) {
+  const theme = useTheme();
+  const lines = text === undefined ? [] : text.replace(/\s+$/, '').split('\n');
+  const shown = lines.slice(0, EXPAND_MAX_LINES);
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color={theme.accent} wrap="truncate-end">
+        ⤷ {truncate(title, Math.max(10, width - 4))}
+      </Text>
+      {diff === undefined ? null : (
+        <Box paddingLeft={2}>
+          <DiffView diff={diff} maxLines={diffRows(diff)} width={width - 2} />
+        </Box>
+      )}
+      {shown.map((l, i) => (
+        <Text key={i} wrap="truncate-end">
+          {'  '}
+          {l}
+        </Text>
+      ))}
+      {lines.length > shown.length ? (
+        <Text color={theme.muted}>
+          {'  '}… {lines.length - shown.length} more lines (ctrl+o to read all of it)
+        </Text>
+      ) : null}
     </Box>
   );
 }

@@ -88,6 +88,7 @@ export function PermissionPrompt({ req, width, onAnswer, onAcceptEdits }: Props)
             diff={req.preview}
             maxLines={Math.max(3, Math.min(20, rows - 16))}
             width={width - 6}
+            moreHint="ctrl+x once it has run"
           />
         </Box>
       ) : null}

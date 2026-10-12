@@ -30,6 +30,12 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
     keys: 'Ctrl+O',
   },
   {
+    id: 'expand',
+    label: 'Expand shortened output',
+    description: 'reprint the last cut-short tool output or diff in full',
+    keys: 'Ctrl+X',
+  },
+  {
     id: 'rewind',
     label: 'Rewind',
     description: 'go back to before an earlier prompt',

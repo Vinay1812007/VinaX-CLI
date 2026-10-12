@@ -19,6 +19,18 @@ export type TranscriptItem =
       display: ToolDisplay | undefined;
       /** How long the tool ran (added in newer versions). */
       durationMs?: number;
+      /** Lines the tool printed, so the entry can offer the rest (added in newer versions). */
+      outputLines?: number;
+    }
+  /** A truncated tool result, reprinted in full after Ctrl+X. */
+  | {
+      id: number;
+      kind: 'output';
+      title: string;
+      /** The whole diff, when the tool produced one. */
+      diff?: Extract<ToolDisplay, { kind: 'diff' }>;
+      /** Everything the tool printed, when there is no richer display. */
+      text?: string;
     }
   /** A failed turn, explained: what failed, why, and what to try. */
   | { id: number; kind: 'error'; report: FailureReport }
@@ -54,6 +66,7 @@ const KINDS = new Set([
   'tool',
   'error',
   'summary',
+  'output',
 ]);
 
 /** Transcript items saved in a session (view entries), validated loosely for replay. */

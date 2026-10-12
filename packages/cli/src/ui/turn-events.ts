@@ -145,6 +145,10 @@ export function createTurnTracker(sink: TurnSink): {
         const label = labels.get(ev.id) ?? '';
         const began = toolStarts.get(ev.id);
         setRunning((r) => r.filter((t) => t.id !== ev.id));
+        // what the entry leaves out, so it can offer the rest (Ctrl+X)
+        const content = ev.content.trim();
+        const outputLines =
+          content === '' || content === ev.summary.trim() ? 0 : content.split('\n').length;
         const itemId = push({
           kind: 'tool',
           name: ev.name,
@@ -153,6 +157,7 @@ export function createTurnTracker(sink: TurnSink): {
           summary: ev.summary,
           display: ev.display,
           ...(began === undefined ? {} : { durationMs: now() - began }),
+          ...(outputLines === 0 ? {} : { outputLines }),
         });
         sink.toolOutputs.set(itemId, ev.content);
         tools.push({ name: ev.name, label, ok: ev.ok, summary: ev.summary, output: ev.content });

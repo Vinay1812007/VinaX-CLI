@@ -18,6 +18,7 @@ const SHORTCUTS: readonly [string, string][] = [
   ['Ctrl+_', 'undo'],
   ['Ctrl+P', 'command palette: search every command and view'],
   ['Ctrl+G', 'review changed files: diffs, undo one file'],
+  ['Ctrl+X', 'expand the last shortened tool output or diff, in place'],
   ['Ctrl+O', 'transcript: search, full tool output, models, tokens, rate limits'],
   ['Ctrl+L', 'redraw the screen'],
   ['Mouse / trackpad', 'select text to copy it; /copy copies the last answer'],

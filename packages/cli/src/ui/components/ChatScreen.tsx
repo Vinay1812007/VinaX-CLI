@@ -42,6 +42,7 @@ import { phaseFor, turnSummary } from '../phases.js';
 import { performRewind, undoFile, type ReviewDeps } from '../review-actions.js';
 import type { TaskState } from '../task-state.js';
 import { useTheme } from '../theme.js';
+import { nextExpansion } from '../expand.js';
 import { browseEntries } from '../transcript-browser.js';
 import { createTurnTracker, outcomeItem, type Running, type Streaming } from '../turn-events.js';
 import { type NewTranscriptItem, type TranscriptItem, type TurnRecord } from '../transcript.js';
@@ -154,6 +155,8 @@ export function ChatScreen(props: ChatScreenProps) {
   };
   /** Full output of this session's tool calls, by transcript item id (for Ctrl+O). */
   const toolOutputs = useRef(new Map<number, string>());
+  /** Tool calls already reprinted in full, so Ctrl+X keeps working backwards. */
+  const expanded = useRef(new Set<number>());
 
   const [streaming, setStreaming] = useState<Streaming | undefined>(undefined);
   const [running, setRunning] = useState<Running[]>([]);
@@ -611,6 +614,21 @@ export function ChatScreen(props: ChatScreenProps) {
     },
   };
 
+  /**
+   * Ctrl+X: reprint the newest shortened tool result in full. The transcript is written once and
+   * never redrawn, so an expansion is appended rather than growing the entry in place; pressing
+   * it again works backwards through earlier calls.
+   */
+  const expandLast = (): void => {
+    const next = nextExpansion(items, toolOutputs.current, expanded.current);
+    if (next === undefined) {
+      flashHint('Nothing left to expand — Ctrl+O browses the whole transcript');
+      return;
+    }
+    expanded.current.add(next.id);
+    push(next.item);
+  };
+
   /** Ctrl+P: every view and slash command, searchable. */
   const openPalette = async (): Promise<void> => {
     const choice = await pick<PaletteChoice>('Command palette', paletteItems(commands), {
@@ -628,6 +646,9 @@ export function ChatScreen(props: ChatScreenProps) {
         return;
       case 'transcript':
         setOverlay({ kind: 'transcript' });
+        return;
+      case 'expand':
+        expandLast();
         return;
       case 'rewind':
         if (agent.turns.length === 0)
@@ -725,6 +746,10 @@ export function ChatScreen(props: ChatScreenProps) {
     }
     if (key.ctrl && input === 'g') {
       setOverlay({ kind: 'changes' });
+      return;
+    }
+    if (key.ctrl && input === 'x') {
+      expandLast();
       return;
     }
     if (key.ctrl && input === 'p') {

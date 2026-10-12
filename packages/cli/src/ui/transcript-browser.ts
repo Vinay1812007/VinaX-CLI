@@ -1,4 +1,4 @@
-import { formatFailureReport } from '@vinax/core';
+import { formatFailureReport, type ToolDisplay } from '@vinax/core';
 import { formatDuration, formatTokens } from './format.js';
 import type { TranscriptItem, TurnRecord } from './transcript.js';
 
@@ -13,6 +13,18 @@ export interface BrowseEntry {
   /** For prompts: model, time, tokens, fallbacks. */
   meta?: string;
   tone: 'normal' | 'error' | 'warning' | 'muted';
+}
+
+/** A diff as plain text, so an expanded diff is searchable in the browser. */
+function diffText(diff: Extract<ToolDisplay, { kind: 'diff' }> | undefined): string {
+  if (diff === undefined) return '';
+  return diff.hunks
+    .map((h) =>
+      h.lines
+        .map((l) => `${l.kind === 'add' ? '+' : l.kind === 'remove' ? '-' : ' '} ${l.text}`)
+        .join('\n'),
+    )
+    .join('\n⋮\n');
 }
 
 function turnMeta(t: TurnRecord): string {
@@ -127,6 +139,16 @@ export function browseEntries(
             body: item.text,
             tone: 'muted',
           });
+        break;
+      case 'output':
+        // already shown in full in the chat; listed so searching finds it where it was expanded
+        out.push({
+          key: String(item.id),
+          kind: 'tool',
+          title: `${item.title} — expanded`,
+          body: item.text ?? diffText(item.diff),
+          tone: 'muted',
+        });
         break;
       case 'welcome':
       case 'summary':

@@ -10,7 +10,8 @@ import {
   TurnSummary,
   UserMessage,
 } from './Messages.js';
-import { ToolEntry } from './ToolEntry.js';
+import { ExpandedOutput, ToolEntry } from './ToolEntry.js';
+import { hiddenLines } from '../expand.js';
 
 /** One permanent transcript item (printed once into the terminal's scrollback). */
 export function TranscriptEntry({
@@ -45,9 +46,12 @@ export function TranscriptEntry({
           summary={item.summary}
           display={item.display}
           durationMs={item.durationMs}
+          hidden={hiddenLines(item)}
           width={width}
         />
       );
+    case 'output':
+      return <ExpandedOutput title={item.title} diff={item.diff} text={item.text} width={width} />;
     case 'error':
       return <ErrorCard report={item.report} width={width} />;
     case 'summary':

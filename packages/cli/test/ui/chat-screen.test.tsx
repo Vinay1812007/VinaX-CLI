@@ -23,6 +23,7 @@ const KEYS = {
   ctrlO: '\x0f',
   ctrlP: '\x10',
   ctrlG: '\x07',
+  ctrlX: '\x18',
   paste: (t: string) => `\x1b[200~${t}\x1b[201~`,
 };
 
@@ -678,6 +679,56 @@ describe('ChatScreen review workflow', () => {
     await waitFor(() => m.frame().includes('omega'), 'expanded output');
     await m.type(KEYS.esc, KEYS.esc, KEYS.esc);
     await waitFor(() => !m.frame().includes('Turn details'), 'closed');
+  });
+
+  it('offers the lines a tool entry leaves out and prints them on Ctrl+X', async () => {
+    const m = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Bash', { command: "printf 'row%s\\n' 1 2 3 4" })] },
+            { text: 'Ran it.' },
+          ],
+        },
+      },
+      settings: { permissions: { allow: ['Bash(printf:*)'] } },
+    });
+    await m.type('run printf', KEYS.enter);
+    await waitFor(() => m.frame().includes('Ran it.'), 'answer');
+    // the entry is one summary line, which offers the output it is not showing
+    expect(flat(m.frame())).toContain('4 lines · 0.0s (ctrl+x to expand)');
+    expect(m.frame()).not.toContain('row3');
+    await m.type(KEYS.ctrlX);
+    await waitFor(() => m.frame().includes('row3'), 'expanded output');
+    const expanded = m.frame();
+    expect(expanded).toContain('⤷ Bash');
+    expect(expanded).toContain('row1');
+    expect(expanded).toContain('row4');
+    // nothing is held back twice
+    await m.type(KEYS.ctrlX);
+    await waitFor(() => m.frame().includes('Nothing left to expand'), 'hint');
+  });
+
+  it('expands a diff that was shown only in part', async () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `row${String(i + 1)}`).join('\n');
+    const m = await mount({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [call('Write', { file_path: 'big.txt', content: `${lines}\n` })] },
+            { text: 'Wrote it.' },
+          ],
+        },
+      },
+      settings: { permissions: { defaultMode: 'acceptEdits' } },
+    });
+    await m.type('write big.txt', KEYS.enter);
+    await waitFor(() => m.frame().includes('Wrote it.'), 'answer');
+    expect(flat(m.frame())).toContain('more lines (ctrl+x to expand)');
+    expect(m.frame()).not.toContain('row40');
+    await m.type(KEYS.ctrlX);
+    await waitFor(() => m.frame().includes('row40'), 'whole diff');
+    expect(m.frame()).toContain('⤷ Write');
   });
 
   it('shows working, waiting-for-you and interrupted states in the status line', async () => {
