@@ -21,6 +21,8 @@ export interface Streaming {
   thinking?: string;
   /** Tokens providers reported so far in this turn. */
   tokens?: number;
+  /** Estimated output tokens from completed responses that did not report usage. */
+  estimatedTokens?: number;
 }
 
 /** A tool call that has not finished yet. */
@@ -194,7 +196,17 @@ export function createTurnTracker(sink: TurnSink): {
       }
       case 'done': {
         const used = ev.usage === undefined ? 0 : ev.usage.promptTokens + ev.usage.completionTokens;
-        if (used > 0) setStreaming((st) => st && { ...st, tokens: (st.tokens ?? 0) + used });
+        setStreaming((st) => {
+          if (!st) return st;
+          const estimated = Math.round(st.chars / 4);
+          return {
+            ...st,
+            chars: 0,
+            ...(used > 0
+              ? { tokens: (st.tokens ?? 0) + used }
+              : { estimatedTokens: (st.estimatedTokens ?? 0) + estimated }),
+          };
+        });
         return;
       }
     }

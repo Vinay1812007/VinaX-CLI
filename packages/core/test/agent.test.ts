@@ -272,6 +272,25 @@ describe('Agent (native tool calling)', () => {
     expect(results).toEqual(['one', 'two']);
   });
 
+  it('does not retain a project allow rule if saving it fails', async () => {
+    const c = await start({
+      answers: [{ kind: 'allow_rule', rule: 'Bash(echo:*)', scope: 'project' }],
+      groq: {
+        script: {
+          main: [{ toolCalls: [{ name: 'Bash', arguments: '{"command":"echo one"}' }] }],
+        },
+      },
+    });
+    c.host.saveProjectRule = () => Promise.reject(new Error('disk is read-only'));
+    expect((await run(c, 'echo once')).status).toBe('failed');
+    expect(
+      c.setup.permissions.decide(
+        { name: 'Bash', kind: 'execute', readOnly: false, target: { command: 'echo two' } },
+        'default',
+      ).kind,
+    ).toBe('ask');
+  });
+
   it('feeds validation errors back so the model can fix its call', async () => {
     const c = await start({
       groq: {

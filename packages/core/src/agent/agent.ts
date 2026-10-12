@@ -1082,8 +1082,25 @@ export class Agent {
             continue;
           }
           if (answer.kind === 'allow_rule') {
+            if (answer.scope === 'project') {
+              try {
+                await host.saveProjectRule?.(answer.rule);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                finish(
+                  p.call.id,
+                  tool.name,
+                  fail(
+                    `Could not save the project permission rule: ${message}`,
+                    'Permission rule was not saved',
+                  ),
+                );
+                continue;
+              }
+            }
+            // Persist a project rule before putting it in memory. Otherwise a failed write would
+            // still silently approve matching calls for the rest of this session.
             this.deps.permissions.addSessionRule(answer.rule);
-            if (answer.scope === 'project') await host.saveProjectRule?.(answer.rule);
           }
         }
         runnable.push(p);

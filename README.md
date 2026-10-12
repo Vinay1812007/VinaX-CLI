@@ -121,8 +121,9 @@ vinax config set model NVD_CHAT_OSS_20_B   # make it the default
   `model`/`smallModel`/`fallbackChain` in settings, `/model`, and custom command and sub-agent
   `model` frontmatter.
 - The API is `https://integrate.api.nvidia.com/v1` by default. Point
-  `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead; `providers.nvidia.rpm`
-  (default 40) sets the local request rate.
+  `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead. NVIDIA has no local VinaX
+  request ceiling by default, though provider rate-limit headers and 429s are still honored. Set
+  `providers.nvidia.rpm` explicitly for a self-hosted NIM.
 - NVIDIA's `/models` list is public, so keys are checked with a one-token completion. The catalog
   lists ids only, so VinaX supplies the 128K context window for the models it knows.
 - The default fallback chain ends with `nvidia:openai/gpt-oss-20b`; it's skipped until you add an

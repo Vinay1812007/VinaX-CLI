@@ -136,6 +136,20 @@ describe('interactive controls', () => {
     expect(t.frame()).toContain('esc to interrupt');
   });
 
+  it('shows reported, estimated, and currently streaming token usage separately', async () => {
+    const t = await terminal(
+      <ActivityIndicator
+        startedAt={Date.now() - 1000}
+        outputChars={80}
+        reportedTokens={1200}
+        estimatedTokens={30}
+      />,
+    );
+    expect(t.frame()).toContain('1.2K tokens reported');
+    expect(t.frame()).toContain('~30 estimated');
+    expect(t.frame()).toContain('~20 streaming');
+  });
+
   it('accepts a selected choice and supports a custom typed answer', async () => {
     const onAnswer = vi.fn();
     const question = { question: 'Which runner?', options: ['Vitest', 'Jest'] };

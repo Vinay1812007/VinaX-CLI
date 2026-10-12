@@ -207,8 +207,10 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   providers: {
     groq: { enabled: true, baseUrl: 'https://api.groq.com/openai/v1', rpm: 30 },
     openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1', rpm: 20 },
-    // NVIDIA's hosted API (build.nvidia.com); point baseUrl at a self-hosted NIM to use that instead.
-    nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1', rpm: 40 },
+    // NVIDIA's hosted API (build.nvidia.com). Unlike the other free providers, it has no
+    // artificial local RPM ceiling: its response headers and 429s remain authoritative.
+    // Set providers.nvidia.rpm explicitly when using a self-hosted NIM that needs one.
+    nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1', rpm: Infinity },
   },
   router: {
     maxRetries: 2,

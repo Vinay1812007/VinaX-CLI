@@ -93,6 +93,12 @@ describe('RateLimitLedger.check', () => {
     expect(ledger.check('groq', 'm', 10).waitMs).toBe(0);
   });
 
+  it('does not impose a local RPM ceiling when one is disabled', () => {
+    const { ledger } = setup(Infinity);
+    for (let i = 0; i < 100; i++) ledger.recordRequest('nvidia', 'openai/gpt-oss-20b');
+    expect(ledger.check('nvidia', 'openai/gpt-oss-20b', 10)).toEqual({ waitMs: 0 });
+  });
+
   it('waits for the token bucket to refill', () => {
     const { ledger } = setup();
     ledger.observe(

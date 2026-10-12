@@ -21,6 +21,10 @@ interface Props {
   startedAt: number;
   /** Characters streamed so far; shown as an approximate token count. */
   outputChars: number;
+  /** Tokens reported by providers for completed model calls in this task. */
+  reportedTokens?: number;
+  /** Estimated tokens from completed calls that did not report usage. */
+  estimatedTokens?: number;
   /** Set while the router waits for a rate-limit window. */
   waiting?: string | undefined;
   /** What is happening instead of the rotating verb, e.g. "Running tests". */
@@ -64,6 +68,8 @@ export function Shimmer({ text, tick }: { text: string; tick: number }) {
 export function ActivityIndicator({
   startedAt,
   outputChars,
+  reportedTokens = 0,
+  estimatedTokens = 0,
   waiting,
   activity,
   trail = [],
@@ -88,10 +94,12 @@ export function ActivityIndicator({
     thinking !== undefined
       ? 'Thinking'
       : (VERBS[Math.floor(elapsed / 3000) % VERBS.length] ?? 'Thinking');
-  const tokens = Math.round(outputChars / 4);
+  const liveTokens = Math.round(outputChars / 4);
   const details = [
     formatDuration(elapsed),
-    ...(tokens > 0 ? [`↓ ${formatTokens(tokens)} tokens`] : []),
+    ...(reportedTokens > 0 ? [`${formatTokens(reportedTokens)} tokens reported`] : []),
+    ...(estimatedTokens > 0 ? [`~${formatTokens(estimatedTokens)} estimated`] : []),
+    ...(liveTokens > 0 ? [`~${formatTokens(liveTokens)} streaming`] : []),
     ...(effort === undefined ? [] : [`${effort} effort`]),
     'esc to interrupt',
   ];

@@ -101,7 +101,7 @@ describe('NVIDIA settings', () => {
     expect(DEFAULT_SETTINGS.providers.nvidia).toEqual({
       enabled: true,
       baseUrl: 'https://integrate.api.nvidia.com/v1',
-      rpm: 40,
+      rpm: Infinity,
     });
     expect(DEFAULT_SETTINGS.fallbackChain.at(-1)).toBe('nvidia:openai/gpt-oss-20b');
   });

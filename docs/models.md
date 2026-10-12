@@ -44,7 +44,7 @@ vinax --model NVD_CHAT_OSS_20_B          # the same model, by its alias
 - **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with a one-token completion against `openai/gpt-oss-20b` before saving it.
 - **Context window.** NVIDIA's catalog lists model ids only. VinaX knows the context window of the models it has aliases for (128K, 131,072 tokens, for `openai/gpt-oss-20b`).
 - **Picker.** NVIDIA's catalog also contains embedding, vision and safety models, so the model picker shows the NVIDIA models VinaX knows. Any other catalog model still works with `/model nvidia:<model-id>` or `--model`.
-- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. `providers.nvidia.rpm` (default 40) sets the local requests-per-minute limit, and `providers.nvidia.enabled: false` turns the provider off.
+- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. NVIDIA has no local VinaX RPM ceiling by default; its API headers and 429 responses are still honored. Set `providers.nvidia.rpm` when a self-hosted NIM needs a local requests-per-minute limit, and use `providers.nvidia.enabled: false` to turn the provider off.
 
 ```json
 {
@@ -133,7 +133,7 @@ When every model fails, VinaX explains why in an error card: each model it tried
 | ------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Groq                      | About 30 requests/min, plus a per-model tokens-per-minute budget (about 8K on the larger coding models) |
 | OpenRouter `:free` models | 20 requests/min and **50 requests/day** per account; 1,000/day after a one-time $10 credit purchase     |
-| NVIDIA                    | Set by your NVIDIA account. VinaX allows 40 requests/min locally (`providers.nvidia.rpm`)               |
+| NVIDIA                    | Set by your NVIDIA account; VinaX honors provider rate-limit headers and 429 responses                  |
 
 Each agent step is one request, and a long conversation can use most of a minute's tokens. So expect some turns to be served by the fallback chain. `/status` shows the remaining limits and your OpenRouter quota, and `/usage` shows today's totals.
 
@@ -161,7 +161,7 @@ Every argument is validated, and validation errors go back to the model so it ca
   "providers": {
     "groq": { "rpm": 30 },
     "openrouter": { "enabled": true, "rpm": 20 },
-    "nvidia": { "enabled": true, "rpm": 40 }
+    "nvidia": { "enabled": true }
   }
 }
 ```

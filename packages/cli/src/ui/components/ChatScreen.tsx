@@ -870,6 +870,8 @@ export function ChatScreen(props: ChatScreenProps) {
           <ActivityIndicator
             startedAt={streaming.startedAt}
             outputChars={streaming.chars}
+            reportedTokens={streaming.tokens}
+            estimatedTokens={streaming.estimatedTokens}
             waiting={streaming.waiting}
             activity={
               streaming.label ??
