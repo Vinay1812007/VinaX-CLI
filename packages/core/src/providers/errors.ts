@@ -39,6 +39,13 @@ const LABEL: Record<ProviderName, string> = {
   claude: 'Claude',
   deepseek: 'DeepSeek',
   mistral: 'Mistral',
+  cerebras: 'Cerebras',
+  zai: 'Z.AI (GLM)',
+  modelscope: 'ModelScope',
+  siliconflow: 'SiliconFlow',
+  ollama: 'Ollama Cloud',
+  kilo: 'Kilo AI Gateway',
+  hetzner: 'Hetzner Inference',
 };
 
 export function providerLabel(name: ProviderName): string {

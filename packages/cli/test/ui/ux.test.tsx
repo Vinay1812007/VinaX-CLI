@@ -189,13 +189,16 @@ function fakeRuntime(opts: {
   models?: Partial<Record<ProviderName, ModelInfo[]>>;
   skipped?: string[];
   viaGateway?: ProviderName[];
+  freeModelsOnly?: boolean;
 }): Runtime {
   return {
     providers: new Map(opts.providers.map((p) => [p, {}])),
     models: new Map(Object.entries(opts.models ?? {})),
     skipped: new Set(opts.skipped ?? []),
     viaGateway: new Set(opts.viaGateway ?? []),
-    settings: { resolved: DEFAULT_SETTINGS },
+    settings: {
+      resolved: { ...DEFAULT_SETTINGS, freeModelsOnly: opts.freeModelsOnly ?? true },
+    },
   } as unknown as Runtime;
 }
 
@@ -257,10 +260,45 @@ describe('model picker items', () => {
       ['nvidia:openai/gpt-oss-20b', 'unlisted'],
       ['nvidia:other/model', 'ready'],
     ]);
-    expect(rows.some((r) => r.ref === 'claude:claude-sonnet-4-5')).toBe(true);
+    // Claude bills every request, so it is left out while freeModelsOnly is on.
+    expect(rows.some((r) => r.ref === 'claude:claude-sonnet-4-5')).toBe(false);
     expect(modelSelectItems(runtime, 'nvidia:other/model')[0]?.group).toBe(
       'NVIDIA · nvidia.com · via VinaX gateway',
     );
+  });
+
+  it('hides paid models by default and lists them again when asked', () => {
+    const opts = {
+      providers: ['nvidia' as ProviderName],
+      models: { nvidia: [info('other/model', 8192)] },
+    };
+    const paidRef = 'claude:claude-sonnet-4-5';
+    const free = modelRows(fakeRuntime(opts), 'nvidia:other/model');
+    expect(free.some((r) => r.ref === paidRef)).toBe(false);
+    expect(free.every((r) => r.free || r.current)).toBe(true);
+
+    const all = modelRows(fakeRuntime({ ...opts, freeModelsOnly: false }), 'nvidia:other/model');
+    expect(all.some((r) => r.ref === paidRef)).toBe(true);
+  });
+
+  it('keeps a paid model listed while it is the one in use', () => {
+    const rows = modelRows(
+      fakeRuntime({
+        providers: ['nvidia'],
+        models: { nvidia: [info('other/model', 8192)] },
+      }),
+      'claude:claude-sonnet-4-5',
+    );
+    expect(rows.find((r) => r.ref === 'claude:claude-sonnet-4-5')?.current).toBe(true);
+  });
+
+  it('falls back to the full list rather than showing nothing usable', () => {
+    // Only a paid API has a key, so filtering to free would leave no selectable model at all.
+    const rows = modelRows(
+      fakeRuntime({ providers: ['claude'], models: { claude: [info('claude-sonnet-4-5')] } }),
+      'claude:claude-sonnet-4-5',
+    );
+    expect(rows.some((r) => r.provider === 'claude' && r.status === 'ready')).toBe(true);
   });
 });
 

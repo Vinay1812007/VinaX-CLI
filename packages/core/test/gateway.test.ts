@@ -11,6 +11,7 @@ import {
   gatewayUrlProblem,
   GatewayUnavailableError,
   openSecretStore,
+  PROVIDER_NAMES,
   removeGatewayLogin,
   runDoctor,
   saveGatewayLogin,
@@ -165,7 +166,10 @@ describe('gateway login and runtime', () => {
       env: { ...env(), VINAX_GATEWAY_TOKEN: 'vxg_tok' },
     });
     expect([...runtime.viaGateway]).toEqual(['groq']);
-    expect(runtime.missingKeys).toEqual(['gemini', 'openai', 'claude', 'deepseek', 'mistral']);
+    // The gateway serves groq/openrouter/nvidia; every other provider still needs its own key.
+    expect(runtime.missingKeys).toEqual(
+      PROVIDER_NAMES.filter((p) => !['groq', 'openrouter', 'nvidia'].includes(p)),
+    );
     expect(runtime.warnings.join('\n')).toContain('Waking VinaX gateway');
     setTimeout(() => {
       up = true;

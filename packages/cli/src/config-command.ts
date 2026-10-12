@@ -6,6 +6,7 @@ import {
   noopLogger,
   openSecretStore,
   PROVIDER_NAMES,
+  providerKeyPage,
   providerLabel,
   RateLimitLedger,
   SECRET_ENV_VARS,
@@ -15,6 +16,7 @@ import {
   type WritableScope,
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
+import { openInBrowser } from './open-url.js';
 import { paint, readSecret, type CliIO } from './io.js';
 
 const SCOPES = ['user', 'project', 'local'] as const;
@@ -31,6 +33,11 @@ export async function storeProviderKey(
     err(`Unknown provider "${provider}". Choose one of: ${PROVIDER_NAMES.join(', ')}`);
     return EXIT.usage;
   }
+  // Point at the page that issues the key, and open it when someone is actually at a terminal —
+  // piping a key in (`echo … | vinax login groq`) should never launch a browser.
+  const page = providerKeyPage(provider);
+  out(`Get a ${providerLabel(provider)} key at ${page}`);
+  if (io.stdin.isTTY === true) openInBrowser(page);
   const key = await readSecret(io, `${providerLabel(provider)} API key: `);
   if (key === '') {
     err('No key given.');

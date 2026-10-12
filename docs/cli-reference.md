@@ -45,15 +45,15 @@
 
 ## vinax config
 
-| Subcommand                                         | What it does                                                                   |
-| -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `list`                                             | Effective settings, and the files they come from                               |
-| `get <key>`                                        | One effective setting, e.g. `router.maxRetries`                                |
-| `set <key> <value> [--scope user\|project\|local]` | Set a value; JSON such as `3`, `true` or `["a"]` is parsed                     |
-| `unset <key> [--scope …]`                          | Remove a value                                                                 |
-| `keys`                                             | Which keys are configured (masked) and where each comes from                   |
-| `set-key <provider> [--no-verify]`                 | Store a key (`groq`, `openrouter` or `nvidia`); reads it from stdin when piped |
-| `remove-key <provider>`                            | Delete a stored key                                                            |
+| Subcommand                                         | What it does                                                 |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `list`                                             | Effective settings, and the files they come from             |
+| `get <key>`                                        | One effective setting, e.g. `router.maxRetries`              |
+| `set <key> <value> [--scope user\|project\|local]` | Set a value; JSON such as `3`, `true` or `["a"]` is parsed   |
+| `unset <key> [--scope …]`                          | Remove a value                                               |
+| `keys`                                             | Which keys are configured (masked) and where each comes from |
+| `set-key <provider> [--no-verify]`                 | Store a key for any provider; reads it from stdin when piped |
+| `remove-key <provider>`                            | Delete a stored key                                          |
 
 ## vinax mcp
 

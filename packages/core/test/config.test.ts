@@ -8,6 +8,11 @@ import {
   loadSettings,
   mergeSettings,
   parseSettings,
+  PROVIDER_NAMES,
+  providerHost,
+  providerKeyPage,
+  providerLabel,
+  SECRET_ENV_VARS,
   SettingsError,
   updateSettingsFile,
 } from '../src/index.js';
@@ -121,5 +126,32 @@ describe('updateSettingsFile', () => {
     await updateSettingsFile({ cwd, env: { VINAX_HOME: home }, scope: 'local' }, (s) => s);
     const again = await fs.readFile(path.join(cwd, '.gitignore'), 'utf8');
     expect(again.match(/settings\.local\.json/g)).toHaveLength(1);
+  });
+});
+
+describe('provider completeness', () => {
+  // Adding a provider means touching several tables. Missing one leaves a provider that cannot be
+  // labelled, keyed or reached, so check every one of them here rather than at the call site.
+  it('gives every provider a label, host, key page, env var and base URL', () => {
+    for (const name of PROVIDER_NAMES) {
+      expect(providerLabel(name), name).toBeTruthy();
+      expect(providerHost(name), name).toMatch(/^[a-z0-9.-]+\.[a-z]{2,}$/);
+      expect(SECRET_ENV_VARS[name], name).toMatch(/^[A-Z0-9_]+$/);
+      const settings = DEFAULT_SETTINGS.providers[name];
+      expect(settings, name).toBeDefined();
+      expect(() => new URL(settings.baseUrl), name).not.toThrow();
+      expect(new URL(settings.baseUrl).protocol, name).toBe('https:');
+      const page = providerKeyPage(name);
+      expect(() => new URL(page), name).not.toThrow();
+      expect(new URL(page).protocol, name).toBe('https:');
+    }
+  });
+
+  it('keeps provider names, env vars and key pages distinct', () => {
+    const unique = (xs: string[]) => new Set(xs).size === xs.length;
+    expect(unique([...PROVIDER_NAMES])).toBe(true);
+    expect(unique(PROVIDER_NAMES.map((p) => SECRET_ENV_VARS[p]))).toBe(true);
+    expect(unique(PROVIDER_NAMES.map((p) => providerHost(p)))).toBe(true);
+    expect(unique(PROVIDER_NAMES.map((p) => providerKeyPage(p)))).toBe(true);
   });
 });

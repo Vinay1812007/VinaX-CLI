@@ -27,18 +27,41 @@ A model whose provider has no key is skipped. So the last fallback, `nvidia:open
 
 ## Providers
 
-| Provider   | Name in refs | Key variable         | Default API                                               |
-| ---------- | ------------ | -------------------- | --------------------------------------------------------- |
-| Groq       | `groq`       | `GROQ_API_KEY`       | `https://api.groq.com/openai/v1`                          |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1`                            |
-| NVIDIA     | `nvidia`     | `NVIDIA_API_KEY`     | `https://integrate.api.nvidia.com/v1`                     |
-| Gemini     | `gemini`     | `GEMINI_API_KEY`     | `https://generativelanguage.googleapis.com/v1beta/openai` |
-| OpenAI     | `openai`     | `OPENAI_API_KEY`     | `https://api.openai.com/v1`                               |
-| Claude     | `claude`     | `ANTHROPIC_API_KEY`  | `https://api.anthropic.com/v1`                            |
-| DeepSeek   | `deepseek`   | `DEEPSEEK_API_KEY`   | `https://api.deepseek.com`                                |
-| Mistral    | `mistral`    | `MISTRAL_API_KEY`    | `https://api.mistral.ai/v1`                               |
+| Provider          | Name in refs  | Key variable          | Default API                                               |
+| ----------------- | ------------- | --------------------- | --------------------------------------------------------- |
+| Groq              | `groq`        | `GROQ_API_KEY`        | `https://api.groq.com/openai/v1`                          |
+| OpenRouter        | `openrouter`  | `OPENROUTER_API_KEY`  | `https://openrouter.ai/api/v1`                            |
+| NVIDIA            | `nvidia`      | `NVIDIA_API_KEY`      | `https://integrate.api.nvidia.com/v1`                     |
+| Gemini            | `gemini`      | `GEMINI_API_KEY`      | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| OpenAI            | `openai`      | `OPENAI_API_KEY`      | `https://api.openai.com/v1`                               |
+| Claude            | `claude`      | `ANTHROPIC_API_KEY`   | `https://api.anthropic.com/v1`                            |
+| DeepSeek          | `deepseek`    | `DEEPSEEK_API_KEY`    | `https://api.deepseek.com`                                |
+| Mistral           | `mistral`     | `MISTRAL_API_KEY`     | `https://api.mistral.ai/v1`                               |
+| Cerebras          | `cerebras`    | `CEREBRAS_API_KEY`    | `https://api.cerebras.ai/v1`                              |
+| Z.AI (GLM)        | `zai`         | `ZAI_API_KEY`         | `https://api.z.ai/api/paas/v4`                            |
+| ModelScope        | `modelscope`  | `MODELSCOPE_API_KEY`  | `https://api-inference.modelscope.cn/v1`                  |
+| SiliconFlow       | `siliconflow` | `SILICONFLOW_API_KEY` | `https://api.siliconflow.com/v1`                          |
+| Ollama Cloud      | `ollama`      | `OLLAMA_API_KEY`      | `https://ollama.com/v1`                                   |
+| Kilo AI Gateway   | `kilo`        | `KILO_API_KEY`        | `https://api.kilo.ai/api/gateway`                         |
+| Hetzner Inference | `hetzner`     | `HETZNER_API_KEY`     | `https://inference.hetzner.com/api/v1`                    |
 
 The provider's domain works as well as its name: `nvidia.com:openai/gpt-oss-20b` is the same as `nvidia:openai/gpt-oss-20b`.
+
+`/login` opens the provider's API-key page in your browser before asking for the key.
+
+Some providers expose more than one base URL. Z.AI's coding plan (`/api/coding/paas/v4`) and Anthropic-format endpoint (`/api/anthropic`) take the same key but reject each other's traffic; SiliconFlow's China endpoint is `api.siliconflow.cn`; ModelScope requires a bound Alibaba Cloud account. Point `providers.<name>.baseUrl` at the one you need — `providers.ollama.baseUrl: "http://localhost:11434/v1"` uses a local Ollama server instead of the cloud.
+
+## Free and paid models
+
+By default VinaX lists only models you can use without paying: anything a catalog reports as free, plus providers with a free tier whose catalogs publish no price. Models with a published non-zero price, and the pay-per-request APIs (OpenAI, Claude, DeepSeek), are hidden.
+
+The model in use is always listed even when it is paid, and `/model <provider:model>` still accepts any model by name. To list everything:
+
+```json
+{ "freeModelsOnly": false }
+```
+
+If filtering would leave no usable model at all — say your only key is for a paid API — VinaX shows the full list instead of an empty picker.
 
 ## NVIDIA
 

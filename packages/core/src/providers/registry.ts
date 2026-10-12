@@ -30,6 +30,14 @@ const PER_PROVIDER: Record<
   mistral: { keyCheck: { path: '/models' } },
   // Handled by the native adapter before these OpenAI-compatible options are used.
   claude: { keyCheck: { path: '/models' } },
+  cerebras: { keyCheck: { path: '/models' } },
+  zai: { keyCheck: { path: '/models' } },
+  modelscope: { keyCheck: { path: '/models' } },
+  siliconflow: { keyCheck: { path: '/models' } },
+  ollama: { keyCheck: { path: '/models' } },
+  kilo: { keyCheck: { path: '/models' } },
+  // Free for everyone during Hetzner's experimental phase, and its catalog publishes no prices.
+  hetzner: { keyCheck: { path: '/models' }, freeCatalog: true },
 };
 
 export const GATEWAY_PROVIDER_NAMES: readonly ProviderName[] = ['groq', 'openrouter', 'nvidia'];

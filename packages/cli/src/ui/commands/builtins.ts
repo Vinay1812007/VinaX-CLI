@@ -1,4 +1,4 @@
-import { execFile, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +20,7 @@ import {
   PROJECT_URL,
   PROVIDER_NAMES,
   providerHost,
+  providerKeyPage,
   providerLabel,
   RateLimitLedger,
   runDoctor,
@@ -30,6 +31,7 @@ import {
   type ProviderName,
 } from '@vinax/core';
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
+import { openInBrowser } from '../../open-url.js';
 import { compareVersions, detectInstall, latestRelease } from '../../update.js';
 import { notesMarkdown, readChangelog, releaseNotes, releaseUrl } from '../../updates.js';
 import { VERSION } from '../../version.js';
@@ -64,16 +66,6 @@ Keep it under 60 lines, factual and specific to this project — no generic advi
 
 function plural(n: number, word: string): string {
   return `${String(n)} ${word}${n === 1 ? '' : 's'}`;
-}
-
-function openInBrowser(url: string): void {
-  const [cmd, args] =
-    process.platform === 'darwin'
-      ? ['open', [url]]
-      : process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', '""', url]]
-        : ['xdg-open', [url]];
-  execFile(cmd, args, () => undefined);
 }
 
 async function saveUserSetting(ctx: CommandContext, key: string, value: unknown): Promise<void> {
@@ -279,6 +271,10 @@ const models: SlashCommand = {
       if (k.alias !== undefined)
         lines.push(`- \`${k.alias}\` → \`${k.provider}:${k.model}\` · ${k.label}`);
     lines.push(
+      '',
+      r.freeModelsOnly
+        ? 'Listing free and free-tier models only. `vinax config set freeModelsOnly false` lists paid ones too; `/model <provider:model>` still accepts any model by name.'
+        : 'Listing every model, free and paid. `vinax config set freeModelsOnly true` hides the paid ones.',
       '',
       'Change the default with `vinax config set model <ref|alias>` and the order with `fallbackChain` in settings. `/model auto` prefers free models and falls back on its own.',
     );
@@ -784,9 +780,13 @@ const login: SlashCommand = {
   async run(ctx) {
     const provider = await chooseProvider(ctx, 'Add a key for which provider?');
     if (provider === undefined) return;
+    // Open the page that issues the key before asking for it, so there is something to paste.
+    const page = providerKeyPage(provider);
+    openInBrowser(page);
+    ctx.notice('info', `Opening ${page} to get a ${providerLabel(provider)} key.`);
     const key = await ctx.ask(
       `${providerLabel(provider)} API key`,
-      'Paste the key and press Enter',
+      `Paste the key from ${page} and press Enter`,
       { mask: true },
     );
     if (key === undefined || key === '') return;

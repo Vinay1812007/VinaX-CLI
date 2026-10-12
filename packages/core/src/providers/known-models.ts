@@ -106,6 +106,13 @@ const PROVIDER_SYNONYMS: Readonly<Record<string, ProviderName>> = {
   'anthropic.com': 'claude',
   'deepseek.com': 'deepseek',
   'mistral.ai': 'mistral',
+  'cerebras.ai': 'cerebras',
+  'z.ai': 'zai',
+  'modelscope.cn': 'modelscope',
+  'siliconflow.com': 'siliconflow',
+  'ollama.com': 'ollama',
+  'kilo.ai': 'kilo',
+  'hetzner.com': 'hetzner',
 };
 
 const PROVIDER_HOSTS: Readonly<Record<ProviderName, string>> = {
@@ -117,11 +124,42 @@ const PROVIDER_HOSTS: Readonly<Record<ProviderName, string>> = {
   claude: 'anthropic.com',
   deepseek: 'deepseek.com',
   mistral: 'mistral.ai',
+  cerebras: 'cerebras.ai',
+  zai: 'z.ai',
+  modelscope: 'modelscope.cn',
+  siliconflow: 'siliconflow.com',
+  ollama: 'ollama.com',
+  kilo: 'kilo.ai',
+  hetzner: 'hetzner.com',
 };
 
 /** The provider's home domain, shown next to its name (e.g. "NVIDIA · nvidia.com"). */
 export function providerHost(name: ProviderName): string {
   return PROVIDER_HOSTS[name];
+}
+
+/** Where a provider hands out API keys; opened for you before the key prompt. */
+const PROVIDER_KEY_PAGES: Readonly<Record<ProviderName, string>> = {
+  groq: 'https://console.groq.com/keys',
+  openrouter: 'https://openrouter.ai/keys',
+  nvidia: 'https://build.nvidia.com/settings/api-keys',
+  gemini: 'https://aistudio.google.com/app/apikey',
+  openai: 'https://platform.openai.com/api-keys',
+  claude: 'https://console.anthropic.com/settings/keys',
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  mistral: 'https://console.mistral.ai/api-keys',
+  cerebras: 'https://cloud.cerebras.ai',
+  zai: 'https://z.ai/manage-apikey/apikey-list',
+  modelscope: 'https://modelscope.cn/my/myaccesstoken',
+  siliconflow: 'https://cloud.siliconflow.com/account/ak',
+  ollama: 'https://ollama.com/settings/keys',
+  kilo: 'https://app.kilo.ai',
+  // Hetzner's inference API is an experiment, with its own dashboard separate from Hetzner Cloud.
+  hetzner: 'https://experiments.hetzner.com/inference',
+};
+
+export function providerKeyPage(name: ProviderName): string {
+  return PROVIDER_KEY_PAGES[name];
 }
 
 function isProviderName(value: string): value is ProviderName {

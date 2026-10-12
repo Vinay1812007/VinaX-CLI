@@ -10,6 +10,13 @@ export const PROVIDER_NAMES = [
   'claude',
   'deepseek',
   'mistral',
+  'cerebras',
+  'zai',
+  'modelscope',
+  'siliconflow',
+  'ollama',
+  'kilo',
+  'hetzner',
 ] as const;
 export const providerNameSchema = z.enum(PROVIDER_NAMES);
 export type ProviderName = z.infer<typeof providerNameSchema>;
@@ -92,6 +99,11 @@ export const settingsSchema = z.strictObject({
   fallbackChain: z.array(modelRefSchema).optional(),
   /** Answers prompts that carry images when the main model cannot see them. */
   visionModel: modelRefSchema.optional(),
+  /**
+   * Hide models that cost money from the pickers and `/models`. On by default: the lists are long
+   * enough without them, and a paid model is still selectable by typing its ref.
+   */
+  freeModelsOnly: z.boolean().optional(),
   providers: z
     .strictObject({
       groq: providerSettingsSchema.optional(),
@@ -102,6 +114,13 @@ export const settingsSchema = z.strictObject({
       claude: providerSettingsSchema.optional(),
       deepseek: providerSettingsSchema.optional(),
       mistral: providerSettingsSchema.optional(),
+      cerebras: providerSettingsSchema.optional(),
+      zai: providerSettingsSchema.optional(),
+      modelscope: providerSettingsSchema.optional(),
+      siliconflow: providerSettingsSchema.optional(),
+      ollama: providerSettingsSchema.optional(),
+      kilo: providerSettingsSchema.optional(),
+      hetzner: providerSettingsSchema.optional(),
     })
     .optional(),
   router: routerSettingsSchema.optional(),
@@ -199,6 +218,7 @@ export interface ResolvedSettings {
   reasoningEffort: 'low' | 'medium' | 'high' | undefined;
   updateCheck: boolean;
   showTips: boolean;
+  freeModelsOnly: boolean;
   context: { maxTokens: number; autoCompact: boolean };
   budget: { tokens: number | undefined; seconds: number | undefined };
   /** USD per million tokens, keyed by canonical model ref. */
@@ -242,6 +262,22 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     claude: { enabled: true, baseUrl: 'https://api.anthropic.com/v1', rpm: Infinity },
     deepseek: { enabled: true, baseUrl: 'https://api.deepseek.com', rpm: Infinity },
     mistral: { enabled: true, baseUrl: 'https://api.mistral.ai/v1', rpm: Infinity },
+    cerebras: { enabled: true, baseUrl: 'https://api.cerebras.ai/v1', rpm: Infinity },
+    // Z.AI's pay-as-you-go OpenAI-compatible base. The coding-plan (/api/coding/paas/v4) and
+    // Anthropic-format (/api/anthropic) bases take the same key but reject each other's traffic.
+    zai: { enabled: true, baseUrl: 'https://api.z.ai/api/paas/v4', rpm: Infinity },
+    modelscope: {
+      enabled: true,
+      baseUrl: 'https://api-inference.modelscope.cn/v1',
+      rpm: Infinity,
+    },
+    // SiliconFlow's international domain; api.siliconflow.cn is the separate China endpoint.
+    siliconflow: { enabled: true, baseUrl: 'https://api.siliconflow.com/v1', rpm: Infinity },
+    // Ollama's hosted cloud. The OpenAI-compatible layer is /v1, not /api/v1. Point this at
+    // http://localhost:11434/v1 to use a local Ollama server instead.
+    ollama: { enabled: true, baseUrl: 'https://ollama.com/v1', rpm: Infinity },
+    kilo: { enabled: true, baseUrl: 'https://api.kilo.ai/api/gateway', rpm: Infinity },
+    hetzner: { enabled: true, baseUrl: 'https://inference.hetzner.com/api/v1', rpm: Infinity },
   },
   router: {
     maxRetries: 2,
@@ -256,6 +292,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   reasoningEffort: undefined,
   updateCheck: true,
   showTips: true,
+  freeModelsOnly: true,
   context: { maxTokens: 24_000, autoCompact: true },
   budget: { tokens: undefined, seconds: undefined },
   pricing: {},
@@ -286,6 +323,13 @@ export function resolveSettings(s: Settings): ResolvedSettings {
       claude: { ...d.providers.claude, ...s.providers?.claude },
       deepseek: { ...d.providers.deepseek, ...s.providers?.deepseek },
       mistral: { ...d.providers.mistral, ...s.providers?.mistral },
+      cerebras: { ...d.providers.cerebras, ...s.providers?.cerebras },
+      zai: { ...d.providers.zai, ...s.providers?.zai },
+      modelscope: { ...d.providers.modelscope, ...s.providers?.modelscope },
+      siliconflow: { ...d.providers.siliconflow, ...s.providers?.siliconflow },
+      ollama: { ...d.providers.ollama, ...s.providers?.ollama },
+      kilo: { ...d.providers.kilo, ...s.providers?.kilo },
+      hetzner: { ...d.providers.hetzner, ...s.providers?.hetzner },
     },
     router: { ...d.router, ...s.router },
     permissions: { ...d.permissions, ...s.permissions },
@@ -294,6 +338,7 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     reasoningEffort: s.reasoningEffort ?? d.reasoningEffort,
     updateCheck: s.updateCheck ?? d.updateCheck,
     showTips: s.showTips ?? d.showTips,
+    freeModelsOnly: s.freeModelsOnly ?? d.freeModelsOnly,
     context: { ...d.context, ...s.context },
     budget: {
       tokens: s.budget?.tokens ?? d.budget.tokens,

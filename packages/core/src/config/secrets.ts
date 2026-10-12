@@ -15,6 +15,13 @@ export const SECRET_ENV_VARS: Record<SecretName, string> = {
   claude: 'ANTHROPIC_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   mistral: 'MISTRAL_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+  zai: 'ZAI_API_KEY',
+  modelscope: 'MODELSCOPE_API_KEY',
+  siliconflow: 'SILICONFLOW_API_KEY',
+  ollama: 'OLLAMA_API_KEY',
+  kilo: 'KILO_API_KEY',
+  hetzner: 'HETZNER_API_KEY',
   gateway: 'VINAX_GATEWAY_TOKEN',
 };
 

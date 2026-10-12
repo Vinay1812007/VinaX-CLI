@@ -259,6 +259,7 @@ export {
   modelAlias,
   normalizeModelRef,
   providerHost,
+  providerKeyPage,
   withKnownMetadata,
   type KnownModel,
 } from './providers/known-models.js';

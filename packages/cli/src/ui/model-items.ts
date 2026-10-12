@@ -37,6 +37,27 @@ export interface ModelRow {
   status: ModelStatus;
   current: boolean;
   pricingHint?: string;
+  /** Free outright, or reachable on the provider's free tier. See {@link freeToTry}. */
+  free: boolean;
+}
+
+/** APIs that bill every request, so nothing they list can be tried for free. */
+const PAID_ONLY: readonly ProviderName[] = ['openai', 'claude', 'deepseek'];
+
+/**
+ * Whether a model can be used without paying. A published non-zero price is proof it cannot; a
+ * paid-only API is the same by provider. Everything else is a provider with a free tier whose
+ * catalog publishes no price (Groq, Gemini, NVIDIA, Cerebras, Z.AI, ModelScope, …), which is as
+ * close to "free tier" as the catalogs let us get.
+ */
+function freeToTry(
+  provider: ProviderName,
+  info: Partial<Pick<ModelInfo, 'free' | 'pricing'>>,
+): boolean {
+  if (info.free === true) return true;
+  if (info.pricing !== undefined && (info.pricing.prompt > 0 || info.pricing.completion > 0))
+    return false;
+  return !PAID_ONLY.includes(provider);
 }
 
 /** What the runtime knows about a provider, in picker terms. */
@@ -103,6 +124,7 @@ function row(
     vision: info.vision ?? known?.vision ?? false,
     status,
     current: ref === current,
+    free: freeToTry(provider, info),
     ...(() => {
       const hint = pricingHint(provider, info);
       return hint === undefined ? {} : { pricingHint: hint };
@@ -187,7 +209,12 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
     }
     out.push(...rows);
   }
-  return out;
+  if (!runtime.settings.resolved.freeModelsOnly) return out;
+  // The model in use stays listed even when it is paid, so the picker always shows where you are.
+  const free = out.filter((r) => r.free || r.current);
+  // Never filter the list down to nothing usable: someone whose only key is a paid API would be
+  // left with an empty picker and no way to see why.
+  return free.some((r) => r.status === 'ready') ? free : out;
 }
 
 export function providerGroupLabel(provider: ProviderName, runtime: Runtime): string {

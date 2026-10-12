@@ -71,8 +71,9 @@ vinax config unset model
 | `model`                                   | `groq:openai/gpt-oss-120b`                    | Main model: a `provider:model` ref or an [alias](/models#aliases)                 |
 | `smallModel`                              | `groq:openai/gpt-oss-20b`                     | Model for titles, summaries and compaction                                        |
 | `planModel`                               | unset                                         | Model for plan mode; unset uses the main model                                    |
+| `freeModelsOnly`                          | `true`                                        | List only free and free-tier models in `/model` and `/models`                     |
 | `fallbackChain`                           | see [Models](/models)                         | Models tried after the main one                                                   |
-| `providers.<name>.enabled`                | `true`                                        | Turn a provider off (`groq`, `openrouter` or `nvidia`)                            |
+| `providers.<name>.enabled`                | `true`                                        | Turn any provider off by name (see [Models](/models))                             |
 | `providers.<name>.baseUrl`                | the provider's API                            | Point a provider at another OpenAI-compatible endpoint                            |
 | `providers.<name>.rpm`                    | `30` Groq, `20` OpenRouter, no NVIDIA ceiling | Requests per minute to allow locally; set NVIDIA explicitly for a self-hosted NIM |
 | `router.maxRetries`                       | `2`                                           | Retries on one model before falling back                                          |

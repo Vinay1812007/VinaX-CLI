@@ -4,6 +4,7 @@ import {
   PROVIDER_NAMES,
   chatModels,
   providerLabel,
+  providerKeyPage,
   SECRET_ENV_VARS,
   THEME_NAMES,
   type GatewayCheck,
@@ -61,17 +62,6 @@ const PREVIEW = [
   'const answer: number = 42; // the answer',
   '```',
 ].join('\n');
-
-const KEY_PAGES: Record<ProviderName, string> = {
-  groq: 'https://console.groq.com/keys',
-  openrouter: 'https://openrouter.ai/keys',
-  nvidia: 'https://build.nvidia.com',
-  gemini: 'https://aistudio.google.com/app/apikey',
-  openai: 'https://platform.openai.com/api-keys',
-  claude: 'https://console.anthropic.com/settings/keys',
-  deepseek: 'https://platform.deepseek.com/api_keys',
-  mistral: 'https://console.mistral.ai/api-keys',
-};
 
 export { chatModels } from '@vinax/core';
 
@@ -348,7 +338,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
   }
 
   if (step === 'key' && current !== undefined) {
-    const url = KEY_PAGES[current];
+    const url = providerKeyPage(current);
     return (
       <Frame step={step}>
         <Text bold>{providerLabel(current)} API key</Text>
