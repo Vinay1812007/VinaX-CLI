@@ -108,7 +108,14 @@ export {
   type TurnMark,
 } from './session/store.js';
 export { generateTitle } from './session/title.js';
-export { UsageTracker, type DayUsage, type UsageCounts } from './state/usage.js';
+export {
+  usageTotals,
+  UsageTracker,
+  type DayUsage,
+  type ProviderUsage,
+  type UsageCounts,
+  type UsageRollup,
+} from './state/usage.js';
 export {
   createAgentSetup,
   pickVisionModel,

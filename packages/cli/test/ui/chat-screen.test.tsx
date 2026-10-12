@@ -888,6 +888,11 @@ describe('ChatScreen workflow (M4)', () => {
     expect(frame()).toContain('model: groq:main-model');
     await type('/usage', KEYS.enter);
     await waitFor(() => /Groq — \d+ requests? ·/.test(frame()), 'usage');
+    // rolled up beyond this session, so a day's spend is visible after it ends
+    const usagePanel = flat(frame());
+    expect(usagePanel).toMatch(/Today: \d+ requests · \d+ in/);
+    expect(usagePanel).toContain('Last 7 days (1 day)');
+    expect(usagePanel).toContain('All time (1 day)');
     await type('/doctor', KEYS.enter);
     await waitFor(() => frame().includes('✔ Node.js'), 'doctor');
   });

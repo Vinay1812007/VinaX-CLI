@@ -54,6 +54,19 @@ VinaX shows a dollar amount only from **explicit prices**:
 
 Anything else is shown as **unknown**, never guessed: `$0.0123 + unknown more (no price for groq:openai/gpt-oss-20b)`. A `≈` in front means part of the tokens were estimated. Free models priced at zero show `$0.00`.
 
+## What you have spent over time
+
+Every VinaX process records the requests and tokens it used, per provider and per model, in `~/.vinax/usage/<date>.json`. Several VinaX sessions running at once add up into the same file, and the counts outlive the session that made them.
+
+`/usage` shows four views of this:
+
+- **This session** — tokens and cost per model, from the turns of the session you are in.
+- **Today**, **Last 7 days** and **All time** — requests, tokens and cost across every VinaX session, from the recorded days. The bracketed day count is how many days actually recorded anything, so `Last 7 days (2 days)` means you used VinaX on two of them.
+
+Only tokens the providers reported are recorded, so these totals never include estimates. They are priced at **today's** rates: if a model's price has changed since, the figure is what that usage would cost now, not what you were charged then.
+
+To clear the history, delete `~/.vinax/usage`. Nothing is sent anywhere — the files are only read by `/usage` on your own machine.
+
 ## Fallbacks and model limits
 
 When a request moves to another model, a notice says why (`Groq 429: rate limited — switched to openrouter:…`), and `Ctrl+O` lists the fallbacks of each prompt with their reasons. VinaX also says once per session when a model in use limits what it can do: a model without native tool calling (VinaX then drives its tools through a text protocol), or one whose context window is smaller than the request about to be sent.

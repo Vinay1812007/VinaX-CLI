@@ -28,7 +28,12 @@ import {
   settingsPaths,
   THEME_NAMES,
   updateSettingsFile,
+  usageTotals,
+  type ModelUsage,
+  type Price,
   type ProviderName,
+  type ProviderUsage,
+  type UsageRollup,
 } from '@vinax/core';
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
 import { openInBrowser } from '../../open-url.js';
@@ -522,9 +527,54 @@ const status: SlashCommand = {
   },
 };
 
+/** The ISO date `back` days before `date`. */
+function daysBefore(date: string, back: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - back);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Recorded counts as per-model usage, so a stored day can be costed like a live session. Only
+ * what providers reported is stored, so none of it is estimated.
+ */
+function recordedUsage(providers: ProviderUsage): Record<string, ModelUsage> {
+  const out: Record<string, ModelUsage> = {};
+  for (const [name, counts] of Object.entries(providers) as [
+    ProviderName,
+    ProviderUsage[ProviderName],
+  ][]) {
+    if (counts === undefined) continue;
+    for (const [model, c] of Object.entries(counts.models)) {
+      out[`${name}:${model}`] = {
+        measured: { promptTokens: c.promptTokens, completionTokens: c.completionTokens },
+        estimated: { promptTokens: 0, completionTokens: 0 },
+      };
+    }
+  }
+  return out;
+}
+
+/**
+ * One "Last 7 days (3 days): 12 requests · 48K in · 9K out · $0.12" line. The day count says how
+ * many of the window's days VinaX actually ran on, so it is left out for a single-day window.
+ */
+function rollupLine(
+  label: string,
+  rollup: UsageRollup,
+  price: (ref: string) => Price | undefined,
+  countDays = true,
+): string {
+  const total = usageTotals(rollup.providers);
+  const days = countDays ? ` (${plural(rollup.dates.length, 'day')})` : '';
+  if (total.requests === 0) return `- ${label}${days}: nothing recorded`;
+  const cost = formatCost(costOf(recordedUsage(rollup.providers), price));
+  return `- ${label}${days}: ${plural(total.requests, 'request')} · ${formatTokens(total.promptTokens)} in · ${formatTokens(total.completionTokens)} out · ${cost}`;
+}
+
 const usage: SlashCommand = {
   name: 'usage',
-  description: 'Tokens and cost for this session, and requests per provider today',
+  description: 'Tokens and cost for this session, today, the last 7 days and all time',
   source: 'builtin',
   run(ctx) {
     const price = (ref: string) => priceFor(ref, ctx.runtime.settings.resolved, ctx.runtime.models);
@@ -538,18 +588,30 @@ const usage: SlashCommand = {
       const reported = totalTokens(u.measured);
       const estimated = totalTokens(u.estimated);
       const p = price(ref);
+      const priced =
+        reported + estimated === 0
+          ? ''
+          : p === undefined
+            ? ' · price unknown'
+            : ` · ${formatCost(costOf({ [ref]: u }, price))} (${p.source === 'settings' ? 'your settings' : 'the provider catalog'})`;
       lines.push(
-        `- \`${ref}\`: ${formatTokens(u.measured.promptTokens)} in · ${formatTokens(u.measured.completionTokens)} out reported${estimated === 0 ? '' : ` · ~${formatTokens(estimated)} estimated`}${reported + estimated === 0 ? '' : ` · ${p === undefined ? 'price unknown' : `priced from ${p.source === 'settings' ? 'your settings' : 'the provider catalog'}`}`}`,
+        `- \`${ref}\`: ${formatTokens(u.measured.promptTokens)} in · ${formatTokens(u.measured.completionTokens)} out reported${estimated === 0 ? '' : ` · ~${formatTokens(estimated)} estimated`}${priced}`,
       );
     }
     if (refs.length > 0) lines.push('', `Cost: **${formatCost(costOf(session, price))}**`);
+
+    const day = ctx.runtime.usage.snapshot();
     lines.push(
       '',
-      'Reported = counted by the provider. Estimated = VinaX counted ~4 characters per token where the provider sent no count (or the reply was cut off). Costs use only explicit prices: `pricing` in settings or the provider catalog.',
+      '**Across every VinaX session** (reported tokens, priced at today’s rates):',
+      '',
+      rollupLine('Today', { dates: [day.date], providers: day.providers }, price, false),
+      rollupLine('Last 7 days', ctx.runtime.usage.rollup(daysBefore(day.date, 6)), price),
+      rollupLine('All time', ctx.runtime.usage.rollup(), price),
+      '',
+      `**Today** (${day.date}), provider by provider:`,
       '',
     );
-    const day = ctx.runtime.usage.snapshot();
-    lines.push(`**Today** (${day.date}, all VinaX sessions, reported tokens):`, '');
     for (const name of PROVIDER_NAMES) {
       const p = day.providers[name];
       if (!p) continue;
@@ -557,8 +619,13 @@ const usage: SlashCommand = {
         `**${providerLabel(name)}** — ${plural(p.requests, 'request')} · ${formatTokens(p.promptTokens)} in · ${formatTokens(p.completionTokens)} out`,
       );
       for (const [m, c] of Object.entries(p.models)) {
+        const ref = `${name}:${m}`;
+        const cost =
+          price(ref) === undefined
+            ? ''
+            : ` · ${formatCost(costOf(recordedUsage({ [name]: { ...c, models: { [m]: c } } }), price))}`;
         lines.push(
-          `- \`${m}\`: ${plural(c.requests, 'request')} · ${formatTokens(c.promptTokens + c.completionTokens)} tokens`,
+          `- \`${m}\`: ${plural(c.requests, 'request')} · ${formatTokens(c.promptTokens + c.completionTokens)} tokens${cost}`,
         );
       }
       if (name === 'openrouter') {
@@ -572,6 +639,10 @@ const usage: SlashCommand = {
       lines.push('');
     }
     if (Object.keys(day.providers).length === 0) lines.push('No requests yet today.');
+    lines.push(
+      '',
+      'Reported = counted by the provider. Estimated = VinaX counted ~4 characters per token where the provider sent no count (or the reply was cut off). Costs use only explicit prices: `pricing` in settings or the provider catalog — a model with no published price is left out and named. Rollups are priced at today’s rates, so a price that has since changed is not what you were charged then.',
+    );
     ctx.panel('Usage', lines.join('\n'));
   },
 };

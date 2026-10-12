@@ -9,9 +9,20 @@ export interface UsageCounts {
   completionTokens: number;
 }
 
+export type ProviderUsage = Partial<
+  Record<ProviderName, UsageCounts & { models: Record<string, UsageCounts> }>
+>;
+
 export interface DayUsage {
   date: string;
-  providers: Partial<Record<ProviderName, UsageCounts & { models: Record<string, UsageCounts> }>>;
+  providers: ProviderUsage;
+}
+
+/** Several days added up: what `/usage` shows for a week, or for everything VinaX has recorded. */
+export interface UsageRollup {
+  /** The days that had anything to count, oldest first. */
+  dates: string[];
+  providers: ProviderUsage;
 }
 
 // Runtimes are created freely by the CLI and by consumers of the core package. Keep one process
@@ -24,6 +35,14 @@ process.once('exit', () => {
 
 function empty(): UsageCounts {
   return { requests: 0, promptTokens: 0, completionTokens: 0 };
+}
+
+/**
+ * `Object.entries` for a partial record. TypeScript types the values as present, but these come
+ * from a JSON file on disk, which may be anything.
+ */
+function entriesOf<V>(record: Partial<Record<ProviderName, V>>): [ProviderName, V | undefined][] {
+  return Object.entries(record) as [ProviderName, V | undefined][];
 }
 
 function add(target: UsageCounts, delta: UsageCounts): void {
@@ -115,4 +134,44 @@ export class UsageTracker {
     this.flush();
     return this.read();
   }
+
+  /** Every day VinaX has recorded, oldest first. */
+  days(): string[] {
+    try {
+      return fs
+        .readdirSync(path.join(vinaxHome(this.env), 'usage'))
+        .flatMap((name) => (/^\d{4}-\d{2}-\d{2}\.json$/.test(name) ? [name.slice(0, 10)] : []))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Days added up, from `since` (an ISO date) onwards, or everything when it is left out. Only
+   * days that recorded something are listed. Pending counts are written first, so a rollup
+   * includes what this session has done so far.
+   */
+  rollup(since?: string): UsageRollup {
+    this.flush();
+    const dates = this.days().filter((d) => since === undefined || d >= since);
+    const providers: ProviderUsage = {};
+    for (const date of dates) {
+      for (const [name, counts] of entriesOf(this.read(date).providers)) {
+        if (counts === undefined) continue;
+        const into = (providers[name] ??= { ...empty(), models: {} });
+        add(into, counts);
+        for (const [model, c] of Object.entries(counts.models))
+          add((into.models[model] ??= empty()), c);
+      }
+    }
+    return { dates, providers };
+  }
+}
+
+/** Requests and tokens across every provider in a rollup. */
+export function usageTotals(providers: ProviderUsage): UsageCounts {
+  const total = empty();
+  for (const [, counts] of entriesOf(providers)) if (counts !== undefined) add(total, counts);
+  return total;
 }

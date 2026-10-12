@@ -20,7 +20,7 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/init`                             | Analyze the project and write a starter `VINAX.md`                        |
 | `/memory`                           | Edit a memory file in your `$EDITOR`                                      |
 | `/status`                           | Session, providers, remaining rate limits and OpenRouter quota            |
-| `/usage`                            | This session's reported and estimated tokens and cost; today's usage      |
+| `/usage`                            | Tokens and cost: this session, today, the last 7 days and all time        |
 | `/doctor`                           | Check the installation, keys, search, shell, git, keychain and terminal   |
 | `/health`                           | A concise, grouped health summary (full details: `/doctor`)               |
 | `/about`                            | Version, runtime, install type, model, gateway, MCP and platform          |
