@@ -7,7 +7,7 @@
 # VinaX CLI
 
 VinaX (`vinax`) is an open-source AI coding agent for the terminal. It runs on models from
-**Groq**, **OpenRouter** and **NVIDIA**, with free tiers and automatic fallback between them.
+**Groq**, **OpenRouter**, **NVIDIA**, **Gemini**, **OpenAI**, **Claude**, **DeepSeek** and **Mistral**, with free and paid model options and automatic fallback.
 
 > **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
@@ -74,6 +74,11 @@ On first run VinaX walks you through setup. You can also log in from the shell:
 ```sh
 vinax login groq                     # prompts for the key without echoing it, then checks it
 vinax login nvidia                   # NVIDIA (build.nvidia.com)
+vinax login gemini                   # Google Gemini
+vinax login openai                   # OpenAI API
+vinax login claude                   # Anthropic API
+vinax login deepseek
+vinax login mistral
 vinax login --gateway https://…      # use a VinaX gateway instead (asks for your token)
 vinax logout groq                    # or: vinax logout --gateway
 ```
@@ -87,6 +92,8 @@ export NVIDIA_API_KEY=nvapi-...
 ```
 
 Keys never go in settings files.
+
+Use `/model auto` (or choose **Auto** in `/model`) to select available models automatically. Auto model selection does not change permission mode. Free and paid chat models are available in the picker; billing and quotas are controlled by the provider account. See [models](docs/models.md) for all key environment variables and supported endpoints.
 
 Or store them. `set-key` checks the key live against the provider before saving it to the OS keychain
 (falling back to `~/.vinax/credentials.json`, mode 0600):

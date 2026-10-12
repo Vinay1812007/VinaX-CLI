@@ -128,7 +128,7 @@ describe('NVIDIA settings', () => {
 
   it('explains invalid models and unknown provider keys', () => {
     expect(() => parseSettings({ model: 'nvidia-gpt' }, 'settings.json')).toThrow(
-      /model: expected "<provider>:<model-id>" \(providers: groq, openrouter, nvidia\)/,
+      /model: expected "<provider>:<model-id>" \(providers: groq, openrouter, nvidia, gemini, openai, claude, deepseek, mistral\)/,
     );
     expect(
       parseSettings({ providers: { nvidia: { apiKey: 'nvapi-x' } } }, 'settings.json').warnings,
@@ -416,7 +416,15 @@ describe('NVIDIA runtime', () => {
     });
     expect(runtime.settings.resolved.model).toBe('nvidia:openai/gpt-oss-20b');
     expect(runtime.providers.has('nvidia')).toBe(true);
-    expect(runtime.missingKeys).toEqual(['groq', 'openrouter']);
+    expect(runtime.missingKeys).toEqual([
+      'groq',
+      'openrouter',
+      'gemini',
+      'openai',
+      'claude',
+      'deepseek',
+      'mistral',
+    ]);
     expect(runtime.models.get('nvidia')?.find((m) => m.id === 'openai/gpt-oss-20b')).toMatchObject({
       contextWindow: 131_072,
     });

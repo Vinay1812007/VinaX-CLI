@@ -47,7 +47,7 @@ describe('CheckpointStore: snapshots', () => {
     const cp = new CheckpointStore();
     cp.beginTurn(1);
     // (root can read anything; the check only means something for normal users)
-    if (process.getuid?.() === 0) return;
+    if (process.platform === 'win32' || process.getuid?.() === 0) return;
     await expect(cp.capture([file])).rejects.toBeInstanceOf(CheckpointError);
     await expect(cp.capture([file])).rejects.toThrow(/EACCES.*not made/);
     // nothing was recorded, so a rewind cannot delete the file

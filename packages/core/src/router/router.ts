@@ -14,6 +14,7 @@ import {
   parseModelRef,
   type ChatMessage,
   type ModelRef,
+  type ModelInfo,
   type Provider,
   type ProviderName,
   type ReasoningEffort,
@@ -21,6 +22,7 @@ import {
   type Usage,
 } from '../providers/types.js';
 import { AbortError, backoffDelay, sleep as defaultSleep } from './backoff.js';
+import { chatModels } from '../providers/chat-models.js';
 
 /** Output tokens assumed when the caller sets no `maxTokens`; counts against tokens-per-minute. */
 const DEFAULT_OUTPUT_RESERVE = 1024;
@@ -104,6 +106,7 @@ export interface RouteRequest {
 }
 
 export interface RouterDeps {
+  models?: ReadonlyMap<ProviderName, readonly ModelInfo[]>;
   providers: ReadonlyMap<ProviderName, Provider>;
   ledger: RateLimitLedger;
   settings: ResolvedSettings;
@@ -141,6 +144,23 @@ export class Router {
     fallbacks: readonly string[] = this.deps.settings.fallbackChain,
   ): ModelRef[] {
     const s = this.deps.settings;
+    if (override === 'auto') {
+      const preferred = [s.model, ...fallbacks];
+      const discovered = [...(this.deps.models ?? [])].flatMap(([p, list]) =>
+        chatModels(list, p).map((m) => `${p}:${m.id}`),
+      );
+      const candidates = [...new Set([...preferred, ...discovered])]
+        .filter((r) => !this.deps.skip?.has(r))
+        .map(parseModelRef)
+        .filter(
+          (r) =>
+            this.deps.providers.has(r.provider) &&
+            (!this.deps.models?.has(r.provider) ||
+              this.deps.models.get(r.provider)?.some((m) => m.id === r.model)),
+        );
+      // Configured defaults come first, then discovered free models before other models.
+      return candidates;
+    }
     const head = override ?? s.model;
     const refs = purpose === 'small' ? [s.smallModel, head, ...fallbacks] : [head, ...fallbacks];
     const unique = [...new Set(refs)].filter((r) => !(this.deps.skip?.has(r) ?? false));

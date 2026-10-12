@@ -7,7 +7,7 @@ import type { ModelInfo, Provider, ProviderName } from './types.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Bumped when the cached fields change, so older caches are fetched again once. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 const cacheSchema = z.object({
   version: z.number().optional(),
@@ -19,6 +19,7 @@ const cacheSchema = z.object({
       supportsTools: z.boolean().optional(),
       free: z.boolean(),
       vision: z.boolean().optional(),
+      pricing: z.object({ prompt: z.number(), completion: z.number() }).optional(),
     }),
   ),
 });
@@ -66,6 +67,7 @@ export class ModelCatalog {
           supportsTools: m.supportsTools,
           free: m.free,
           ...(m.vision === undefined ? {} : { vision: m.vision }),
+          ...(m.pricing === undefined ? {} : { pricing: m.pricing }),
         })),
       };
     } catch {

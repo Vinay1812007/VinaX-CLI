@@ -61,6 +61,33 @@ const settings: ResolvedSettings = {
 const rl = (provider: ProviderName, retryAfterMs?: number): ProviderError =>
   new ProviderError('rate_limit', `${provider} 429: slow down`, provider, 429, retryAfterMs);
 
+it('auto discovers a configured provider outside the default chain and skips non-chat models', async () => {
+  const provider = new FakeProvider('gemini', { 'gemini-test': [{ text: ['ok'] }] });
+  const router = new Router({
+    settings,
+    ledger: new RateLimitLedger(() => Infinity),
+    providers: new Map([['gemini', provider]]),
+    models: new Map([
+      [
+        'gemini',
+        [
+          { id: 'embed-v1', contextWindow: undefined, supportsTools: undefined, free: false },
+          { id: 'gemini-test', contextWindow: undefined, supportsTools: undefined, free: false },
+        ],
+      ],
+    ]),
+  });
+  expect(router.chain('main', 'auto').map(formatModelRef)).toEqual(['gemini:gemini-test']);
+  const result: RouterEvent[] = [];
+  for await (const event of router.stream({
+    model: 'auto',
+    messages: [],
+    signal: new AbortController().signal,
+  }))
+    result.push(event);
+  expect(result).toContainEqual({ type: 'text', text: 'ok' });
+});
+
 function setup(groq: Record<string, Step[]>, openrouter: Record<string, Step[]> = {}) {
   const sleeps: number[] = [];
   const clock = { t: 0 };

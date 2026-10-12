@@ -20,6 +20,7 @@ beforeEach(async () => {
   sh(repo, 'config', 'user.email', 'test@example.com');
   sh(repo, 'config', 'user.name', 'Test');
   sh(repo, 'config', 'commit.gpgsign', 'false');
+  sh(repo, 'config', 'core.autocrlf', 'false');
   await fs.writeFile(path.join(repo, 'a.txt'), 'one\ntwo\nthree\n');
   await fs.writeFile(path.join(repo, 'b.txt'), 'bee\n');
   await fs.writeFile(path.join(repo, '.gitignore'), 'ignored/\n');

@@ -144,6 +144,15 @@ const compact: SlashCommand = {
 
 /** Switches this session's model and says how to make it the default. */
 function switchModel(ctx: CommandContext, input: string): void {
+  if (input.trim().toLowerCase() === 'auto') {
+    ctx.setup.agent.setModel('auto');
+    ctx.session.record({ type: 'model', model: 'auto' });
+    ctx.notice(
+      'info',
+      'Auto model selection enabled: use available configured models and fall back when needed. Provider billing still applies.',
+    );
+    return;
+  }
   let ref: string;
   try {
     ref = formatModelRef(parseModelRef(input));
@@ -153,8 +162,6 @@ function switchModel(ctx: CommandContext, input: string): void {
   }
   const { provider } = parseModelRef(ref);
   ctx.setup.agent.setModel(ref);
-  // A deliberate model choice is an instruction to start working, not merely to inspect it.
-  ctx.setMode('auto');
   ctx.session.record({ type: 'model', model: ref });
   const alias = modelAlias(ref);
   const warnings: string[] = [];
@@ -176,7 +183,18 @@ function switchModel(ctx: CommandContext, input: string): void {
 
 async function pickModel(ctx: CommandContext, title: string): Promise<string | undefined> {
   const current = ctx.setup.agent.model ?? ctx.runtime.settings.resolved.model;
-  const items = modelSelectItems(ctx.runtime, current);
+  const items = [
+    {
+      label: 'Auto',
+      value: 'auto',
+      hint: 'Choose an available model automatically · provider billing applies',
+      current: ctx.setup.agent.modelSelection === 'auto',
+    },
+    ...modelSelectItems(ctx.runtime, current).map((item) => ({
+      ...item,
+      current: ctx.setup.agent.modelSelection === 'auto' ? false : item.current,
+    })),
+  ];
   if (!items.some((i) => i.disabled !== true)) {
     ctx.notice(
       'warning',
@@ -190,7 +208,7 @@ async function pickModel(ctx: CommandContext, title: string): Promise<string | u
 
 const model: SlashCommand = {
   name: 'model',
-  argumentHint: '[provider:model | alias]',
+  argumentHint: '[auto | provider:model | alias]',
   description: 'Switch the model for this session',
   source: 'builtin',
   async run(ctx) {

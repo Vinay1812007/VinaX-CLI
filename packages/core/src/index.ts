@@ -295,3 +295,4 @@ export {
   type WorktreeFileChange,
   type WorktreeInfo,
 } from './git/worktree.js';
+export { chatModels } from './providers/chat-models.js';

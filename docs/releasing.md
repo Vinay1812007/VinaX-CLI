@@ -13,29 +13,17 @@ Releases are automated. This page is for maintainers.
 
 ## Every change
 
-Add a changeset with your pull request:
+Push reviewed code to `main`. CI must pass on Ubuntu, macOS and Windows, including the standalone binary smoke test. The release workflow then publishes a new patch version automatically when code changed since the current release. Documentation-only changes do not require a new package. A manually increased package version is respected for minor or major releases.
 
-```sh
-pnpm changeset          # pick the bump (patch / minor / major) and describe the change
-```
-
-Only the CLI is published, as `@sirimillavinay/vinax` (npm refused the plain name `vinax` as too similar to existing packages; the command is still `vinax`). Name it that way in changesets, e.g. `'@sirimillavinay/vinax': patch`. The private packages (`@vinax/core`, `@vinax/testkit` and
-`@vinax/gateway`) are bundled or deployed, and never published.
+Only `@sirimillavinay/vinax` is published. Private core packages are bundled into it.
 
 ## What the workflows do
 
-- **`ci.yml`** runs on every push and pull request, on Ubuntu, macOS and Windows. It builds, then
-  runs typecheck and tests. Lint and prettier run on Ubuntu. A separate job builds and runs a
-  standalone Linux binary.
-- **`release.yml`** runs on every push to `main`:
-  1. [changesets/action](https://github.com/changesets/action) opens or updates a "Release vinax"
-     pull request that bumps the version and writes `packages/cli/CHANGELOG.md`.
-  2. When that PR is merged, the same workflow publishes `@sirimillavinay/vinax` to npm with provenance.
-  3. After a publish, Bun builds the standalone binaries. Linux and Windows builds run on Ubuntu;
-     macOS builds run on macOS, where they are ad-hoc signed. The workflow writes `SHA256SUMS`
-     and creates the GitHub Release `v<version>` with every binary attached.
-     `install.sh`, `install.ps1` and `vinax update` download from the latest release.
-- **`deploy-gateway.yml`** calls the Render deploy hook after CI passes on `main`.
+- **`ci.yml`** builds, typechecks and tests every push and pull request on three operating systems. Linux also checks lint, formatting, documentation and the standalone binary.
+- **`release.yml`** runs after successful CI on a push to `main`. It verifies that the tested commit is still current, prepares the next patch version and changelog, and commits only release metadata. It publishes npm with provenance, builds and signs binaries from the same release commit, checks their versions, then attaches binaries and checksums to `v<version>`. A failed CI run cannot publish a release. A failed release can be retried using GitHub Actions' re-run action.
+- **`deploy-gateway.yml`** calls the optional Render deploy hook after CI passes.
+
+The repository must allow GitHub Actions to push release metadata to `main`. The release commit is made with `GITHUB_TOKEN`, which prevents a recursive workflow run.
 
 ## Binaries
 

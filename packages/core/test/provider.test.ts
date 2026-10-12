@@ -11,6 +11,8 @@ import {
   ProviderError,
   RateLimitLedger,
   redact,
+  createProvider,
+  resolveSettings,
   type StreamDelta,
 } from '../src/index.js';
 
@@ -43,6 +45,32 @@ async function drain(it: AsyncIterable<StreamDelta>): Promise<StreamDelta[]> {
 }
 
 describe('OpenAICompatibleProvider', () => {
+  it.each(['gemini', 'openai', 'deepseek', 'mistral'] as const)(
+    'connects %s keys, model discovery and streaming to its configured endpoint',
+    async (name) => {
+      server = await startMockServer({
+        models: [{ id: 'chat-model' }],
+        script: { 'chat-model': [{ text: 'working' }] },
+      });
+      const provider = createProvider(name, 'new-provider-key', {
+        settings: resolveSettings({ providers: { [name]: { baseUrl: server.url } } }),
+        ledger: new RateLimitLedger(() => Infinity),
+        logger: noopLogger,
+      });
+      expect(await provider.validateKey()).toEqual({ ok: true });
+      expect((await provider.listModels())[0]?.id).toBe('chat-model');
+      expect(
+        await drain(
+          provider.stream({
+            model: 'chat-model',
+            messages: [{ role: 'user', content: 'hello' }],
+            signal: new AbortController().signal,
+          }),
+        ),
+      ).toContainEqual({ type: 'text', text: 'working' });
+      expect(server.requests.at(-1)?.headers.authorization).toBe('Bearer new-provider-key');
+    },
+  );
   it('streams text and usage, and records rate-limit headers', async () => {
     server = await startMockServer({
       script: {

@@ -12,6 +12,7 @@ import {
   createGatewayProvider,
   createProvider,
   createProviders,
+  GATEWAY_PROVIDER_NAMES,
 } from './providers/registry.js';
 import {
   formatModelRef,
@@ -168,7 +169,8 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const usage = new UsageTracker(env);
   let gatewayLink = gateway;
   const useGatewayFor = (name: ProviderName): boolean => {
-    if (!gatewayLink || !resolved.providers[name].enabled) return false;
+    if (!gatewayLink || !resolved.providers[name].enabled || !GATEWAY_PROVIDER_NAMES.includes(name))
+      return false;
     providers.set(name, createGatewayProvider(name, gatewayLink.client, gatewayLink.token, deps));
     viaGateway.add(name);
     return true;
@@ -223,8 +225,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       for (const p of viaGateway) providers.delete(p);
       viaGateway.clear();
       gatewayLink = { client: createGatewayClient(resolved, url), token };
-      for (const name of ['groq', 'openrouter', 'nvidia'] as const)
-        if (!providers.has(name)) useGatewayFor(name);
+      for (const name of GATEWAY_PROVIDER_NAMES) if (!providers.has(name)) useGatewayFor(name);
     },
     settings,
     logger,
@@ -234,7 +235,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     missingKeys,
     catalog,
     models,
-    router: new Router({ providers, ledger, settings: resolved, logger, skip, usage }),
+    router: new Router({ providers, ledger, settings: resolved, logger, skip, usage, models }),
     skipped: skip,
     warnings: [...settings.warnings, ...startupNotes, ...warnings],
   };

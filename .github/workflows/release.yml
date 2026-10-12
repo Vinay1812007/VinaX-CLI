@@ -1,11 +1,10 @@
 name: Release
 
-# On every push to main, changesets either opens/updates a "Release vinax" PR, or (once that PR
-# is merged) publishes @sirimillavinay/vinax to npm. Whenever the current version has no GitHub
-# Release yet, standalone binaries are built and attached to a new Release named v<version>, which
-# install.sh / install.ps1 and `vinax update` download from.
+# Publish only code that passed all CI jobs on main.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 concurrency:
@@ -14,17 +13,48 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: write
   id-token: write
 
 jobs:
   npm:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - id: version
+        name: Prepare the next release from the passing commit
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # A newer push must pass its own CI before it can be released.
+          git fetch origin main --tags
+          if [ "$(git rev-parse origin/main)" != "$EXPECTED_SHA" ]; then
+            # Allow retries after this workflow committed only its release metadata.
+            if [ "$(git rev-parse origin/main^)" = "$EXPECTED_SHA" ] &&
+               [ "$(git log -1 --format=%s origin/main)" = "chore: release vinax" ] &&
+               [ -z "$(git diff --name-only "$EXPECTED_SHA" origin/main -- . ':!packages/cli/package.json' ':!packages/cli/CHANGELOG.md')" ]; then
+              git switch --detach origin/main
+            else
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          node scripts/prepare-release.mjs
+          if ! git diff --quiet -- packages/cli/package.json packages/cli/CHANGELOG.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add packages/cli/package.json packages/cli/CHANGELOG.md
+            git commit -m "chore: release vinax"
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -32,36 +62,14 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - id: changesets
-        uses: changesets/action@v1
-        with:
-          version: pnpm changeset version
-          publish: pnpm release
-          title: Release vinax
-          commit: 'chore: release vinax'
-          createGithubReleases: false
+        if: steps.version.outputs.release == 'true'
+      - name: Build and publish npm package
+        if: steps.version.outputs.release == 'true'
+        run: pnpm release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
-      # A GitHub Release is due when the current version has none yet. (changesets/action's own
-      # `published` output misses publishes made with @changesets/cli 3.)
-      - id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # changesets/action can leave the next release PR's version in the working tree.
-          # All jobs must use the version from the commit that triggered this workflow.
-          version="$(git show "$GITHUB_SHA:packages/cli/package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [ "$version" != "0.0.0" ] && ! gh release view "v$version" > /dev/null 2>&1; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "v$version has no GitHub Release yet; building binaries."
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
 
   binaries:
     needs: npm
@@ -79,6 +87,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.npm.outputs.sha }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -112,6 +122,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.npm.outputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           path: dist-bin
@@ -132,4 +144,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "v${{ needs.npm.outputs.version }}" dist-bin/* \
-            --title "VinaX v${{ needs.npm.outputs.version }}" --notes-file notes.md --target "$GITHUB_SHA"
+            --title "VinaX v${{ needs.npm.outputs.version }}" --notes-file notes.md --target "${{ needs.npm.outputs.sha }}"

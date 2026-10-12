@@ -172,13 +172,17 @@ describe('onboarding', () => {
     expect(saved.keys).toEqual([]);
   });
 
-  it('filters the model list to chat models (free-only on OpenRouter)', () => {
+  it('offers free and paid chat models, including text-tool models', () => {
     const list: ModelInfo[] = [
       { id: 'a:free', contextWindow: 262_144, supportsTools: true, free: true },
       { id: 'paid', contextWindow: 262_144, supportsTools: true, free: false },
       { id: 'no-tools:free', contextWindow: 262_144, supportsTools: false, free: true },
     ];
-    expect(chatModels(list, 'openrouter').map((m) => m.id)).toEqual(['a:free']);
+    expect(chatModels(list, 'openrouter').map((m) => m.id)).toEqual([
+      'a:free',
+      'no-tools:free',
+      'paid',
+    ]);
     expect(chatModels(models, 'groq').map((m) => m.id)).toEqual([
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',

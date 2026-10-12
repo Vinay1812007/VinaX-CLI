@@ -27,12 +27,11 @@ const PER_PROVIDER: Record<
   // DeepSeek and Mistral implement the OpenAI chat-completions protocol.
   deepseek: { keyCheck: { path: '/models' } },
   mistral: { keyCheck: { path: '/models' } },
-  // Anthropic's native API is deliberately not probed through its incompatible endpoint. A
-  // configured OpenAI-compatible proxy can still supply a model list and requests.
+  // Handled by the native adapter before these OpenAI-compatible options are used.
   claude: { keyCheck: { path: '/models' } },
 };
 
-const GATEWAY_PROVIDER_NAMES: readonly ProviderName[] = ['groq', 'openrouter', 'nvidia'];
+export const GATEWAY_PROVIDER_NAMES: readonly ProviderName[] = ['groq', 'openrouter', 'nvidia'];
 
 export function createProvider(
   name: ProviderName,

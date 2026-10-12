@@ -27,6 +27,7 @@ async function repoHarness(script: Parameters<typeof createHarness>[0]) {
   git(h.cwd, 'config', 'user.email', 'test@example.com');
   git(h.cwd, 'config', 'user.name', 'Test');
   git(h.cwd, 'config', 'commit.gpgsign', 'false');
+  git(h.cwd, 'config', 'core.autocrlf', 'false');
   await fs.writeFile(path.join(h.cwd, 'a.txt'), 'old\n');
   git(h.cwd, 'add', '-A');
   git(h.cwd, 'commit', '-q', '-m', 'init');

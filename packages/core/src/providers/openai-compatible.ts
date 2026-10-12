@@ -40,6 +40,14 @@ const catalogEntrySchema = z.looseObject({
   context_length: z.number().optional(),
   /** vLLM-based servers (self-hosted NVIDIA NIM) report the context window here. */
   max_model_len: z.number().optional(),
+  max_context_length: z.number().optional(),
+  capabilities: z
+    .object({
+      completion_chat: z.boolean().optional(),
+      function_calling: z.boolean().optional(),
+      vision: z.boolean().optional(),
+    })
+    .optional(),
   supported_parameters: z.array(z.string()).optional(),
   pricing: z.looseObject({ prompt: z.string(), completion: z.string() }).optional(),
   architecture: z.looseObject({ input_modalities: z.array(z.string()).optional() }).optional(),
@@ -82,7 +90,12 @@ function toWire(m: ChatMessage): ChatCompletionMessageParam {
 
 function toModelInfo(raw: unknown): ModelInfo | undefined {
   const parsed = catalogEntrySchema.safeParse(raw);
-  if (!parsed.success || parsed.data.active === false) return undefined;
+  if (
+    !parsed.success ||
+    parsed.data.active === false ||
+    parsed.data.capabilities?.completion_chat === false
+  )
+    return undefined;
   const m = parsed.data;
   const zeroPrice =
     m.pricing !== undefined && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0;
@@ -99,11 +112,13 @@ function toModelInfo(raw: unknown): ModelInfo | undefined {
     completion >= 0;
   return {
     id: m.id,
-    contextWindow: m.context_window ?? m.context_length ?? m.max_model_len,
-    supportsTools: m.supported_parameters?.includes('tools'),
+    contextWindow: m.context_window ?? m.context_length ?? m.max_model_len ?? m.max_context_length,
+    supportsTools: m.capabilities?.function_calling ?? m.supported_parameters?.includes('tools'),
     free: m.id.endsWith(':free') || zeroPrice,
     ...(m.architecture?.input_modalities === undefined
-      ? {}
+      ? m.capabilities?.vision === undefined
+        ? {}
+        : { vision: m.capabilities.vision }
       : { vision: m.architecture.input_modalities.includes('image') }),
     ...(priced ? { pricing: { prompt, completion } } : {}),
   };
@@ -158,7 +173,9 @@ export class OpenAICompatibleProvider implements Provider {
         ...this.opts.defaultHeaders,
       },
       ...(post === undefined ? {} : { method: 'POST', body: JSON.stringify(post) }),
-      signal: signal ?? AbortSignal.timeout(this.opts.timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(this.opts.timeoutMs)])
+        : AbortSignal.timeout(this.opts.timeoutMs),
     });
     const text = await res.text();
     if (res.ok) this.opts.gateway?.markOk();

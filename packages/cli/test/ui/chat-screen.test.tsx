@@ -589,7 +589,10 @@ describe('ChatScreen review workflow', () => {
   it('lists changed files with counts and diffs, and undoes one file', async () => {
     const m = await edited();
     await m.type(KEYS.ctrlG);
-    await waitFor(() => m.frame().includes('Changes this session'), 'changes view');
+    await waitFor(
+      () => m.frame().includes('Changes this session') && !m.frame().includes('Reading files…'),
+      'changes loaded',
+    );
     expect(m.frame()).toContain('2 files');
     expect(m.frame()).toMatch(/M a\.txt\s+\+1 −1/);
     expect(m.frame()).toMatch(/A new\.txt\s+\+1 −0/);
@@ -806,6 +809,23 @@ describe('ChatScreen workflow (M4)', () => {
       (r) => (r.body as { model?: string } | undefined)?.model === 'small-model',
     );
     expect(summaryReq.length).toBeGreaterThan(0);
+  });
+
+  it('offers Auto model selection without changing permission mode', async () => {
+    const { frame, type } = await mount({
+      groq: { script: { 'main-model': [{ text: 'Auto works' }] } },
+    });
+    await type('/model auto', KEYS.enter);
+    await waitFor(() => frame().includes('Auto model selection enabled'), 'auto enabled');
+    expect(setup?.agent.modelSelection).toBe('auto');
+    expect(frame()).toContain('manual mode on');
+    await type('hello', KEYS.enter);
+    await waitFor(() => frame().includes('◆ Auto works'), 'auto answer');
+    await type('/model', KEYS.esc, KEYS.enter);
+    await waitFor(
+      () => frame().includes('Choose an available model automatically'),
+      'auto picker option',
+    );
   });
 
   it('shows /status, /usage and /doctor panels', async () => {

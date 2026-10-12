@@ -165,7 +165,7 @@ describe('gateway login and runtime', () => {
       env: { ...env(), VINAX_GATEWAY_TOKEN: 'vxg_tok' },
     });
     expect([...runtime.viaGateway]).toEqual(['groq']);
-    expect(runtime.missingKeys).toEqual([]);
+    expect(runtime.missingKeys).toEqual(['gemini', 'openai', 'claude', 'deepseek', 'mistral']);
     expect(runtime.warnings.join('\n')).toContain('Waking VinaX gateway');
     setTimeout(() => {
       up = true;

@@ -2,6 +2,7 @@ import { Box, Text, useInput } from 'ink';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   PROVIDER_NAMES,
+  chatModels,
   providerLabel,
   SECRET_ENV_VARS,
   THEME_NAMES,
@@ -72,13 +73,7 @@ const KEY_PAGES: Record<ProviderName, string> = {
   mistral: 'https://console.mistral.ai/api-keys',
 };
 
-/** Chat-capable models: enough context, tool support not ruled out, and free on OpenRouter. */
-export function chatModels(models: readonly ModelInfo[], provider: ProviderName): ModelInfo[] {
-  return models
-    .filter((m) => (m.contextWindow ?? 0) >= 8192 && m.supportsTools !== false)
-    .filter((m) => provider !== 'openrouter' || m.free)
-    .sort((a, b) => a.id.localeCompare(b.id));
-}
+export { chatModels } from '@vinax/core';
 
 function Frame({ step, children }: { step: Step; children: ReactNode }) {
   const theme = useTheme();
@@ -339,7 +334,7 @@ export function Onboarding({ deps, initialTheme, colorDisabled, onThemePreview, 
                 hint: 'recommended: Groq first, OpenRouter as fallback',
               },
             ]}
-            initialIndex={3}
+            initialIndex={8}
             onSelect={(list) => {
               setProviders(list);
               setKeyIndex(0);

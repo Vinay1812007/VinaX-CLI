@@ -312,6 +312,14 @@ export class Agent {
   }
 
   get model(): string | undefined {
+    if (this.modelSelection === 'auto') {
+      const head = this.deps.router.chain('main', 'auto')[0];
+      return head ? formatModelRef(head) : this.deps.defaultModel?.();
+    }
+    return this.modelSelection;
+  }
+
+  get modelSelection(): string | undefined {
     return this.modelOverride ?? this.deps.model;
   }
 
@@ -705,7 +713,9 @@ export class Agent {
         prepare,
         onToolFormatError: (ref) =>
           this.useTextProtocol(ref, onEvent, 'sent a tool call the provider rejected'),
-        ...((opts.model ?? this.model) === undefined ? {} : { model: opts.model ?? this.model }),
+        ...((opts.model ?? this.modelSelection) === undefined
+          ? {}
+          : { model: opts.model ?? this.modelSelection }),
         ...(opts.fallbacks === undefined ? {} : { fallbacks: opts.fallbacks }),
       });
       for await (const ev of events) {

@@ -36,6 +36,7 @@ export interface ModelRow {
   vision: boolean;
   status: ModelStatus;
   current: boolean;
+  pricingHint?: string;
 }
 
 /** What the runtime knows about a provider, in picker terms. */
@@ -58,7 +59,8 @@ export function providerSummaries(runtime: Runtime): ProviderSummary[] {
 
 function row(
   provider: ProviderName,
-  info: Pick<ModelInfo, 'id' | 'contextWindow' | 'supportsTools' | 'vision'>,
+  info: Pick<ModelInfo, 'id' | 'contextWindow' | 'supportsTools' | 'vision'> &
+    Partial<Pick<ModelInfo, 'free' | 'pricing'>>,
   status: ModelStatus,
   current: string,
 ): ModelRow {
@@ -75,6 +77,20 @@ function row(
     vision: info.vision ?? known?.vision ?? false,
     status,
     current: ref === current,
+    ...(provider === 'openrouter' ||
+    ['openai', 'claude', 'deepseek', 'gemini', 'mistral'].includes(provider)
+      ? {
+          pricingHint: info.free
+            ? 'free'
+            : info.pricing
+              ? 'paid'
+              : ['gemini', 'mistral'].includes(provider)
+                ? 'free/paid tier · check account'
+                : ['openai', 'claude', 'deepseek'].includes(provider)
+                  ? 'paid API'
+                  : 'pricing unknown',
+        }
+      : {}),
   };
 }
 
@@ -180,6 +196,7 @@ const STATUS_HINT: Record<ModelStatus, string | undefined> = {
 export function modelHint(r: ModelRow): string {
   return [
     r.alias,
+    r.pricingHint,
     r.contextWindow === undefined ? undefined : `${formatTokens(r.contextWindow)} ctx`,
     r.vision ? 'vision' : undefined,
     r.supportsTools === false ? 'text tools' : undefined,

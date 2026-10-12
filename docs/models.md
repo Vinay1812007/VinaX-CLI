@@ -1,5 +1,13 @@
 # Models and rate limits
 
+## Auto selection
+
+Use `/model auto`, or choose **Auto** in `/model`, to select an available model from configured providers. Defaults and fallbacks are tried first, followed by chat models from live provider catalogs. Provider billing applies. Permission mode is independent and does not change when you select a model.
+
+The picker includes free and paid chat models. Gemini and Mistral billing depends on the account tier; paid API use requires provider credits. Unknown context sizes do not hide models. Non-chat endpoints such as embeddings, audio and image generation are excluded. OpenAI models requiring the Responses API (including Codex and deep research) are excluded from this Chat Completions client.
+
+Claude uses the native [Messages streaming API](https://platform.claude.com/docs/en/build-with-claude/streaming) and [live model discovery](https://platform.claude.com/docs/en/api/models/list). Other direct providers use their OpenAI-compatible chat endpoints. Gateway login remains available through `vinax login --gateway` for existing deployments; it is no longer in the interactive provider menu.
+
 <p class="lead">Which models VinaX uses, how it stays within free-tier limits, and how fallback works.</p>
 
 ## Defaults
@@ -12,17 +20,22 @@ VinaX never hardcodes a model list. Defaults live in [settings](/settings). At s
 | `smallModel`    | `groq:openai/gpt-oss-20b`                                                                                                                        | Titles, summaries, compaction, WebFetch answers |
 | `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:openai/gpt-oss-20b` | When the main model is limited or failing       |
 
-Models are written `provider:model-id`, where the provider is `groq`, `openrouter` or `nvidia`. Switch for one session with `/model` or `--model`, or permanently with `vinax config set model groq:openai/gpt-oss-20b`.
+Models are written `provider:model-id`, with a provider from the table below. Switch for one session with `/model` or `--model`, or permanently with `vinax config set model groq:openai/gpt-oss-20b`.
 
 A model whose provider has no key is skipped. So the last fallback, `nvidia:openai/gpt-oss-20b`, only comes into play once you add an NVIDIA key.
 
 ## Providers
 
-| Provider   | Name in refs | Key variable         | Default API                           |
-| ---------- | ------------ | -------------------- | ------------------------------------- |
-| Groq       | `groq`       | `GROQ_API_KEY`       | `https://api.groq.com/openai/v1`      |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1`        |
-| NVIDIA     | `nvidia`     | `NVIDIA_API_KEY`     | `https://integrate.api.nvidia.com/v1` |
+| Provider   | Name in refs | Key variable         | Default API                                               |
+| ---------- | ------------ | -------------------- | --------------------------------------------------------- |
+| Groq       | `groq`       | `GROQ_API_KEY`       | `https://api.groq.com/openai/v1`                          |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1`                            |
+| NVIDIA     | `nvidia`     | `NVIDIA_API_KEY`     | `https://integrate.api.nvidia.com/v1`                     |
+| Gemini     | `gemini`     | `GEMINI_API_KEY`     | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| OpenAI     | `openai`     | `OPENAI_API_KEY`     | `https://api.openai.com/v1`                               |
+| Claude     | `claude`     | `ANTHROPIC_API_KEY`  | `https://api.anthropic.com/v1`                            |
+| DeepSeek   | `deepseek`   | `DEEPSEEK_API_KEY`   | `https://api.deepseek.com`                                |
+| Mistral    | `mistral`    | `MISTRAL_API_KEY`    | `https://api.mistral.ai/v1`                               |
 
 The provider's domain works as well as its name: `nvidia.com:openai/gpt-oss-20b` is the same as `nvidia:openai/gpt-oss-20b`.
 

@@ -1,5 +1,15 @@
 # @sirimillavinay/vinax
 
+## 1.0.1
+
+### Patch Changes
+
+- Add Auto to `/model` with catalog-based selection and fallback, independent of permission mode.
+- Add Gemini, OpenAI, Claude, DeepSeek and Mistral to provider login; remove gateway suggestions from interactive menus.
+- Show free and paid chat models, including models with unknown context sizes; preserve catalog prices in cache.
+- Fix Claude live model discovery, parallel tool results, token accounting, stream errors, cancellation and request timeouts.
+- Fix Windows test portability and a changes-view loading race. Automatically release code changes only after cross-platform CI succeeds.
+
 ## 1.0.0
 
 ### Major Changes
