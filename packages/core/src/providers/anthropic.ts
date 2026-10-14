@@ -2,13 +2,14 @@ import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
 import { ProviderError, toProviderError } from './errors.js';
 import { parseRetryAfter, type RateLimitLedger } from './ratelimit.js';
-import type {
-  ChatMessage,
-  ChatRequest,
-  KeyCheck,
-  ModelInfo,
-  Provider,
-  StreamDelta,
+import {
+  KEY_CHECK_TIMEOUT_MS,
+  type ChatMessage,
+  type ChatRequest,
+  type KeyCheck,
+  type ModelInfo,
+  type Provider,
+  type StreamDelta,
 } from './types.js';
 
 const usageSchema = z.object({
@@ -211,10 +212,18 @@ export class AnthropicProvider implements Provider {
   }
 
   async validateKey(signal?: AbortSignal): Promise<KeyCheck> {
+    // interactive, so it gets the short key-check budget rather than the request timeout
+    const timeout = AbortSignal.timeout(KEY_CHECK_TIMEOUT_MS);
     try {
-      await this.listModels(signal);
+      await this.listModels(signal ? AbortSignal.any([signal, timeout]) : timeout);
       return { ok: true };
     } catch (err) {
+      if (timeout.aborted && signal?.aborted !== true)
+        return {
+          ok: false,
+          rejected: false,
+          reason: `Claude did not answer within ${String(KEY_CHECK_TIMEOUT_MS / 1000)}s`,
+        };
       return {
         ok: false,
         rejected: err instanceof ProviderError && err.kind === 'auth',

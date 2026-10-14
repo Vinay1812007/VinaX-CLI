@@ -1,12 +1,14 @@
 import { render } from 'ink';
 import {
   AppStateStore,
+  cacheDir,
   checkGateway,
   createProvider,
   createRuntime,
   loadSettings,
   noopLogger,
   openSecretStore,
+  ProbeCache,
   RateLimitLedger,
   saveGatewayLogin,
   SECRET_ENV_VARS,
@@ -69,6 +71,8 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
       validateKey: async (p, key) => (await probe(p, key)).validateKey(),
       saveKey: async (p, key) => {
         await (await openSecretStore(env)).set(p, key);
+        // model test results earned with an earlier key say nothing about this one
+        await new ProbeCache(cacheDir(env)).clear(p).catch(() => undefined);
       },
       listModels: async (p, key) => withKnownMetadata(p, await (await probe(p, key)).listModels()),
       saveSettings: async (patch) => {

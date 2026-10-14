@@ -1,20 +1,28 @@
 import {
+  chatModels,
+  formatModelRef,
+  freeToTry,
   KNOWN_MODELS,
   knownModel,
   parseModelRef,
+  probeFailed,
+  probeInconclusive,
   PROVIDER_NAMES,
   providerHost,
   providerLabel,
   type ModelInfo,
+  type ProbeRun,
   type ProviderName,
   type Runtime,
 } from '@vinax/core';
-import { chatModels } from './components/Onboarding.js';
 import type { SelectItem } from './components/Select.js';
 import { formatTokens } from './format.js';
 
-/** `no_gateway`: the provider goes through a VinaX gateway that has no key for it. */
-export type ModelStatus = 'ready' | 'no_key' | 'no_gateway' | 'unlisted' | 'unchecked';
+/**
+ * `no_gateway`: the provider goes through a VinaX gateway that has no key for it. `failed`: the
+ * model did not answer its last test (only the current model is listed like that).
+ */
+export type ModelStatus = 'ready' | 'no_key' | 'no_gateway' | 'unlisted' | 'unchecked' | 'failed';
 
 /**
  * True when a provider is routed through the VinaX gateway but the gateway lists none of its
@@ -39,25 +47,10 @@ export interface ModelRow {
   pricingHint?: string;
   /** Free outright, or reachable on the provider's free tier. See {@link freeToTry}. */
   free: boolean;
-}
-
-/** APIs that bill every request, so nothing they list can be tried for free. */
-const PAID_ONLY: readonly ProviderName[] = ['openai', 'claude', 'deepseek'];
-
-/**
- * Whether a model can be used without paying. A published non-zero price is proof it cannot; a
- * paid-only API is the same by provider. Everything else is a provider with a free tier whose
- * catalog publishes no price (Groq, Gemini, NVIDIA, Cerebras, Z.AI, ModelScope, …), which is as
- * close to "free tier" as the catalogs let us get.
- */
-function freeToTry(
-  provider: ProviderName,
-  info: Partial<Pick<ModelInfo, 'free' | 'pricing'>>,
-): boolean {
-  if (info.free === true) return true;
-  if (info.pricing !== undefined && (info.pricing.prompt > 0 || info.pricing.completion > 0))
-    return false;
-  return !PAID_ONLY.includes(provider);
+  /** Its last test was rate-limited, so whether it answers is not known yet. */
+  untested?: boolean;
+  /** Why its last test failed (status `failed`), e.g. "no answer within 20s". */
+  failReason?: string;
 }
 
 /** What the runtime knows about a provider, in picker terms. */
@@ -67,6 +60,30 @@ export interface ProviderSummary {
   viaGateway: boolean;
   /** `undefined` when the catalog could not be fetched. */
   catalogSize: number | undefined;
+}
+
+/**
+ * Configured providers whose models need testing before a list is shown: the ones with untested
+ * or expired results, or every one with something to test when `all` is set (`/models test`).
+ */
+export function providersToTest(runtime: Runtime, all: boolean): ProviderName[] {
+  return PROVIDER_NAMES.filter(
+    (p) =>
+      runtime.providers.has(p) &&
+      !gatewayLacks(runtime, p) &&
+      (all ? runtime.probeCandidates(p).length > 0 : runtime.needsProbe(p)),
+  );
+}
+
+/** "12 of 31 answered the last test", from the fresh results of a provider's candidates. */
+export function testSummary(runtime: Runtime, provider: ProviderName): string | undefined {
+  const results = runtime.probes.get(provider);
+  if (results === undefined || results.size === 0) return undefined;
+  const candidates = runtime.probeCandidates(provider);
+  const tested = candidates.filter((m) => results.has(m));
+  if (tested.length === 0) return undefined;
+  const ok = tested.filter((m) => results.get(m)?.ok === true).length;
+  return `${String(ok)} of ${String(tested.length)} answered the last test`;
 }
 
 export function providerSummaries(runtime: Runtime): ProviderSummary[] {
@@ -133,8 +150,33 @@ function row(
 }
 
 /**
+ * Once a provider's models were tested, only the ones that answered are offered. The current
+ * model stays (marked when it failed) so the picker always shows where you are, and models whose
+ * test was only rate-limited stay too, since that says nothing about them. Without results (the
+ * test could not run) the catalog list is all there is.
+ */
+function testedOnly(runtime: Runtime, provider: ProviderName, rows: ModelRow[]): ModelRow[] {
+  const results = runtime.probes.get(provider);
+  if (!runtime.providers.has(provider) || results === undefined || results.size === 0) return rows;
+  const out: ModelRow[] = [];
+  for (const r of rows) {
+    const result = results.get(r.model);
+    if (result?.ok === true) out.push(r);
+    else if (result !== undefined && probeInconclusive(result)) out.push({ ...r, untested: true });
+    else if (r.current)
+      out.push(
+        result !== undefined && r.status === 'ready'
+          ? { ...r, status: 'failed', failReason: result.reason }
+          : r,
+      );
+  }
+  return out;
+}
+
+/**
  * Every model worth offering, per provider: chat-capable catalog models, VinaX's known models
- * (with aliases) and the current model. Providers with a key come first.
+ * (with aliases) and the current model — narrowed to the ones that answered their last test.
+ * Providers with a key come first.
  */
 export function modelRows(runtime: Runtime, current: string): ModelRow[] {
   const out: ModelRow[] = [];
@@ -207,7 +249,7 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
       );
       seen.add(current);
     }
-    out.push(...rows);
+    out.push(...testedOnly(runtime, provider, rows));
   }
   if (!runtime.settings.resolved.freeModelsOnly) return out;
   // The model in use stays listed even when it is paid, so the picker always shows where you are.
@@ -232,6 +274,7 @@ const STATUS_HINT: Record<ModelStatus, string | undefined> = {
   ready: undefined,
   unchecked: 'catalog unavailable',
   unlisted: 'not in catalog',
+  failed: 'did not answer the last test',
   no_key: 'no key · /login',
   no_gateway: 'add your own key with /login',
 };
@@ -243,7 +286,10 @@ export function modelHint(r: ModelRow): string {
     r.contextWindow === undefined ? undefined : `${formatTokens(r.contextWindow)} ctx`,
     r.vision ? 'vision' : undefined,
     r.supportsTools === false ? 'text tools' : undefined,
-    STATUS_HINT[r.status],
+    r.untested === true ? 'rate limited during the last test' : undefined,
+    r.status === 'failed' && r.failReason !== undefined
+      ? `${STATUS_HINT.failed ?? ''} (${r.failReason})`
+      : STATUS_HINT[r.status],
   ]
     .filter((p): p is string => p !== undefined)
     .join(' · ');
@@ -279,4 +325,61 @@ export function modelSelectItems(runtime: Runtime, current: string): SelectItem<
     });
   }
   return items;
+}
+
+/** What to tell the user after a provider's models were tested (nothing when none were). */
+export function testSummaryNotice(
+  run: ProbeRun,
+  freeOnly: boolean,
+): { level: 'info' | 'warning' | 'error'; text: string } | undefined {
+  const label = providerLabel(run.provider);
+  if (run.results.length === 0) return undefined;
+  if (run.keyRejected)
+    return {
+      level: 'error',
+      text: `${label} rejected the key for every model it was asked to answer. Check it, and add it again with /login.`,
+    };
+  if (run.unreachable)
+    return {
+      level: 'warning',
+      text: `Could not reach ${label} to test its models, so its full list is shown. /models test tries again.`,
+    };
+  const kind = `${freeOnly ? 'free ' : ''}${label} model${run.results.length === 1 ? '' : 's'}`;
+  return {
+    level: run.ok > 0 ? 'info' : 'warning',
+    text: `${String(run.ok)} of ${String(run.results.length)} ${kind} answered${run.ok === 0 ? ', so none are listed' : ''}.`,
+  };
+}
+
+/**
+ * A model to use instead of `current` when its test failed: an answering model of the same
+ * provider, VinaX's known (aliased) models first, else the first in the catalog's order.
+ */
+export function replacementFor(run: ProbeRun, current: string): string | undefined {
+  let ref;
+  try {
+    ref = parseModelRef(current);
+  } catch {
+    return undefined;
+  }
+  if (ref.provider !== run.provider) return undefined;
+  const mine = run.results.find((r) => r.model === ref.model);
+  if (!probeFailed(mine)) return undefined;
+  const ok = run.results.filter((r) => r.ok).map((r) => r.model);
+  const known = ok.find((m) => knownModel(run.provider, m)?.alias !== undefined);
+  const pick = known ?? ok[0];
+  return pick === undefined ? undefined : `${run.provider}:${pick}`;
+}
+
+/**
+ * The model a turn with no model chosen starts with. Usually the configured default, but not
+ * when that one is skipped (missing from the catalog, failed its test, or recently timed out).
+ */
+export function routedDefault(runtime: Runtime): string | undefined {
+  try {
+    const head = runtime.router.chain('main').find((r) => runtime.providers.has(r.provider));
+    return head === undefined ? undefined : formatModelRef(head);
+  } catch {
+    return undefined;
+  }
 }

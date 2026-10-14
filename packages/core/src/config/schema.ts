@@ -78,6 +78,11 @@ const routerSettingsSchema = z.strictObject({
   /** Longest wait for a rate-limit window before falling back instead. */
   maxWaitMs: z.number().int().min(0).optional(),
   requestTimeoutMs: z.number().int().positive().optional(),
+  /**
+   * A model that sends nothing (no text, reasoning or tool call) for this long counts as timed
+   * out, so a hung endpoint falls back well before the full request timeout.
+   */
+  firstTokenTimeoutMs: z.number().int().positive().optional(),
 });
 
 const permissionSettingsSchema = z.strictObject({
@@ -200,6 +205,7 @@ export interface RouterSettings {
   maxDelayMs: number;
   maxWaitMs: number;
   requestTimeoutMs: number;
+  firstTokenTimeoutMs: number;
 }
 
 export interface ResolvedSettings {
@@ -291,6 +297,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     maxDelayMs: 20_000,
     maxWaitMs: 20_000,
     requestTimeoutMs: 90_000,
+    firstTokenTimeoutMs: 45_000,
   },
   permissions: { allow: [], ask: [], deny: [], defaultMode: 'default', additionalDirectories: [] },
   theme: 'dark',

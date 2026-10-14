@@ -3,8 +3,10 @@ import {
   AbortError,
   AllModelsFailedError,
   backoffDelay,
+  cooldownNote,
   DEFAULT_SETTINGS,
   formatModelRef,
+  MODEL_COOLDOWN_MS,
   ProviderError,
   RateLimitLedger,
   Router,
@@ -55,6 +57,7 @@ const settings: ResolvedSettings = {
     maxDelayMs: 1000,
     maxWaitMs: 5000,
     requestTimeoutMs: 1000,
+    firstTokenTimeoutMs: 1000,
   },
 };
 
@@ -369,4 +372,145 @@ describe('Router', () => {
       AbortError,
     );
   });
+});
+
+describe('Router stickiness after a dead model', () => {
+  const timeout = new ProviderError('timeout', 'Groq did not respond in time', 'groq');
+
+  it('skips a model that timed out for the cooldown, then tries it first again', async () => {
+    const { router, providers, clock } = setup({
+      main: [{ error: timeout }, { text: ['back'] }],
+      backup: [{ text: ['one'] }, { text: ['two'] }],
+    });
+    const first = await collect(router.stream(req()));
+    const fallback = first.find((e) => e.type === 'fallback');
+    expect(fallback).toMatchObject({ cooldownMs: MODEL_COOLDOWN_MS });
+    // the next turn goes straight to the model that answered, and the dead one is tried last
+    expect(router.chain('main').map(formatModelRef)).toEqual([
+      'groq:backup',
+      'openrouter:free-a:free',
+      'groq:main',
+    ]);
+    expect(router.coolingUntil('groq:main')).toBe(MODEL_COOLDOWN_MS);
+    const second = await collect(router.stream(req()));
+    expect(summarize(second)).toEqual(['attempt groq:backup', 'text two', 'done groq:backup']);
+    expect((providers.get('groq') as FakeProvider).calls).toEqual(['main', 'backup', 'backup']);
+
+    clock.t += MODEL_COOLDOWN_MS;
+    expect(router.coolingUntil('groq:main')).toBeUndefined();
+    expect(summarize(await collect(router.stream(req())))[0]).toBe('attempt groq:main');
+  });
+
+  it('keeps an explicitly chosen model in cooldown too, until it is chosen again', async () => {
+    const { router } = setup({
+      main: [{ error: timeout }],
+      backup: [{ text: ['ok'] }],
+    });
+    await collect(router.stream(req({ model: 'groq:main' })));
+    expect(router.chain('main', 'groq:main').map(formatModelRef)[0]).toBe('groq:backup');
+    router.clearCooldown('groq:main');
+    expect(router.chain('main', 'groq:main').map(formatModelRef)[0]).toBe('groq:main');
+  });
+
+  it('does not set aside a model that was only rate-limited or rejected the request', async () => {
+    const { router } = setup({
+      main: [{ error: new ProviderError('bad_request', 'groq 400: nope', 'groq', 400) }],
+      backup: [{ text: ['ok'] }],
+    });
+    const events = await collect(router.stream(req()));
+    expect(events.find((e) => e.type === 'fallback')).not.toHaveProperty('cooldownMs');
+    expect(router.chain('main').map(formatModelRef)[0]).toBe('groq:main');
+  });
+
+  it('leaves out models that failed their test, unless named, and never empties the chain', () => {
+    const router = new Router({
+      settings,
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map(),
+      unhealthy: new Set(['groq:main', 'openrouter:free-a:free']),
+    });
+    expect(router.chain('main').map(formatModelRef)).toEqual(['groq:backup']);
+    expect(router.chain('main', 'groq:main').map(formatModelRef)).toEqual([
+      'groq:main',
+      'groq:backup',
+    ]);
+    const allBad = new Router({
+      settings: { ...settings, fallbackChain: [] },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map(),
+      unhealthy: new Set(['groq:main']),
+    });
+    expect(allBad.chain('main').map(formatModelRef)).toEqual(['groq:main']);
+  });
+});
+
+describe('Router first-token timeout', () => {
+  /** Never answers until aborted; can report gateway-style progress first. */
+  class SilentProvider implements Provider {
+    calls = 0;
+    constructor(
+      readonly name: ProviderName,
+      private readonly statusFirstMs?: number,
+    ) {}
+    listModels = (): Promise<never[]> => Promise.resolve([]);
+    validateKey = (): Promise<{ ok: true }> => Promise.resolve({ ok: true });
+    async *stream(req: ChatRequest): AsyncGenerator<StreamDelta> {
+      this.calls++;
+      if (this.statusFirstMs !== undefined) {
+        // a waking gateway: progress, a long pause, then the answer
+        yield { type: 'status', text: 'Waking the gateway' };
+        await new Promise((r) => setTimeout(r, this.statusFirstMs));
+        yield { type: 'status', text: '' };
+        yield { type: 'text', text: 'awake' };
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        req.signal.addEventListener('abort', () => {
+          resolve();
+        });
+      });
+      throw new ProviderError('aborted', 'Request aborted', this.name);
+    }
+  }
+
+  const quick = { ...settings, router: { ...settings.router, firstTokenTimeoutMs: 40 } };
+
+  it('treats a model that sends nothing as timed out and falls back', async () => {
+    const backup = new FakeProvider('openrouter', { 'free-a:free': [{ text: ['saved'] }] });
+    const router = new Router({
+      settings: { ...quick, fallbackChain: ['openrouter:free-a:free'] },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map<ProviderName, Provider>([
+        ['groq', new SilentProvider('groq')],
+        ['openrouter', backup],
+      ]),
+    });
+    const started = Date.now();
+    const events = await collect(router.stream(req()));
+    expect(Date.now() - started).toBeLessThan(1000);
+    const fallback = events.find((e) => e.type === 'fallback');
+    expect(fallback).toMatchObject({ reason: 'Groq sent nothing for 0s' });
+    expect(fallback).toHaveProperty('cooldownMs');
+    expect(events).toContainEqual({ type: 'text', text: 'saved' });
+  });
+
+  it('does not count time spent waking a gateway', async () => {
+    const provider = new SilentProvider('groq', 100);
+    const router = new Router({
+      settings: { ...quick, fallbackChain: [] },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map<ProviderName, Provider>([['groq', provider]]),
+    });
+    const events = await collect(router.stream(req()));
+    expect(events).toContainEqual({ type: 'text', text: 'awake' });
+    expect(provider.calls).toBe(1);
+  });
+});
+
+it('says in the fallback notice how long a dead model is skipped', () => {
+  const from = { provider: 'nvidia' as const, model: 'openai/gpt-oss-20b' };
+  expect(cooldownNote({ from, cooldownMs: MODEL_COOLDOWN_MS })).toBe(
+    ' (nvidia:openai/gpt-oss-20b is skipped for the next 10 min)',
+  );
+  expect(cooldownNote({ from })).toBe('');
 });

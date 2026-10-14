@@ -1,23 +1,33 @@
 import { Command, Option } from 'commander';
 import {
+  cacheDir,
   createProvider,
   loadSettings,
   maskSecret,
+  ModelCatalog,
   noopLogger,
   openSecretStore,
+  ProbeCache,
+  probeCandidates,
+  probeModels,
   PROVIDER_NAMES,
   providerKeyPage,
   providerLabel,
   RateLimitLedger,
   SECRET_ENV_VARS,
   settingsPaths,
+  summarizeProbe,
   updateSettingsFile,
+  type ModelInfo,
+  type ProbeRun,
   type ProviderName,
+  type ResolvedSettings,
   type WritableScope,
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
 import { openInBrowser } from './open-url.js';
 import { paint, readSecret, type CliIO } from './io.js';
+import { replacementFor, testSummaryNotice } from './ui/model-items.js';
 
 const SCOPES = ['user', 'project', 'local'] as const;
 
@@ -43,10 +53,11 @@ export async function storeProviderKey(
     err('No key given.');
     return EXIT.usage;
   }
-  if (verify) {
-    const { resolved } = await loadSettings({ cwd: io.cwd, env: io.env });
+  const settings = verify ? (await loadSettings({ cwd: io.cwd, env: io.env })).resolved : undefined;
+  let unverified: string | undefined;
+  if (settings) {
     const check = await createProvider(provider, key, {
-      settings: resolved,
+      settings,
       ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
       logger: noopLogger,
     }).validateKey();
@@ -54,17 +65,80 @@ export async function storeProviderKey(
       err(`✖ ${providerLabel(provider)} rejected that key; it was not saved.`);
       return EXIT.error;
     }
-    if (!check.ok) err(`⚠ Could not verify the key (${check.reason}); saving it anyway.`);
+    if (!check.ok) unverified = check.reason;
   }
   const store = await openSecretStore(io.env);
   const where = await store.set(provider, key);
   out(
     `✔ Saved ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}.`,
   );
+  // test results earned with the old key say nothing about this one
+  await new ProbeCache(cacheDir(io.env)).clear(provider).catch(() => undefined);
   if (io.env[SECRET_ENV_VARS[provider]] !== undefined) {
     err(`Note: ${SECRET_ENV_VARS[provider]} is set and takes precedence over the stored key.`);
   }
+  const run = settings ? await testModelsAfterLogin(io, provider, key, settings) : undefined;
+  // any model answering its test proves the key, even when the quick check timed out
+  if (unverified !== undefined && (run === undefined || run.ok === 0))
+    err(`⚠ Could not verify the key (${unverified}); it was saved anyway.`);
   return EXIT.ok;
+}
+
+/**
+ * Sends each free chat model of the provider a tiny request and keeps the results, so `/model`
+ * and `/models` list only models that answer. Says how many did, and what to use instead when
+ * the default model is not among them.
+ */
+async function testModelsAfterLogin(
+  io: CliIO,
+  provider: ProviderName,
+  key: string,
+  settings: ResolvedSettings,
+): Promise<ProbeRun | undefined> {
+  const out = (s: string) => io.stdout.write(`${s}\n`);
+  const err = (s: string) => io.stderr.write(`${s}\n`);
+  const client = createProvider(provider, key, {
+    settings,
+    ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+    logger: noopLogger,
+  });
+  let catalog: ModelInfo[] | undefined;
+  try {
+    catalog = (
+      await new ModelCatalog(cacheDir(io.env)).get(client, {
+        refresh: true,
+        signal: AbortSignal.timeout(10_000),
+      })
+    ).models;
+  } catch {
+    // no catalog: only VinaX's known models are tested
+  }
+  const candidates = probeCandidates(provider, catalog, { freeOnly: settings.freeModelsOnly });
+  if (candidates.length === 0) return undefined;
+  const kind = `${settings.freeModelsOnly ? 'free ' : ''}${providerLabel(provider)} model${candidates.length === 1 ? '' : 's'}`;
+  err(paint(io.stderr, 'dim', `Testing ${String(candidates.length)} ${kind}…`, io.env));
+  const results = await probeModels(client, candidates);
+  const summary = summarizeProbe(results);
+  if (!summary.keyRejected && !summary.unreachable)
+    await new ProbeCache(cacheDir(io.env)).save(provider, results).catch(() => undefined);
+  const run: ProbeRun = {
+    provider,
+    candidates,
+    results,
+    tested: results.length,
+    ok: summary.ok,
+    keyRejected: summary.keyRejected,
+    unreachable: summary.unreachable,
+  };
+  const notice = testSummaryNotice(run, settings.freeModelsOnly);
+  if (notice?.level === 'info') out(`✔ ${notice.text}`);
+  else if (notice) err(`${notice.level === 'error' ? '✖' : '⚠'} ${notice.text}`);
+  const next = replacementFor(run, settings.model);
+  if (next !== undefined)
+    err(
+      `⚠ Your default model ${settings.model} did not answer. Use one that did: vinax config set model ${next}`,
+    );
+  return run;
 }
 
 function getPath(obj: unknown, dotted: string): unknown {

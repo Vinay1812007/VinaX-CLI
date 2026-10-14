@@ -2,17 +2,19 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
+import { chatModels } from './chat-models.js';
 import { ProviderError, providerLabel, toProviderError } from './errors.js';
 import { GATEWAY_WAKING, GatewayUnavailableError, type GatewayClient } from './gateway.js';
 import type { RateLimitLedger } from './ratelimit.js';
-import type {
-  ChatMessage,
-  ChatRequest,
-  KeyCheck,
-  ModelInfo,
-  Provider,
-  ProviderName,
-  StreamDelta,
+import {
+  KEY_CHECK_TIMEOUT_MS,
+  type ChatMessage,
+  type ChatRequest,
+  type KeyCheck,
+  type ModelInfo,
+  type Provider,
+  type ProviderName,
+  type StreamDelta,
 } from './types.js';
 
 export interface OpenAICompatibleOptions {
@@ -34,10 +36,26 @@ export interface OpenAICompatibleOptions {
   now?: () => number;
   /** Set when requests go through the VinaX gateway, which names models `<provider>:<id>`. */
   gateway?: GatewayClient;
+  /** How long checking a key may take (defaults to {@link KEY_CHECK_TIMEOUT_MS}). */
+  keyCheckTimeoutMs?: number;
 }
 
-/** An authenticated GET, or a one-token completion when the provider has no such endpoint. */
-export type KeyCheckMethod = { path: string } | { completionModel: string };
+/**
+ * An authenticated GET, or one-token completions when the provider has no such endpoint. The
+ * completion check tries every listed model (and a few chat models from the public catalog) at
+ * once and passes as soon as one answers, so a single hung model cannot fail a good key.
+ */
+export type KeyCheckMethod = { path: string } | { completionModels: readonly string[] };
+
+/** Catalog models added to a completion key check, beyond the configured ones. */
+const KEY_CHECK_CATALOG_SAMPLE = 4;
+
+function verdict(status: number): KeyCheck {
+  if (status === 200) return { ok: true };
+  if (status === 401 || status === 403)
+    return { ok: false, rejected: true, reason: 'the key was rejected' };
+  return { ok: false, rejected: false, reason: `unexpected HTTP ${String(status)}` };
+}
 
 const catalogEntrySchema = z.looseObject({
   id: z.string(),
@@ -229,27 +247,73 @@ export class OpenAICompatibleProvider implements Provider {
   }
 
   async validateKey(signal?: AbortSignal): Promise<KeyCheck> {
+    const limitMs = this.opts.keyCheckTimeoutMs ?? KEY_CHECK_TIMEOUT_MS;
+    const label = providerLabel(this.name);
     try {
+      // a sleeping gateway gets its own (longer) wake-up budget before the check starts
       await this.wakeGateway(signal);
+      const timeout = AbortSignal.timeout(limitMs);
+      const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const check = this.opts.keyCheck;
-      const { status } =
-        'path' in check
-          ? await this.getJson(check.path, signal)
-          : await this.getJson('/chat/completions', signal, {
-              model: this.wireModel(check.completionModel),
-              messages: [{ role: 'user', content: 'ping' }],
-              max_tokens: 1,
-            });
-      if (status === 200) return { ok: true };
-      if (status === 401 || status === 403)
-        return { ok: false, rejected: true, reason: 'the key was rejected' };
-      return { ok: false, rejected: false, reason: `unexpected HTTP ${status}` };
+      try {
+        if ('path' in check) return verdict((await this.getJson(check.path, bounded)).status);
+        return await this.completionCheck(check.completionModels, bounded);
+      } catch (err) {
+        if (timeout.aborted && signal?.aborted !== true)
+          return {
+            ok: false,
+            rejected: false,
+            reason: `${label} did not answer within ${String(Math.round(limitMs / 1000))}s`,
+          };
+        throw err;
+      }
     } catch (err) {
       return {
         ok: false,
         rejected: false,
-        reason: `could not reach ${providerLabel(this.name)} (${String(err)})`,
+        reason: `could not reach ${label} (${String(err)})`,
       };
+    }
+  }
+
+  /** One-token completions to several models at once; the first answer proves the key. */
+  private async completionCheck(
+    configured: readonly string[],
+    signal: AbortSignal,
+  ): Promise<KeyCheck> {
+    const sample = await this.listModels(signal)
+      .then((list) =>
+        chatModels(list, this.name)
+          .map((m) => m.id)
+          .filter((id) => /instruct|chat/i.test(id))
+          .slice(0, KEY_CHECK_CATALOG_SAMPLE),
+      )
+      .catch(() => []);
+    const models = [...new Set([...configured, ...sample])];
+    const done = new AbortController();
+    const shared = AbortSignal.any([signal, done.signal]);
+    const statuses: number[] = [];
+    const attempts = models.map(async (model) => {
+      const { status } = await this.getJson('/chat/completions', shared, {
+        model: this.wireModel(model),
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      });
+      statuses.push(status);
+      if (status !== 200) throw new Error(`HTTP ${String(status)}`);
+    });
+    try {
+      await Promise.any(attempts);
+      return { ok: true };
+    } catch (err) {
+      if (statuses.length === 0) throw err instanceof AggregateError ? err.errors[0] : err;
+      if (statuses.length === models.length && statuses.every((s) => s === 401 || s === 403))
+        return verdict(statuses[0] ?? 401);
+      if (signal.aborted) throw err instanceof AggregateError ? err.errors[0] : err;
+      return verdict(statuses.find((s) => s !== 401 && s !== 403) ?? statuses[0] ?? 0);
+    } finally {
+      // the other requests are no longer needed once one answered (or all failed)
+      done.abort();
     }
   }
 

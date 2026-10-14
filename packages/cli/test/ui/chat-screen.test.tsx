@@ -9,6 +9,9 @@ import { ChatScreen } from '../../src/ui/components/ChatScreen.js';
 import { resolveTheme, ThemeContext } from '../../src/ui/theme.js';
 import { createHarness, type Harness } from '../helpers.js';
 
+// /login opens the provider's key page; never launch a real browser from a test
+vi.mock('../../src/open-url.js', () => ({ openInBrowser: vi.fn() }));
+
 const mono = resolveTheme('dark', { NO_COLOR: '1' });
 const KEYS = {
   enter: '\r',
@@ -1025,11 +1028,15 @@ describe('ChatScreen extensibility (M5)', () => {
       nvidiaKey: true,
       nvidia: {
         models: [{ id: 'openai/gpt-oss-20b' }, { id: 'nvidia/embed-qa' }],
-        script: { 'openai/gpt-oss-20b': [{ text: 'hi from nvidia' }] },
+        // the first reply answers the model test the picker runs before listing
+        script: { 'openai/gpt-oss-20b': [{ text: 'OK' }, { text: 'hi from nvidia' }] },
       },
     });
     await type('/model', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes('type to filter'), 'model picker');
+    expect(frame()).toContain('1 of 1 free NVIDIA model answered.');
+    const probe = harness.nvidia.requests.find((r) => r.path === '/v1/chat/completions');
+    expect(probe?.body).toMatchObject({ model: 'openai/gpt-oss-20b', max_tokens: 16 });
     expect(frame()).toContain('NVIDIA · nvidia.com');
     // NVIDIA publishes no prices because every hosted NIM endpoint is free.
     expect(frame()).toContain('NVD_CHAT_OSS_20_B · free · 131K ctx');
@@ -1059,8 +1066,63 @@ describe('ChatScreen extensibility (M5)', () => {
     await waitFor(() => frame().includes('Fallback order'), 'models panel');
     expect(frame()).toContain('Current nvidia:openai/gpt-oss-20b · alias NVD_CHAT_OSS_20_B');
     expect(frame()).toContain('NVIDIA nvidia.com — key configured · 2 models in catalog');
+    expect(frame()).toContain('1 of 1 answered the last test');
+    // results are fresh, so /models does not test again
+    expect(harness.nvidia.requests.filter((r) => r.path === '/v1/chat/completions')).toHaveLength(
+      2,
+    );
     expect(frame()).toContain('NVD_CHAT_OSS_20_B → nvidia:openai/gpt-oss-20b');
     await waitFor(() => frame().includes('Switch model?'), 'switch picker');
+    await type(KEYS.esc);
+  });
+
+  it('tests the models after /login, moves off a dead default and retests with /models test', async () => {
+    const notFound = { status: 404, error: { message: 'Function not found' } };
+    const { frame, type, harness } = await mount({
+      settings: { model: 'nvidia:openai/gpt-oss-20b' },
+      nvidia: {
+        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.1-8b-instruct' }],
+        script: {
+          'openai/gpt-oss-20b': [notFound, notFound, notFound],
+          'meta/llama-3.1-8b-instruct': [{ text: 'p' }, { text: 'OK' }, { text: 'OK' }],
+        },
+      },
+    });
+    const words = () => flat(frame());
+    await type('/login', KEYS.enter);
+    await waitFor(() => frame().includes('Add a key for which provider?'), 'provider picker');
+    // Groq, OpenRouter, NVIDIA
+    await type(KEYS.down, KEYS.down, KEYS.enter);
+    await waitFor(() => frame().includes('NVIDIA API key'), 'key prompt');
+    await type('nvapi-test0000000000', KEYS.enter);
+    await waitFor(() => words().includes('1 of 2 free NVIDIA models answered.'), 'test summary');
+    expect(words()).toContain('Saved the NVIDIA key to the credentials file.');
+    expect(words()).not.toContain('could not verify');
+    expect(words()).toContain(
+      'nvidia:openai/gpt-oss-20b did not answer the test (HTTP 404), so this session switches to nvidia:meta/llama-3.1-8b-instruct.',
+    );
+    await waitFor(
+      () => words().includes('Using nvidia:meta/llama-3.1-8b-instruct for this session'),
+      'switched',
+    );
+    const tests = () =>
+      harness.nvidia.requests.filter(
+        (r) =>
+          r.path === '/v1/chat/completions' &&
+          (r.body as { max_tokens?: number }).max_tokens === 16,
+      ).length;
+    expect(tests()).toBe(2);
+
+    await type('/models test', KEYS.enter);
+    await waitFor(() => frame().includes('Fallback order'), 'models panel');
+    // every model was asked again although the results were fresh
+    expect(tests()).toBe(4);
+    expect(words()).toContain('1 of 2 answered the last test');
+    expect(words()).toContain('nvidia:openai/gpt-oss-20b');
+    await waitFor(() => frame().includes('Switch model?'), 'switch picker');
+    // only the model that answered is offered
+    expect(frame()).toContain('meta/llama-3.1-8b-instruct');
+    expect(frame()).not.toMatch(/^\s*›?\s*openai\/gpt-oss-20b/m);
     await type(KEYS.esc);
   });
 

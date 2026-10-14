@@ -97,6 +97,12 @@ export interface ChatRequest {
   signal: AbortSignal;
 }
 
+/**
+ * Checking a key is interactive (/login, onboarding), so it gets far less time than a request:
+ * waiting the full request timeout on a hung endpoint left people staring at a spinner.
+ */
+export const KEY_CHECK_TIMEOUT_MS = 15_000;
+
 /** `rejected` distinguishes a bad key from a provider that could not be reached. */
 export type KeyCheck = { ok: true } | { ok: false; rejected: boolean; reason: string };
 

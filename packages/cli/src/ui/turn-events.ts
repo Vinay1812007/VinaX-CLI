@@ -1,4 +1,10 @@
-import { formatModelRef, providerLabel, type AgentEvent, type AgentOutcome } from '@vinax/core';
+import {
+  cooldownNote,
+  formatModelRef,
+  providerLabel,
+  type AgentEvent,
+  type AgentOutcome,
+} from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
 import { formatTokens } from './format.js';
 import { extendTrail, phaseFor, type Phase } from './phases.js';
@@ -204,7 +210,7 @@ export function createTurnTracker(sink: TurnSink): {
       case 'fallback': {
         const to = formatModelRef(ev.to);
         fallbacks.push(`${to} (${ev.reason})`);
-        const text = `${ev.reason} — switched to ${to}`;
+        const text = `${ev.reason} — switched to ${to}${cooldownNote(ev)}`;
         push({ kind: 'notice', level: 'info', text });
         sink.setNotice({ level: 'warning', text: `↪ ${text}` });
         return;

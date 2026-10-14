@@ -78,9 +78,9 @@ vinax --model NVD_CHAT_OSS_20_B          # the same model, by its alias
 ```
 
 - **Keys** are stored like every other provider key: the `NVIDIA_API_KEY` environment variable, the OS keychain, or `~/.vinax/credentials.json` (mode 0600). They never go in settings files; an `apiKey` there is ignored with a warning.
-- **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with a one-token completion against `openai/gpt-oss-20b` before saving it.
+- **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with one-token completions sent to a few models at once (`openai/gpt-oss-20b`, `meta/llama-3.2-11b-vision-instruct` and some catalog models); any answer proves the key, so one hung model no longer fails the check. The check gives up after 15 seconds instead of waiting the full request timeout.
 - **Context window.** NVIDIA's catalog lists model ids only. VinaX knows the context window of the models it has aliases for (128K, 131,072 tokens, for `openai/gpt-oss-20b`).
-- **Picker.** NVIDIA's catalog also contains embedding, vision and safety models, so the model picker shows the NVIDIA models VinaX knows. Any other catalog model still works with `/model nvidia:<model-id>` or `--model`.
+- **Picker.** NVIDIA's catalog also contains embedding, retired and unresponsive models, so the picker lists only the ones that answered a [model test](#model-tests). Any other catalog model still works with `/model nvidia:<model-id>` or `--model`.
 - **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. NVIDIA has no local VinaX RPM ceiling by default; its API headers and 429 responses are still honored. Set `providers.nvidia.rpm` when a self-hosted NIM needs a local requests-per-minute limit, and use `providers.nvidia.enabled: false` to turn the provider off.
 
 ```json
@@ -142,11 +142,24 @@ Text-only models later in the conversation get a short note that an image was at
 
 If you use a VinaX gateway for images, give it room for them: `MAX_BODY_BYTES` defaults to 8 MB.
 
+## Model tests
+
+Catalogs list far more than actually answers — NVIDIA's has about 80 entries, many of them embeddings, retired or hanging. So before `/model` and `/models` show a provider's list, VinaX sends each of its free chat models (plus the models it knows by alias) a tiny request ("Reply with OK", 16 tokens), six at a time with 20 seconds each, and lists only the ones that answered. The current model stays listed even when it did not answer, marked `did not answer the last test`.
+
+- **When.** Right after `/login` for that provider, and when `/model` or `/models` finds models without a recent result (a line shows `Testing 31 free NVIDIA models… 7/31`; Esc stops it and keeps what finished). Afterwards a notice sums it up: `12 of 31 free NVIDIA models answered.`
+- **Kept for.** Answers count for 24 hours, failures for 6 hours and rate-limited tests for 10 minutes, in `~/.vinax/cache/probe-<provider>.json`. A new key for a provider throws its results away. `/models test` tests every model again right now.
+- **Routing.** A configured model that failed its test is skipped in fallback and auto routing, with a warning at startup — unless you chose it yourself with `--model` or `/model`. If every model failed, nothing is skipped, since that usually means the network was down.
+- **After /login.** If the model you use belongs to that provider and did not answer, the session switches to one that did and says so. `vinax login <provider>` prints the same summary and suggests `vinax config set model …`.
+- **Paid models.** With `freeModelsOnly: false`, paid models are tested and listed too (each test is a few tokens).
+
+A run where nothing answered because of timeouts or connection errors, or where the provider rejected the key for every model, is not remembered; the full list is shown instead.
+
 ## Browsing and switching models
 
 - **`/model`** opens a searchable picker. Type to filter: every word must match the model id, its alias, or the provider's name or domain (`nvd`, `nvidia oss`, `groq 120b`). Models are grouped by provider (`NVIDIA · nvidia.com`), `●` marks the current one, `vision` marks models that take images, and models you can't use yet are dimmed with the reason (`no key · /login`, `not in catalog`, or `add your own key with /login` when your gateway doesn't serve that provider). Models VinaX knows but the provider no longer lists are hidden unless they have an alias. ↑/↓ move, Enter picks, Backspace edits the search, Ctrl+U clears it and Esc cancels.
 - **`/model <ref or alias>`** switches straight away, for example `/model NVD_CHAT_OSS_20_B`. It warns when there is no key for that provider yet.
-- **`/models`** shows each provider (configured, through the gateway, or not configured, with the size of its catalog), the current model and its alias, the fallback order with each entry's status (`ready`, `no key`, `skipped: not in catalog`), and the aliases. It then opens the picker so you can switch; Esc keeps the current model.
+- **`/models`** shows each provider (configured, through the gateway, or not configured, with the size of its catalog), the current model and its alias, how many of its models answered the last test, the fallback order with each entry's status (`ready`, `no key`, `skipped: not in catalog`, `skipped: did not answer the last test`), and the aliases. It then opens the picker so you can switch; Esc keeps the current model.
+- **`/models test`** (or `/models refresh`) tests every model of every configured provider again, ignoring earlier results, then shows the same panel.
 
 To make a choice the default, run `vinax config set model <ref or alias>`.
 
@@ -161,6 +174,14 @@ Before each request, VinaX checks what the model has left. That means its local 
 <pre class="vx-terminal"><span class="dim">↪ Groq 429: Rate limit reached … — switched to openrouter:qwen/qwen3.8-27b:free</span></pre>
 
 Transient errors (5xx, timeouts, network) are retried with exponential backoff and jitter before falling back. VinaX never switches models once an answer has started streaming.
+
+A model that sends nothing at all — no text, reasoning or tool call — for `router.firstTokenTimeoutMs` (45 s by default) counts as timed out, so a hung endpoint falls back long before the full `requestTimeoutMs`. Time spent waking a [gateway](/gateway) does not count.
+
+When a model times out, is unavailable, or is missing, the session stays on the model it fell back to: the failed one is moved to the end of the chain for 10 minutes, the notice says so, and the status line shows the model actually answering:
+
+<pre class="vx-terminal"><span class="dim">↪ NVIDIA did not respond in time — switched to groq:openai/gpt-oss-120b (nvidia:openai/gpt-oss-20b is skipped for the next 10 min)</span></pre>
+
+Choosing the model again with `/model` tries it straight away.
 
 When every model fails, VinaX explains why in an error card: each model it tried, with its provider, the kind of failure (authentication failed, no API key, rate limited, temporary provider error, network error, model not available, request too large, tool-call error, request rejected) and the provider's message, plus what to try next (retry, switch with `/model`, add a key with `/login`, run `/health`, `/compact`).
 
@@ -193,7 +214,8 @@ Every argument is validated, and validation errors go back to the model so it ca
     "baseDelayMs": 1000,
     "maxDelayMs": 20000,
     "maxWaitMs": 20000,
-    "requestTimeoutMs": 90000
+    "requestTimeoutMs": 90000,
+    "firstTokenTimeoutMs": 45000
   },
   "providers": {
     "groq": { "rpm": 30 },

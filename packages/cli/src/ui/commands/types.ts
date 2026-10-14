@@ -36,8 +36,14 @@ export interface CommandContext {
     placeholder: string,
     opts?: { mask?: boolean },
   ) => Promise<string | undefined>;
-  /** Shows an activity line while `task` runs; Esc aborts it through the signal. */
-  busy: <T>(label: string, task: (signal: AbortSignal) => Promise<T>) => Promise<T | undefined>;
+  /**
+   * Shows an activity line while `task` runs; Esc aborts it through the signal. `progress`
+   * replaces the line's label (e.g. "Testing models… 7/31").
+   */
+  busy: <T>(
+    label: string,
+    task: (signal: AbortSignal, progress: (label: string) => void) => Promise<T>,
+  ) => Promise<T | undefined>;
   mode: () => PermissionMode;
   setMode: (mode: PermissionMode) => void;
   setTheme: (theme: ThemeName) => void;

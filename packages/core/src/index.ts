@@ -259,6 +259,7 @@ export {
 export { saveGatewayLogin, removeGatewayLogin } from './config/gateway-login.js';
 export {
   formatModelRef,
+  KEY_CHECK_TIMEOUT_MS,
   parseModelRef,
   PROVIDER_NAMES,
   REASONING_EFFORTS,
@@ -280,6 +281,7 @@ export {
 export { AbortError, backoffDelay, sleep } from './router/backoff.js';
 export {
   CATEGORY_LABELS,
+  cooldownNote,
   explainError,
   formatFailureReport,
   type FailureCategory,
@@ -298,6 +300,7 @@ export {
 } from './providers/known-models.js';
 export {
   AllModelsFailedError,
+  MODEL_COOLDOWN_MS,
   Router,
   StreamInterruptedError,
   type LinkFailure,
@@ -305,7 +308,7 @@ export {
   type RouteRequest,
   type RouterEvent,
 } from './router/router.js';
-export { createRuntime, type Runtime, type RuntimeOptions } from './runtime.js';
+export { createRuntime, type ProbeRun, type Runtime, type RuntimeOptions } from './runtime.js';
 export { diffDisplay, diffSummary } from './tools/diff.js';
 export { displayPath, resolvePath } from './tools/paths.js';
 export {
@@ -333,4 +336,25 @@ export {
   type WorktreeFileChange,
   type WorktreeInfo,
 } from './git/worktree.js';
-export { chatModels } from './providers/chat-models.js';
+export { chatModels, freeToTry, PAID_ONLY_PROVIDERS } from './providers/chat-models.js';
+export {
+  PROBE_CONCURRENCY,
+  PROBE_MAX_TOKENS,
+  PROBE_PROMPT,
+  PROBE_TIMEOUT_MS,
+  PROBE_TTL_MS,
+  ProbeCache,
+  probeCandidates,
+  probeFailed,
+  probeInconclusive,
+  probeModel,
+  probeModels,
+  probeTtl,
+  summarizeProbe,
+  type FailedProbe,
+  type ProbeFailure,
+  type ProbeOptions,
+  type ProbeResult,
+  type ProbeRunOptions,
+  type ProbeSummary,
+} from './providers/probe.js';

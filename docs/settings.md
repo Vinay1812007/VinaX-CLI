@@ -71,7 +71,7 @@ vinax config unset model
 | `model`                                   | `groq:openai/gpt-oss-120b`                    | Main model: a `provider:model` ref or an [alias](/models#aliases)                 |
 | `smallModel`                              | `groq:openai/gpt-oss-20b`                     | Model for titles, summaries and compaction                                        |
 | `planModel`                               | unset                                         | Model for plan mode; unset uses the main model                                    |
-| `freeModelsOnly`                          | `true`                                        | List only free and free-tier models in `/model` and `/models`                     |
+| `freeModelsOnly`                          | `true`                                        | Test and list only free and free-tier models in `/model` and `/models`            |
 | `outputStyle`                             | `default`                                     | How answers are written: `default`, `explanatory`, `learning`, `concise` or yours |
 | `fallbackChain`                           | see [Models](/models)                         | Models tried after the main one                                                   |
 | `providers.<name>.enabled`                | `true`                                        | Turn any provider off by name (see [Models](/models))                             |
@@ -81,6 +81,7 @@ vinax config unset model
 | `router.baseDelayMs`, `router.maxDelayMs` | `1000`, `20000`                               | Backoff range                                                                     |
 | `router.maxWaitMs`                        | `20000`                                       | Longest wait for a rate-limit window before falling back                          |
 | `router.requestTimeoutMs`                 | `90000`                                       | Request timeout                                                                   |
+| `router.firstTokenTimeoutMs`              | `45000`                                       | A model that sends nothing for this long counts as timed out and VinaX falls back |
 | `permissions.allow` / `ask` / `deny`      | `[]`                                          | [Permission rules](/permissions#rules)                                            |
 | `permissions.defaultMode`                 | `default`                                     | `default`, `acceptEdits`, `plan` or `auto`                                        |
 | `permissions.additionalDirectories`       | `[]`                                          | Extra folders tools may work in                                                   |

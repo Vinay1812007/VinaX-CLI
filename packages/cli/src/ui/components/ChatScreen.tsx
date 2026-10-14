@@ -36,6 +36,7 @@ import type { ExitSummary } from '../../exit-summary.js';
 import { findCommand } from '../commands/registry.js';
 import { parseSlash, type CommandContext, type SlashCommand } from '../commands/types.js';
 import { loadChanges } from '../changes.js';
+import { routedDefault } from '../model-items.js';
 import { formatBytes, truncate } from '../format.js';
 import { paletteItems, type PaletteChoice } from '../palette.js';
 import { phaseFor, turnSummary } from '../phases.js';
@@ -173,7 +174,11 @@ export function ChatScreen(props: ChatScreenProps) {
   const [notice, setNotice] = useState<StatusNotice | undefined>(undefined);
   const [hint, setHint] = useState<string | undefined>(undefined);
   const [turns, setTurns, turnsRef] = useRefState<TurnRecord[]>([]);
-  const [activeModel, setActiveModel] = useState(agent.model ?? runtime.settings.resolved.model);
+  // Without a chosen model, show the one the router will actually start with: the configured
+  // default may be skipped because it failed its model test.
+  const [activeModel, setActiveModel] = useState(
+    () => agent.model ?? routedDefault(runtime) ?? runtime.settings.resolved.model,
+  );
   const [contextPct, setContextPct] = useState<number | undefined>(undefined);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [, setTitle, titleRef] = useRefState<string | undefined>(props.title);
@@ -445,7 +450,9 @@ export function ChatScreen(props: ChatScreenProps) {
         label,
       });
       try {
-        return await task(ac.signal);
+        return await task(ac.signal, (next) => {
+          setStreaming((st) => st && { ...st, label: next });
+        });
       } catch (err) {
         if (!ac.signal.aborted)
           push({

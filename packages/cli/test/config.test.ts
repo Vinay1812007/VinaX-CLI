@@ -53,7 +53,10 @@ describe('vinax config', () => {
     });
     expect(good.code).toBe(0);
     expect(good.stdout).toContain('Saved OpenRouter key to the credentials file');
-    expect(h.openrouter.requests.at(-1)?.path).toBe('/v1/key');
+    // /key proves the key; the catalog is fetched afterwards to test its free models
+    expect(h.openrouter.requests.filter((r) => r.path !== '/v1/models').at(-1)?.path).toBe(
+      '/v1/key',
+    );
 
     const keys = await h.run(['config', 'keys']);
     expect(keys.stdout).toContain('OpenRouter  sk-o…0000  (file)');
@@ -62,6 +65,45 @@ describe('vinax config', () => {
     expect((await h.run(['config', 'remove-key', 'openrouter'])).stdout).toBe(
       'Removed the stored OpenRouter key.\n',
     );
+  });
+
+  it('tests the free models after a login and names one that answered', async () => {
+    h = await createHarness({
+      keys: false,
+      settings: { model: 'nvidia:openai/gpt-oss-20b' },
+      nvidia: {
+        models: [
+          { id: 'openai/gpt-oss-20b' },
+          { id: 'meta/llama-3.1-8b-instruct' },
+          { id: 'nvidia/nv-embedqa-e5-v5' },
+        ],
+        script: {
+          // gone for the key check and the model test alike
+          'openai/gpt-oss-20b': [
+            { status: 404, error: { message: 'Function not found' } },
+            { status: 404, error: { message: 'Function not found' } },
+          ],
+          'meta/llama-3.1-8b-instruct': [{ text: 'p' }, { text: 'OK' }],
+        },
+      },
+    });
+    const r = await h.run(['login', 'nvidia'], { stdin: 'nvapi-test0000000000\n' });
+    expect(r.code).toBe(0);
+    // another model answered the key check, so there is nothing to warn about
+    expect(r.stderr).not.toContain('Could not verify');
+    expect(r.stdout).toContain('Saved NVIDIA key to the credentials file');
+    expect(r.stderr).toContain('Testing 2 free NVIDIA models…');
+    expect(r.stdout).toContain('1 of 2 free NVIDIA models answered.');
+    expect(r.stderr).toContain(
+      'Your default model nvidia:openai/gpt-oss-20b did not answer. Use one that did: vinax config set model nvidia:meta/llama-3.1-8b-instruct',
+    );
+    const cached = JSON.parse(
+      await fs.readFile(path.join(h.home, 'cache', 'probe-nvidia.json'), 'utf8'),
+    ) as { results: { model: string; ok: boolean }[] };
+    expect(cached.results.map((x) => [x.model, x.ok])).toEqual([
+      ['openai/gpt-oss-20b', false],
+      ['meta/llama-3.1-8b-instruct', true],
+    ]);
   });
 
   it('rejects unknown providers', async () => {

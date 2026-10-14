@@ -6,6 +6,8 @@ import {
   AllModelsFailedError,
   type DoctorCheck,
   type ModelInfo,
+  type ProbeResult,
+  type ProbeRun,
   type ProviderName,
   type Runtime,
   type SessionSummary,
@@ -15,7 +17,12 @@ import { ErrorCard } from '../../src/ui/components/Messages.js';
 import type { SelectItem } from '../../src/ui/components/Select.js';
 import { memoryLabels, Welcome } from '../../src/ui/components/Welcome.js';
 import { groupChecks, healthMarkdown, healthSummary } from '../../src/health.js';
-import { modelRows, modelSelectItems } from '../../src/ui/model-items.js';
+import {
+  modelRows,
+  modelSelectItems,
+  replacementFor,
+  testSummaryNotice,
+} from '../../src/ui/model-items.js';
 import {
   extendTrail,
   phaseFor,
@@ -190,10 +197,17 @@ function fakeRuntime(opts: {
   skipped?: string[];
   viaGateway?: ProviderName[];
   freeModelsOnly?: boolean;
+  probes?: Partial<Record<ProviderName, ProbeResult[]>>;
 }): Runtime {
   return {
     providers: new Map(opts.providers.map((p) => [p, {}])),
     models: new Map(Object.entries(opts.models ?? {})),
+    probes: new Map(
+      Object.entries(opts.probes ?? {}).map(([p, list]) => [
+        p,
+        new Map(list.map((r) => [r.model, r])),
+      ]),
+    ),
     skipped: new Set(opts.skipped ?? []),
     viaGateway: new Set(opts.viaGateway ?? []),
     settings: {
@@ -299,6 +313,128 @@ describe('model picker items', () => {
       'claude:claude-sonnet-4-5',
     );
     expect(rows.some((r) => r.provider === 'claude' && r.status === 'ready')).toBe(true);
+  });
+});
+
+const passed = (model: string): ProbeResult => ({ model, ok: true, at: Date.now(), ms: 10 });
+const failed = (model: string, reason = 'no answer within 20s'): ProbeResult => ({
+  model,
+  ok: false,
+  at: Date.now(),
+  kind: 'timeout',
+  reason,
+});
+
+describe('model lists after a model test', () => {
+  const nvidiaModels = [
+    info('openai/gpt-oss-20b', 131_072),
+    info('meta/llama-3.1-8b-instruct', 131_072),
+    info('retired/dead-model', 32_000),
+    info('busy/model', 32_000),
+  ];
+
+  it('lists only the models that answered, and keeps the current one marked when it did not', () => {
+    const runtime = fakeRuntime({
+      providers: ['nvidia'],
+      models: { nvidia: nvidiaModels },
+      probes: {
+        nvidia: [
+          failed('openai/gpt-oss-20b'),
+          passed('meta/llama-3.1-8b-instruct'),
+          failed('retired/dead-model', 'HTTP 404'),
+          {
+            model: 'busy/model',
+            ok: false,
+            at: Date.now(),
+            kind: 'rate_limit',
+            reason: 'rate limited',
+          },
+        ],
+      },
+    });
+    const items = modelSelectItems(runtime, 'nvidia:openai/gpt-oss-20b').filter((i) =>
+      i.value.startsWith('nvidia:'),
+    );
+    // known models first, then the catalog's order; the 404 is gone
+    expect(items.map((i) => i.value)).toEqual([
+      'nvidia:openai/gpt-oss-20b',
+      'nvidia:busy/model',
+      'nvidia:meta/llama-3.1-8b-instruct',
+    ]);
+    expect(items[0]).toMatchObject({
+      current: true,
+      hint: 'NVD_CHAT_OSS_20_B · free · 131K ctx · did not answer the last test (no answer within 20s)',
+    });
+    expect(items[0]?.disabled).toBeFalsy();
+    expect(items[1]?.hint).toContain('rate limited during the last test');
+  });
+
+  it('drops a failed model that is not in use, and lists everything when nothing was tested', () => {
+    const tested = fakeRuntime({
+      providers: ['nvidia'],
+      models: { nvidia: nvidiaModels },
+      probes: { nvidia: [failed('openai/gpt-oss-20b'), passed('meta/llama-3.1-8b-instruct')] },
+    });
+    expect(
+      modelRows(tested, 'groq:x')
+        .filter((r) => r.provider === 'nvidia')
+        .map((r) => r.model),
+    ).toEqual(['meta/llama-3.1-8b-instruct']);
+    const untested = fakeRuntime({ providers: ['nvidia'], models: { nvidia: nvidiaModels } });
+    expect(modelRows(untested, 'groq:x').filter((r) => r.provider === 'nvidia')).toHaveLength(4);
+  });
+
+  it('lists paid models only when they are allowed and answered', () => {
+    const paid: ModelInfo = {
+      ...info('paid/model', 32_000),
+      free: false,
+      pricing: { prompt: 1e-6, completion: 1e-6 },
+    };
+    const probes = { openrouter: [passed('paid/model'), passed('free/model:free')] };
+    const models = { openrouter: [paid, info('free/model:free', 32_000)] };
+    const freeOnly = modelRows(
+      fakeRuntime({ providers: ['openrouter'], models, probes }),
+      'openrouter:free/model:free',
+    );
+    expect(freeOnly.map((r) => r.model)).not.toContain('paid/model');
+    const all = modelRows(
+      fakeRuntime({ providers: ['openrouter'], models, probes, freeModelsOnly: false }),
+      'openrouter:free/model:free',
+    );
+    expect(all.map((r) => r.model)).toContain('paid/model');
+    const notTested = modelRows(
+      fakeRuntime({
+        providers: ['openrouter'],
+        models,
+        probes: { openrouter: [passed('free/model:free')] },
+        freeModelsOnly: false,
+      }),
+      'openrouter:free/model:free',
+    );
+    expect(notTested.map((r) => r.model)).not.toContain('paid/model');
+  });
+
+  it('summarizes a test and suggests a model that answered', () => {
+    const run: ProbeRun = {
+      provider: 'nvidia',
+      candidates: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct', 'x/y'],
+      results: [failed('openai/gpt-oss-20b'), passed('meta/llama-3.1-8b-instruct'), failed('x/y')],
+      tested: 3,
+      ok: 1,
+      keyRejected: false,
+      unreachable: false,
+    };
+    expect(testSummaryNotice(run, true)).toEqual({
+      level: 'info',
+      text: '1 of 3 free NVIDIA models answered.',
+    });
+    expect(replacementFor(run, 'NVD_CHAT_OSS_20_B')).toBe('nvidia:meta/llama-3.1-8b-instruct');
+    expect(replacementFor(run, 'nvidia:meta/llama-3.1-8b-instruct')).toBeUndefined();
+    expect(replacementFor(run, 'groq:other')).toBeUndefined();
+    expect(testSummaryNotice({ ...run, keyRejected: true }, true)?.level).toBe('error');
+    expect(testSummaryNotice({ ...run, unreachable: true }, true)?.text).toContain(
+      'Could not reach NVIDIA',
+    );
   });
 });
 

@@ -131,8 +131,12 @@ vinax config set model NVD_CHAT_OSS_20_B   # make it the default
   `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead. NVIDIA has no local VinaX
   request ceiling by default, though provider rate-limit headers and 429s are still honored. Set
   `providers.nvidia.rpm` explicitly for a self-hosted NIM.
-- NVIDIA's `/models` list is public, so keys are checked with a one-token completion. The catalog
-  lists ids only, so VinaX supplies the 128K context window for the models it knows.
+- NVIDIA's `/models` list is public, so keys are checked with one-token completions to a few
+  models at once (any answer proves the key, within 15 s). The catalog lists ids only, so VinaX
+  supplies the 128K context window for the models it knows.
+- NVIDIA's catalog has ~80 entries, many of them embeddings, retired or hung. After `/login` and
+  before `/model` or `/models`, VinaX sends each free chat model a tiny request and lists only the
+  ones that answer; `/models test` checks again.
 - The default fallback chain ends with `nvidia:openai/gpt-oss-20b`; it's skipped until you add an
   NVIDIA key.
 
@@ -346,7 +350,7 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/clear`                           | Start a new conversation (the old one stays available in `/resume`)                                                       |
 | `/compact [focus]`                 | Summarize the conversation to free up context                                                                             |
 | `/model [provider:model \| alias]` | Switch the model for this session (searchable picker, grouped by provider)                                                |
-| `/models`                          | Providers, current model and alias, fallback order, aliases; then switch                                                  |
+| `/models [test]`                   | Providers, models that answered a test, fallback order, aliases; then switch (`test` retests)                             |
 | `/resume`, `/rewind`               | Continue an earlier conversation; go back to an earlier prompt                                                            |
 | `/changes`                         | Review files changed this session: diffs, and undo per file (`Ctrl+G`)                                                    |
 | `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                                                                |
@@ -588,7 +592,9 @@ are skipped with a warning.
 
 The model used first is `--model` if given, else the model picked with `/model` in the session,
 else the `model` setting; the fallback chain follows. `/models` shows the order and whether each
-entry is ready, has no key or was skipped.
+entry is ready, has no key or was skipped. Models that failed their last model test are skipped
+unless you chose them by name, and a model that timed out is set aside for 10 minutes so the
+session stays on the model it fell back to.
 
 Before each request the router checks what the model has left: its local requests-per-minute
 window, and the token and request budgets reported in the provider's rate-limit headers. Then it

@@ -4,6 +4,16 @@ import type { Settings } from './config/schema.js';
 import { openSecretStore, type SecretStore } from './config/secrets.js';
 import { createFileLogger, noopLogger, type Logger } from './log/logger.js';
 import { ModelCatalog } from './providers/catalog.js';
+import {
+  PROBE_CONCURRENCY,
+  PROBE_TIMEOUT_MS,
+  ProbeCache,
+  probeCandidates,
+  probeFailed,
+  probeModels,
+  summarizeProbe,
+  type ProbeResult,
+} from './providers/probe.js';
 import { providerLabel } from './providers/errors.js';
 import { RateLimitLedger } from './providers/ratelimit.js';
 import { GATEWAY_WAKING, type GatewayClient } from './providers/gateway.js';
@@ -24,6 +34,23 @@ import { Router } from './router/router.js';
 import { UsageTracker } from './state/usage.js';
 import type { SecretName } from './config/secrets.js';
 
+/** One model test of a provider, with the results that are current afterwards. */
+export interface ProbeRun {
+  provider: ProviderName;
+  /** The models a test covers (free chat models and VinaX's known ones). */
+  candidates: string[];
+  /** The latest result per candidate, from this run or still fresh from an earlier one. */
+  results: ProbeResult[];
+  /** Models this run actually sent a request to. */
+  tested: number;
+  /** Candidates that answered. */
+  ok: number;
+  /** Every model this run tried refused the key. */
+  keyRejected: boolean;
+  /** Nothing answered and nothing failed for a reason of its own: likely the network. */
+  unreachable: boolean;
+}
+
 export interface Runtime {
   cwd: string;
   env: Env;
@@ -39,6 +66,29 @@ export interface Runtime {
   router: Router;
   /** Configured model refs left out of routing because their provider's catalog lacks them. */
   skipped: ReadonlySet<string>;
+  /** Fresh model-test results per provider, by model id (see {@link Runtime.probeModels}). */
+  probes: ReadonlyMap<ProviderName, ReadonlyMap<string, ProbeResult>>;
+  /** Refs whose last model test failed; routing leaves them out unless they are asked for. */
+  unhealthy: ReadonlySet<string>;
+  /** The models a test of this provider covers. */
+  probeCandidates(name: ProviderName): string[];
+  /** True when some of the provider's candidates have no fresh test result. */
+  needsProbe(name: ProviderName): boolean;
+  /**
+   * Tests the provider's candidates that have no fresh result (all of them with `refresh`), keeps
+   * the results on disk and updates {@link Runtime.unhealthy}. Undefined without a usable provider.
+   */
+  probeModels(
+    name: ProviderName,
+    opts?: {
+      refresh?: boolean;
+      signal?: AbortSignal;
+      /** Called with `done` 0 before the first request, then after each model. */
+      onProgress?: (done: number, total: number) => void;
+    },
+  ): Promise<ProbeRun | undefined>;
+  /** Drops a provider's test results, e.g. because its key changed. */
+  forgetProbes(name: ProviderName): Promise<void>;
   usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
@@ -68,6 +118,9 @@ export interface RuntimeOptions {
   /** Model the user asked for explicitly; never skipped even if missing from the catalog. */
   modelOverride?: string;
   catalogTimeoutMs?: number;
+  /** Per-model limit of a model test; default {@link PROBE_TIMEOUT_MS}. */
+  probeTimeoutMs?: number;
+  probeConcurrency?: number;
 }
 
 /**
@@ -158,11 +211,40 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     viaGateway,
   );
 
+  // Last model-test results are only read here (no requests): testing happens on /login,
+  // /models and /model, where someone is watching.
+  const probeCache = new ProbeCache(cacheDir(env));
+  const probes = new Map<ProviderName, Map<string, ProbeResult>>();
+  await Promise.all(
+    [...providers.keys()].map(async (name) => {
+      const loaded = await probeCache.load(name);
+      if (loaded.size > 0) probes.set(name, loaded);
+    }),
+  );
+  const unhealthy = new Set<string>();
+  const rebuildUnhealthy = (): void => {
+    unhealthy.clear();
+    for (const [name, results] of probes)
+      for (const r of results.values())
+        if (probeFailed(r) && probeCache.isFresh(r)) unhealthy.add(`${name}:${r.model}`);
+  };
+  rebuildUnhealthy();
+  for (const r of configured) {
+    if (skip.has(r.ref) || !unhealthy.has(r.ref)) continue;
+    const result = probes.get(r.provider)?.get(r.model);
+    warnings.push(
+      `${r.ref} did not answer the last model test${result !== undefined && !result.ok ? ` (${result.reason})` : ''}; skipping it. Run /models test to check again.`,
+    );
+  }
+  const candidatesFor = (name: ProviderName): string[] =>
+    probeCandidates(name, models.get(name), { freeOnly: resolved.freeModelsOnly });
+
   logger.debug('runtime', {
     cwd: opts.cwd,
     providers: [...providers.keys()],
     missingKeys,
     skipped: [...skip],
+    unhealthy: [...unhealthy],
     settingsWarnings: settings.warnings,
   });
 
@@ -179,6 +261,87 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     cwd: opts.cwd,
     env,
     usage,
+    probes,
+    unhealthy,
+    probeCandidates: candidatesFor,
+    needsProbe(name) {
+      if (!providers.has(name)) return false;
+      // a gateway that lists nothing for the provider does not serve it: nothing to test
+      if (viaGateway.has(name) && models.get(name)?.length === 0) return false;
+      const known = probes.get(name);
+      return candidatesFor(name).some((m) => {
+        const r = known?.get(m);
+        return r === undefined || !probeCache.isFresh(r);
+      });
+    },
+    async probeModels(name, probeOpts = {}) {
+      const provider = providers.get(name);
+      if (!provider) return undefined;
+      const candidates = candidatesFor(name);
+      const previous: ReadonlyMap<string, ProbeResult> =
+        probeOpts.refresh === true ? new Map() : (probes.get(name) ?? new Map());
+      const todo = candidates.filter((m) => {
+        const r = previous.get(m);
+        return r === undefined || !probeCache.isFresh(r);
+      });
+      const fresh: ProbeResult[] = [];
+      const run = (unreachable: boolean): ProbeRun => {
+        const summary = summarizeProbe(fresh);
+        const current = new Map(probes.get(name) ?? []);
+        // results that were not kept (bad key, no network) are still this run's answer
+        for (const r of fresh) current.set(r.model, r);
+        const results = candidates
+          .map((m) => current.get(m))
+          .filter((r): r is ProbeResult => r !== undefined);
+        return {
+          provider: name,
+          candidates,
+          results,
+          tested: fresh.length,
+          ok: results.filter((r) => r.ok).length,
+          keyRejected: summary.keyRejected,
+          unreachable: unreachable || summary.unreachable,
+        };
+      };
+      // a sleeping gateway would time out every test while it boots, so wake it first
+      if (todo.length > 0 && viaGateway.has(name) && gatewayLink && !gatewayLink.client.isAwake()) {
+        try {
+          await gatewayLink.client.wake(probeOpts.signal);
+        } catch (err) {
+          if (probeOpts.signal?.aborted === true) throw err;
+          return run(true);
+        }
+      }
+      probeOpts.onProgress?.(0, todo.length);
+      try {
+        await probeModels(provider, todo, {
+          timeoutMs: opts.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
+          concurrency: opts.probeConcurrency ?? PROBE_CONCURRENCY,
+          ...(probeOpts.signal === undefined ? {} : { signal: probeOpts.signal }),
+          onResult: (r, done, total) => {
+            fresh.push(r);
+            probeOpts.onProgress?.(done, total);
+          },
+        });
+      } finally {
+        // keep what finished even when the test was cancelled half way
+        const summary = summarizeProbe(fresh);
+        // a run that only proves the key or the network is bad says nothing about the models
+        if (fresh.length > 0 && !summary.keyRejected && !summary.unreachable) {
+          const merged = new Map(previous);
+          for (const r of fresh) merged.set(r.model, r);
+          probes.set(name, merged);
+          rebuildUnhealthy();
+          await probeCache.save(name, fresh).catch(() => undefined);
+        }
+      }
+      return run(false);
+    },
+    async forgetProbes(name) {
+      probes.delete(name);
+      rebuildUnhealthy();
+      await probeCache.clear(name).catch(() => undefined);
+    },
     async refreshCatalog(name, signal) {
       const provider = providers.get(name);
       if (!provider) return;
@@ -235,7 +398,16 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     missingKeys,
     catalog,
     models,
-    router: new Router({ providers, ledger, settings: resolved, logger, skip, usage, models }),
+    router: new Router({
+      providers,
+      ledger,
+      settings: resolved,
+      logger,
+      skip,
+      unhealthy,
+      usage,
+      models,
+    }),
     skipped: skip,
     warnings: [...settings.warnings, ...startupNotes, ...warnings],
   };

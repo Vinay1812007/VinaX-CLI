@@ -188,3 +188,14 @@ export function formatFailureReport(r: FailureReport): string {
   if (r.actions.length > 0) out.push(`  Try: ${r.actions.join(' · ')}`);
   return out.join('\n');
 }
+
+/**
+ * The tail of a fallback notice when the failed model is now set aside, e.g.
+ * " (nvidia:openai/gpt-oss-20b is skipped for the next 10 min)", so it is clear the next turn
+ * will not wait on it again. Empty when it is not.
+ */
+export function cooldownNote(ev: { from: ModelRef; cooldownMs?: number }): string {
+  if (ev.cooldownMs === undefined) return '';
+  const minutes = Math.max(1, Math.round(ev.cooldownMs / 60_000));
+  return ` (${ev.from.provider}:${ev.from.model} is skipped for the next ${String(minutes)} min)`;
+}

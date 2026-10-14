@@ -1,4 +1,5 @@
 import {
+  cooldownNote,
   formatFailureReport,
   attachMentions,
   costOf,
@@ -125,7 +126,7 @@ class Output {
         const rec = { from: formatModelRef(ev.from), to: formatModelRef(ev.to), reason: ev.reason };
         this.fallbacks.push(rec);
         if (this.format === 'stream-json') this.line({ type: 'notice', kind: 'fallback', ...rec });
-        this.notice(`↪ ${ev.reason} — switched to ${rec.to}`);
+        this.notice(`↪ ${ev.reason} — switched to ${rec.to}${cooldownNote(ev)}`);
         return;
       }
       case 'wait':

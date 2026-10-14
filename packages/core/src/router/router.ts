@@ -31,7 +31,11 @@ export type RouterEvent =
   | { type: 'attempt'; ref: ModelRef }
   | { type: 'wait'; ref: ModelRef; ms: number; reason: string }
   | { type: 'retry'; ref: ModelRef; attempt: number; delayMs: number; reason: string }
-  | { type: 'fallback'; from: ModelRef; to: ModelRef; reason: string }
+  /**
+   * `cooldownMs` is set when `from` timed out or was unavailable: later requests skip it for that
+   * long, so the session stays on the model that answered.
+   */
+  | { type: 'fallback'; from: ModelRef; to: ModelRef; reason: string; cooldownMs?: number }
   /** Progress from the provider that is not output (an empty text clears it). */
   | { type: 'status'; ref: ModelRef; text: string }
   | { type: 'text'; text: string }
@@ -51,7 +55,23 @@ export interface LinkFailure {
   reason: string;
   /** Why the link failed: a provider error kind, no key, or the local rate-limit ledger. */
   kind: ProviderErrorKind | 'no_key' | 'local_limit';
+  /** Set when the model is now skipped for a while (see {@link COOLDOWN_KINDS}). */
+  cooldownMs?: number;
 }
+
+/** How long a model that timed out or was unavailable is kept out of the way. */
+export const MODEL_COOLDOWN_MS = 10 * 60_000;
+
+/**
+ * Failures that say the model itself is not answering right now. A rate limit or a bad request
+ * says nothing of the sort, so those models are tried again on the next turn as usual.
+ */
+const COOLDOWN_KINDS: ReadonlySet<LinkFailure['kind']> = new Set([
+  'timeout',
+  'unavailable',
+  'not_found',
+  'server',
+]);
 
 export class AllModelsFailedError extends Error {
   constructor(readonly failures: readonly LinkFailure[]) {
@@ -74,6 +94,54 @@ export class StreamInterruptedError extends Error {
   ) {
     super(`${formatModelRef(ref)} stopped mid-response: ${cause.message}`);
     this.name = 'StreamInterruptedError';
+  }
+}
+
+/** `<provider>:<model>` for aliases and domains too; invalid refs are left for the chain to reject. */
+function canonicalRef(ref: string): string {
+  try {
+    return formatModelRef(parseModelRef(ref));
+  } catch {
+    return ref;
+  }
+}
+
+/**
+ * Aborts a request that has produced nothing at all after `ms`: a hung endpoint otherwise holds
+ * the turn for the whole request timeout before the chain can fall back. Paused while the
+ * provider reports progress of its own (a waking gateway), and stopped by the first output.
+ */
+class FirstTokenWatch {
+  private readonly controller = new AbortController();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private live = true;
+  fired = false;
+
+  constructor(readonly ms: number) {
+    this.arm();
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  arm(): void {
+    if (!this.live) return;
+    this.pause();
+    this.timer = setTimeout(() => {
+      this.fired = true;
+      this.controller.abort();
+    }, this.ms);
+  }
+
+  pause(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  stop(): void {
+    this.live = false;
+    this.pause();
   }
 }
 
@@ -116,6 +184,13 @@ export interface RouterDeps {
   logger?: Logger;
   /** Model refs to leave out, e.g. ones missing from the provider catalog. */
   skip?: ReadonlySet<string>;
+  /**
+   * Model refs that failed their last model test. Left out like `skip`, except a model the
+   * request names explicitly (`--model`, `/model`) — and never down to an empty chain.
+   */
+  unhealthy?: ReadonlySet<string>;
+  /** How long a model that timed out is moved behind the others; default {@link MODEL_COOLDOWN_MS}. */
+  cooldownMs?: number;
   /** Counts requests and tokens for `/usage`. */
   usage?: UsageTracker;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -133,12 +208,46 @@ export class Router {
   private readonly random: () => number;
   private readonly now: () => number;
   private readonly logger: Logger;
+  /** Model ref → when it may lead the chain again (it timed out or was unavailable). */
+  private readonly cooling = new Map<string, number>();
 
   constructor(private readonly deps: RouterDeps) {
     this.sleep = deps.sleep ?? defaultSleep;
     this.random = deps.random ?? Math.random;
     this.now = deps.now ?? Date.now;
     this.logger = deps.logger ?? noopLogger;
+  }
+
+  /** Until when `ref` is moved behind the other models, if it is. */
+  coolingUntil(ref: string): number | undefined {
+    const until = this.cooling.get(ref);
+    if (until === undefined) return undefined;
+    if (until > this.now()) return until;
+    this.cooling.delete(ref);
+    return undefined;
+  }
+
+  /** Lets a model lead again straight away, e.g. because the user picked it by name. */
+  clearCooldown(ref?: string): void {
+    if (ref === undefined) this.cooling.clear();
+    else this.cooling.delete(ref);
+  }
+
+  /**
+   * Drops models that failed their last test (unless named explicitly) and moves models in
+   * cooldown to the back, where they are still tried if everything else fails.
+   */
+  private arrange(refs: readonly string[], explicit: string | undefined): string[] {
+    const unhealthy = this.deps.unhealthy;
+    const named = explicit === undefined ? undefined : canonicalRef(explicit);
+    const usable =
+      unhealthy === undefined
+        ? [...refs]
+        : refs.filter((r) => canonicalRef(r) === named || !unhealthy.has(canonicalRef(r)));
+    // every model failing its test more likely means a bad network moment than dead models
+    const list = usable.length > 0 ? usable : [...refs];
+    const ready = list.filter((r) => this.coolingUntil(canonicalRef(r)) === undefined);
+    return [...ready, ...list.filter((r) => !ready.includes(r))];
   }
 
   chain(
@@ -161,8 +270,10 @@ export class Router {
       // this way is what makes the preference global: `chatModels` only sorts free-first inside a
       // single provider, so concatenating providers would otherwise put one provider's paid models
       // ahead of the next provider's free ones.
-      const candidates = [...new Set([...preferred, ...free, ...paid])]
-        .filter((r) => !this.deps.skip?.has(r))
+      const candidates = this.arrange(
+        [...new Set([...preferred, ...free, ...paid])].filter((r) => !this.deps.skip?.has(r)),
+        undefined,
+      )
         .map(parseModelRef)
         .filter(
           (r) =>
@@ -175,7 +286,7 @@ export class Router {
     const head = override ?? s.model;
     const refs = lead === undefined ? [head, ...fallbacks] : [lead, head, ...fallbacks];
     const unique = [...new Set(refs)].filter((r) => !(this.deps.skip?.has(r) ?? false));
-    return unique.map(parseModelRef);
+    return this.arrange(unique, override).map(parseModelRef);
   }
 
   private retryDelay(err: ProviderError, attempt: number, isLast: boolean): number | undefined {
@@ -236,6 +347,9 @@ export class Router {
           from: pendingFallback.ref,
           to: ref,
           reason: pendingFallback.reason,
+          ...(pendingFallback.cooldownMs === undefined
+            ? {}
+            : { cooldownMs: pendingFallback.cooldownMs }),
         };
       }
       if (decision.waitMs > 0) {
@@ -251,12 +365,13 @@ export class Router {
         this.deps.usage?.recordRequest(ref);
         let emitted = false;
         let usage: Usage | undefined;
+        const watch = new FirstTokenWatch(settings.router.firstTokenTimeoutMs);
         try {
           const prepared = prepare(ref);
           const deltas = provider.stream({
             model: ref.model,
             messages: prepared.messages,
-            signal: req.signal,
+            signal: AbortSignal.any([req.signal, watch.signal]),
             ...(prepared.tools === undefined ? {} : { tools: prepared.tools }),
             ...(req.maxTokens === undefined ? {} : { maxTokens: req.maxTokens }),
             ...(req.reasoningEffort === undefined ? {} : { reasoningEffort: req.reasoningEffort }),
@@ -267,9 +382,13 @@ export class Router {
               continue;
             }
             if (d.type === 'status') {
+              // waiting on something else (a waking gateway) is not the model stalling
+              if (d.text === '') watch.arm();
+              else watch.pause();
               yield { type: 'status', ref, text: d.text };
               continue;
             }
+            watch.stop();
             if (d.type === 'reasoning') {
               yield { type: 'reasoning', ref, text: d.text };
               continue;
@@ -278,10 +397,17 @@ export class Router {
             yield d;
           }
           if (usage) this.deps.usage?.recordTokens(ref, usage);
+          this.cooling.delete(formatModelRef(ref));
           yield { type: 'done', ref, usage };
           return;
         } catch (raw) {
-          const err = toProviderError(raw, ref.provider, this.now());
+          const err = watch.fired
+            ? new ProviderError(
+                'timeout',
+                `${providerLabel(ref.provider)} sent nothing for ${String(Math.round(watch.ms / 1000))}s`,
+                ref.provider,
+              )
+            : toProviderError(raw, ref.provider, this.now());
           if (err.kind === 'aborted' || isAborted(req.signal)) throw new AbortError();
           if (emitted) throw new StreamInterruptedError(ref, err);
           if (
@@ -312,10 +438,22 @@ export class Router {
             await this.sleep(delay, req.signal);
             continue;
           }
-          const failure: LinkFailure = { ref, reason: err.message, kind: err.kind };
+          const cooldownMs = COOLDOWN_KINDS.has(err.kind)
+            ? (this.deps.cooldownMs ?? MODEL_COOLDOWN_MS)
+            : undefined;
+          if (cooldownMs !== undefined)
+            this.cooling.set(formatModelRef(ref), this.now() + cooldownMs);
+          const failure: LinkFailure = {
+            ref,
+            reason: err.message,
+            kind: err.kind,
+            ...(cooldownMs === undefined ? {} : { cooldownMs }),
+          };
           failures.push(failure);
           pendingFallback = failure;
           break;
+        } finally {
+          watch.stop();
         }
       }
     }

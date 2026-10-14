@@ -31,6 +31,7 @@ import {
   usageTotals,
   type ModelUsage,
   type Price,
+  type ProbeRun,
   type ProviderName,
   type ProviderUsage,
   type UsageRollup,
@@ -40,7 +41,15 @@ import { openInBrowser } from '../../open-url.js';
 import { compareVersions, detectInstall, latestRelease } from '../../update.js';
 import { notesMarkdown, readChangelog, releaseNotes, releaseUrl } from '../../updates.js';
 import { VERSION } from '../../version.js';
-import { gatewayLacks, modelSelectItems, providerSummaries } from '../model-items.js';
+import {
+  gatewayLacks,
+  modelSelectItems,
+  providersToTest,
+  providerSummaries,
+  replacementFor,
+  testSummary,
+  testSummaryNotice,
+} from '../model-items.js';
 import { sessionItems } from '../sessions.js';
 import {
   MAZE_LABELS,
@@ -165,6 +174,8 @@ function switchModel(ctx: CommandContext, input: string): void {
   const { provider } = parseModelRef(ref);
   ctx.setup.agent.setModel(ref);
   ctx.session.record({ type: 'model', model: ref });
+  // picking a model by name is a request to try it, even if it recently timed out
+  ctx.runtime.router.clearCooldown(ref);
   const alias = modelAlias(ref);
   const warnings: string[] = [];
   if (!ctx.runtime.providers.has(provider))
@@ -177,13 +188,51 @@ function switchModel(ctx: CommandContext, input: string): void {
     );
   else if (ctx.runtime.skipped.has(ref))
     warnings.push(`it is not in ${providerLabel(provider)}'s model list, so it will be skipped`);
+  else if (ctx.runtime.unhealthy.has(ref))
+    warnings.push(
+      'it did not answer the last model test (VinaX tries it anyway because you chose it; /models test checks again)',
+    );
   ctx.notice(
     warnings.length === 0 ? 'info' : 'warning',
     `Using ${ref}${alias === undefined ? '' : ` (${alias})`} for this session${warnings.length === 0 ? '' : `, but ${warnings.join(' and ')}`}. To make it the default: vinax config set model ${alias ?? ref}`,
   );
 }
 
+/**
+ * Tests the models of `providers` one provider at a time, with a progress line, and reports each
+ * provider's tally. `refresh` retests everything; otherwise only models without a fresh result
+ * are asked. Stops early when the user cancels with Esc.
+ */
+async function testModels(
+  ctx: CommandContext,
+  providers: readonly ProviderName[],
+  opts: { refresh?: boolean; report?: boolean } = {},
+): Promise<ProbeRun[]> {
+  const runs: ProbeRun[] = [];
+  const freeOnly = ctx.runtime.settings.resolved.freeModelsOnly;
+  for (const provider of providers) {
+    const kind = `${freeOnly ? 'free ' : ''}${providerLabel(provider)} models`;
+    const run = await ctx.busy(`Testing ${kind}…`, (signal, progress) =>
+      ctx.runtime.probeModels(provider, {
+        ...(opts.refresh === true ? { refresh: true } : {}),
+        signal,
+        onProgress: (done, total) => {
+          progress(`Testing ${String(total)} ${kind}… ${String(done)}/${String(total)}`);
+        },
+      }),
+    );
+    if (run === undefined) break;
+    runs.push(run);
+    if (run.tested === 0 || opts.report === false) continue;
+    const summary = testSummaryNotice(run, freeOnly);
+    if (summary) ctx.notice(summary.level, summary.text);
+  }
+  return runs;
+}
+
 async function pickModel(ctx: CommandContext, title: string): Promise<string | undefined> {
+  // lists are built from test results, so models nobody has tried yet are tried first
+  await testModels(ctx, providersToTest(ctx.runtime, false));
   const current = ctx.setup.agent.model ?? ctx.runtime.settings.resolved.model;
   const items = [
     {
@@ -221,10 +270,18 @@ const model: SlashCommand = {
 
 const models: SlashCommand = {
   name: 'models',
-  description: 'Browse providers, models, aliases and the fallback order',
+  argumentHint: '[test]',
+  description: 'Browse providers, models that answer, aliases and the fallback order',
   source: 'builtin',
   async run(ctx) {
     const { runtime } = ctx;
+    const retest = /^(test|refresh)$/i.test(ctx.args);
+    if (ctx.args !== '' && !retest) {
+      ctx.notice('error', `Unknown /models option "${ctx.args}". Use /models or /models test.`);
+      return;
+    }
+    // `test` asks every model again; otherwise only models without a recent result are asked
+    await testModels(ctx, providersToTest(runtime, retest), { refresh: retest });
     const r = runtime.settings.resolved;
     const current = ctx.setup.agent.model ?? r.model;
     const currentRef = parseModelRef(current);
@@ -249,12 +306,15 @@ const models: SlashCommand = {
             ? ' · catalog unavailable'
             : ''
           : ` · ${plural(p.catalogSize, 'model')} in catalog`;
+      const tested = p.configured && !lacking ? testSummary(runtime, p.provider) : undefined;
       lines.push(
-        `- ${p.configured && !lacking ? '✔' : '○'} **${providerLabel(p.provider)}** _${providerHost(p.provider)}_ — ${state}${size}`,
+        `- ${p.configured && !lacking ? '✔' : '○'} **${providerLabel(p.provider)}** _${providerHost(p.provider)}_ — ${state}${size}${tested === undefined ? '' : ` · ${tested}`}`,
       );
     }
     lines.push('', '**Fallback order**');
     const chain = [...new Set([current, ...r.fallbackChain])];
+    // a model chosen with /model or --model is tried even when its test failed
+    const chosen = ctx.setup.agent.modelSelection;
     for (const [i, ref] of chain.entries()) {
       const { provider } = parseModelRef(ref);
       const status = !runtime.providers.has(provider)
@@ -263,7 +323,13 @@ const models: SlashCommand = {
           ? 'skipped: not served by your gateway'
           : runtime.skipped.has(ref)
             ? 'skipped: not in catalog'
-            : 'ready';
+            : runtime.unhealthy.has(ref)
+              ? ref === chosen
+                ? 'did not answer the last test (tried anyway: you chose it)'
+                : 'skipped: did not answer the last test'
+              : runtime.router.coolingUntil(ref) !== undefined
+                ? 'tried last for now: it did not answer recently'
+                : 'ready';
       const a = modelAlias(ref);
       lines.push(`${String(i + 1)}. \`${ref}\`${a === undefined ? '' : ` (${a})`} — ${status}`);
     }
@@ -280,8 +346,9 @@ const models: SlashCommand = {
     lines.push(
       '',
       r.freeModelsOnly
-        ? 'Listing free and free-tier models only. `vinax config set freeModelsOnly false` lists paid ones too; `/model <provider:model>` still accepts any model by name.'
-        : 'Listing every model, free and paid. `vinax config set freeModelsOnly true` hides the paid ones.',
+        ? 'Listing free and free-tier models that answered a test request. `vinax config set freeModelsOnly false` tests and lists paid ones too; `/model <provider:model>` still accepts any model by name.'
+        : 'Listing every model that answered a test request, free and paid. `vinax config set freeModelsOnly true` hides the paid ones.',
+      'Results are kept for a day (failures for 6 hours). `/models test` tests every model again.',
       '',
       'Change the default with `vinax config set model <ref|alias>` and the order with `fallbackChain` in settings. `/model auto` prefers free models and falls back on its own.',
     );
@@ -878,14 +945,33 @@ const login: SlashCommand = {
     }
     const where = await (await openSecretStore(ctx.runtime.env)).set(provider, key);
     ctx.runtime.setProviderKey(provider, key);
+    // test results earned with the old key (or a gateway) say nothing about this one
+    await ctx.runtime.forgetProbes(provider);
     // the old list may have come from a gateway that did not serve this provider
     await ctx.busy(`Loading ${providerLabel(provider)} models`, (signal) =>
       ctx.runtime.refreshCatalog(provider, signal),
     );
+    const [run] = await testModels(ctx, [provider], { report: false });
+    // any model answering proves the key, even when the quick check timed out
+    const unverified = !check.ok && (run === undefined || run.ok === 0) ? check.reason : undefined;
     ctx.notice(
-      check.ok ? 'info' : 'warning',
-      `Saved the ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}${check.ok ? '' : ` (could not verify it: ${check.reason})`}.`,
+      unverified === undefined ? 'info' : 'warning',
+      `Saved the ${providerLabel(provider)} key to the ${where === 'keychain' ? 'OS keychain' : 'credentials file'}${unverified === undefined ? '' : ` (could not verify it: ${unverified})`}.`,
     );
+    if (run === undefined) return;
+    const summary = testSummaryNotice(run, ctx.runtime.settings.resolved.freeModelsOnly);
+    if (summary) ctx.notice(summary.level, summary.text);
+    if (ctx.setup.agent.modelSelection === 'auto') return;
+    const current = ctx.setup.agent.model ?? ctx.runtime.settings.resolved.model;
+    const next = replacementFor(run, current);
+    if (next === undefined) return;
+    const { model: currentModel } = parseModelRef(current);
+    const failed = run.results.find((r) => r.model === currentModel);
+    ctx.notice(
+      'warning',
+      `${current} did not answer the test${failed !== undefined && !failed.ok ? ` (${failed.reason})` : ''}, so this session switches to ${next}.`,
+    );
+    switchModel(ctx, next);
   },
 };
 
