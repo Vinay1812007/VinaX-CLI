@@ -324,7 +324,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
           },
         });
       } finally {
-        // keep what finished even when the test was cancelled half way
+        // keep what finished even when the test was cancelled half way, in candidate order
+        // (results arrive in completion order, which varies with network speed)
+        fresh.sort((a, b) => todo.indexOf(a.model) - todo.indexOf(b.model));
         const summary = summarizeProbe(fresh);
         // a run that only proves the key or the network is bad says nothing about the models
         if (fresh.length > 0 && !summary.keyRejected && !summary.unreachable) {
