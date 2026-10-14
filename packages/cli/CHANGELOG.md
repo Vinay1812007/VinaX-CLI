@@ -1,5 +1,10 @@
 # @sirimillavinay/vinax
 
+## 1.0.7
+
+- fix: save model test results in candidate order, not completion order
+- fix: list only models that answer, and stop hanging on dead ones
+
 ## 1.0.6
 
 - test: expect the plugin root as written on Windows
