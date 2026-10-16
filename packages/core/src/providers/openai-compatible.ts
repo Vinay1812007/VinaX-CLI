@@ -1,5 +1,8 @@
 import OpenAI from 'openai';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionContentPartImage,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions';
 import { z } from 'zod';
 import type { Logger } from '../log/logger.js';
 import { chatModels } from './chat-models.js';
@@ -95,15 +98,20 @@ function toWire(m: ChatMessage): ChatCompletionMessageParam {
     case 'tool':
       return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
     case 'user':
-      return m.images && m.images.length > 0
+      return (m.images && m.images.length > 0) || (m.videos && m.videos.length > 0)
         ? {
             role: 'user',
             content: [
               { type: 'text', text: m.content },
-              ...m.images.map((img) => ({
+              ...(m.images ?? []).map((img) => ({
                 type: 'image_url' as const,
                 image_url: { url: `data:${img.mediaType};base64,${img.data}` },
               })),
+              // `video_url` is an extension (NVIDIA, vLLM) the SDK's types do not know
+              ...((m.videos ?? []).map((v) => ({
+                type: 'video_url',
+                video_url: { url: `data:${v.mediaType};base64,${v.data}` },
+              })) as unknown as ChatCompletionContentPartImage[]),
             ],
           }
         : { role: 'user', content: m.content };

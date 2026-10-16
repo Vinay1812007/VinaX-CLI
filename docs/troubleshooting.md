@@ -48,7 +48,11 @@ Standalone binaries and systems without a keychain store keys in `~/.vinax/crede
 
 ### The model says it can't see images
 
-gpt-oss and other text-only models can't see images. Attach the image as an image (drag the file in, use `@shot.png`, or copy it and press `Ctrl+V`) rather than describing its path; VinaX then sends that turn to a [vision model](/models#vision-models). If the notice says no vision model is available, add a key for a provider with one (NVIDIA or OpenRouter) or set `visionModel`.
+gpt-oss and other text-only models can't see images. Attach the image as an image (drag the file in, use `@shot.png`, or copy it and press `Ctrl+V`) rather than describing its path; VinaX then has a [vision model](/models#vision-models) read it and passes the description on. If the notice says no vision model is available, add a key for a provider with one (NVIDIA or OpenRouter) or set `visionModel`.
+
+### VinaX can't read a screen recording
+
+Without a model that takes video, recordings are read as frames sampled with ffmpeg. Install it (`brew install ffmpeg` on macOS, `sudo apt install ffmpeg` on Debian/Ubuntu, `winget install ffmpeg` on Windows) and send the prompt again. Recordings over 50 MB are always sampled.
 
 If VinaX says it can't read a screenshot, macOS is blocking the folder it's in (new screenshots first land in a private `TemporaryItems` folder). Press `Ctrl+Shift+Cmd+4` to copy a screenshot to the clipboard and `Ctrl+V` in VinaX, or save it to your Desktop first.
 

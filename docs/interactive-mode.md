@@ -120,24 +120,25 @@ See [Permissions](/permissions#modes) for the details.
 - **Pastes.** A paste of 8+ lines or 800+ characters collapses to `[Pasted text #1 +42 lines]`. The full text is still sent.
 - **Vim mode.** `/vim` turns on vim key bindings for the prompt: `hjkl w b e 0 ^ $ x X D C S dd cc dw cw` and `i a I A o O u`. The choice is saved.
 
-## Images
+## Images and screen recordings {#images}
 
-VinaX can send screenshots and other images to models that can see them:
+VinaX can work from screenshots, other images and screen recordings:
 
 - **Drag a file** into the terminal (the path is pasted with escaped spaces), or paste or type its path, quoted or absolute.
-- **`@shot.png`** attaches an image in the project.
+- **`@shot.png`** or **`@bug.mov`** attaches an image or recording in the project.
 - **`Ctrl+V`** pastes an image from the clipboard. On macOS, `Ctrl+Shift+Cmd+4` copies a screenshot to the clipboard. `Cmd+V` still pastes text. This uses `osascript` on macOS, `wl-paste` or `xclip` on Linux and PowerShell on Windows.
 
-Each image becomes an `[Image #1]` chip in the prompt, and a note such as `Attached [Image #1] shot.png (84 KB)` appears. PNG, JPEG, GIF and WebP up to about 3.75 MB work; on macOS larger images are shrunk with `sips` first.
+Each image becomes an `[Image #1]` chip in the prompt and each recording a `[Video #1]` chip, and a note such as `Attached [Image #1] shot.png (84 KB)` appears. PNG, JPEG, GIF and WebP images up to about 3.75 MB work; on macOS larger images are shrunk with `sips` first. Recordings can be MP4, MOV, M4V, WebM, MKV or AVI.
 
-gpt-oss models are text-only, which is why they used to answer that they can't see images. Now a prompt with images goes to a model that can see them, and a notice says which:
+**Your model stays in charge.** If the model you are working with can see images, it gets them directly. If it can't (gpt-oss and most other defaults are text-only), a [vision model](/models#vision-models) reads them for it: VinaX sends the image together with your request and a short recap of the conversation, the vision model transcribes all visible text (code, errors, terminal output, UI labels) and describes the layout and what matters for the task, and your model gets that description and carries on with its own tools. A notice says who is looking, for example `Reading [Image #1] with nvidia:meta/llama-3.2-90b-vision-instruct (nvidia:openai/gpt-oss-20b can't see images).`
 
-1. the `visionModel` [setting](/settings), if set
-2. otherwise a vision model already in your fallback chain
-3. otherwise a vision model VinaX knows on a provider you use (NVIDIA's `meta/llama-3.2-90b-vision-instruct` or `meta/llama-3.2-11b-vision-instruct`)
-4. otherwise a vision model from a provider's catalog (OpenRouter marks them; free ones first)
+The description is saved with the message, so later turns, `/resume` and compaction keep it, and the same image is never described twice in a session. A vision model you switch to later still gets the image itself.
 
-Later turns go back to your normal model, which gets a short note that an image was attached instead of the image itself. If no vision model is available, a warning says so and the model only sees the file name.
+**Screen recordings** are always read this way. A model marked as taking video (NVIDIA's Nemotron omni and Cosmos reasoning models) gets recordings up to 50 MB whole. Otherwise VinaX samples up to 12 frames (about one every 2 seconds, at most 1280 px) with [ffmpeg](https://ffmpeg.org) and a vision model describes them in order, with timestamps. Without ffmpeg, a warning says how to install it (`brew install ffmpeg` on macOS).
+
+The model can also look at images and recordings itself: the Read tool on `shot.png` or `rec.mov` returns a description written for the task at hand. Files mentioned with `@` that can't be attached, such as binaries or text over 2 MB, are named in a warning instead of being dropped silently.
+
+If no vision model is available, a warning says so and the model only sees the file name.
 
 macOS keeps some folders private, such as the `TemporaryItems` folder where new screenshots first land. If VinaX can't read a file there, it says so and suggests copying the screenshot to the clipboard and pressing `Ctrl+V`.
 

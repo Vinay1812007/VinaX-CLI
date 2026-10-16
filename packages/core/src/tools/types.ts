@@ -63,6 +63,14 @@ export interface ToolContext {
   approvePlan?: (plan: string, signal: AbortSignal) => Promise<PlanDecision>;
   /** The session's host, so a sub-agent (Task) can ask for approvals the same way. */
   host?: AgentHost;
+  /**
+   * Has a model that can see describe an image or screen recording, with the agent's task in
+   * mind (the Read tool on media files). Absent when nothing can read media.
+   */
+  readMedia?: (
+    file: string,
+    signal: AbortSignal,
+  ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
   /** Adds tokens used on the task's behalf (by a sub-agent) to the task's usage. */
   addUsage?: (byModel: Readonly<Record<string, ModelUsage>>) => void;
 }

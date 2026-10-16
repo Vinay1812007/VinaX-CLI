@@ -319,7 +319,7 @@ export async function runPrint(
   out.sessionId = opened.writer.id;
   out.init(runtime.router.chain('main', opts.model).map(formatModelRef), io.cwd, mode);
   try {
-    // image paths (and @image.png) in the prompt are attached as images
+    // image and recording paths (and @image.png) in the prompt are attached
     const withImages = await extractImages(prompt, io.cwd);
     for (const err of withImages.errors) io.stderr.write(`⚠ ${err}\n`);
     const withFiles = await attachMentions(withImages.text, {
@@ -327,6 +327,7 @@ export async function runPrint(
       workspace: setup.workspace,
       reads: setup.reads,
     });
+    for (const note of withFiles.skipped) io.stderr.write(`⚠ ${note}\n`);
     const outcome = await setup.agent.run(withFiles.prompt, {
       signal: ac.signal,
       host: headlessHost(runtime),
@@ -334,6 +335,7 @@ export async function runPrint(
         out.event(ev);
       },
       ...(withImages.images.length === 0 ? {} : { images: withImages.images }),
+      ...(withImages.videos.length === 0 ? {} : { videos: withImages.videos }),
     });
     const elapsed = Date.now() - started;
     switch (outcome.status) {

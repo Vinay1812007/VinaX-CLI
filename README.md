@@ -12,7 +12,7 @@ VinaX (`vinax`) is an open-source AI coding agent for the terminal. It runs on m
 > **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
 > mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
-> sub-agents, skills, images and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
+> sub-agents, skills, images and screen recordings (read by a vision model for text-only models) and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
 > through an optional shared [gateway](docs/gateway.md).
 >
 > 📖 **Documentation: https://vinay1812007.github.io/VinaX-CLI/**

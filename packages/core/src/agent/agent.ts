@@ -5,12 +5,21 @@ import {
   parseModelRef,
   type ChatMessage,
   type ImageAttachment,
+  type MediaNote,
   type ModelRef,
   type ReasoningEffort,
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
 import { estimateTokens } from '../context/tokens.js';
+import {
+  MEDIA_NOTES_HEADER,
+  NO_VISION_MODEL,
+  renderMediaNotes,
+  type MediaReader,
+  type MediaTask,
+  type VideoFile,
+} from '../files/media.js';
 import { AbortError } from '../router/backoff.js';
 import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
@@ -135,6 +144,11 @@ export interface AgentDeps {
   supportsVision?: (ref: ModelRef) => boolean;
   /** Vision-capable models, best first, to answer turns that carry images. */
   visionModels?: () => string[];
+  /**
+   * Reads images and recordings for a working model that cannot see them: a capable model
+   * describes them with this agent's task in mind, and the description is passed on.
+   */
+  media?: MediaReader;
   /** The settings' main model, used when no model was chosen for the session. */
   defaultModel?: () => string;
   /** Model calls allowed per user turn. */
@@ -212,6 +226,8 @@ interface RunOptions {
   fallbacks?: readonly string[];
   /** Images attached to the prompt (pasted, dragged in or `@image.png`). */
   images?: readonly ImageAttachment[];
+  /** Screen recordings and other videos named in the prompt (always described, never sent). */
+  videos?: readonly VideoFile[];
 }
 
 type StepOptions = RunOptions & { task: TaskState };
@@ -462,7 +478,7 @@ export class Agent {
     };
     if (runOpts.signal.aborted) inner.abort();
     else runOpts.signal.addEventListener('abort', relay, { once: true });
-    let opts: StepOptions = { ...runOpts, signal: inner.signal, task };
+    const opts: StepOptions = { ...runOpts, signal: inner.signal, task };
 
     const turn = ++this.turnCounter;
     this.taskStart = this.messages.length;
@@ -472,16 +488,14 @@ export class Agent {
       this.deps.recorder?.record({ type: 'turn', ...mark });
       this.deps.checkpoints.beginTurn(turn);
     }
-    this.push(
-      opts.images && opts.images.length > 0
-        ? { role: 'user', content, images: [...opts.images] }
-        : { role: 'user', content },
-    );
-    const visionModel = this.visionModelFor(opts);
-    if (visionModel !== undefined)
-      opts = { ...opts, model: visionModel.ref, fallbacks: visionModel.fallbacks };
-    if (visionModel?.notice !== undefined)
-      opts.onEvent({ type: 'notice', level: 'info', text: visionModel.notice });
+    this.currentPrompt = prompt;
+    const mediaNotes = await this.readAttachments(opts);
+    this.push({
+      role: 'user',
+      content,
+      ...(opts.images && opts.images.length > 0 ? { images: [...opts.images] } : {}),
+      ...(mediaNotes.length > 0 ? { mediaNotes } : {}),
+    });
     let stopRetries = 0;
     const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
     try {
@@ -544,45 +558,140 @@ export class Agent {
     }
   }
 
-  /** The conversation as `ref` can take it: images become a short note for text-only models. */
+  /**
+   * The conversation as `ref` can take it. Vision models get the images themselves; text-only
+   * models get what a vision model described (or, failing that, a short note). Descriptions of
+   * recordings go to every model.
+   */
   private forModel(ref: ModelRef): ChatMessage[] {
     const sees = this.deps.supportsVision?.(ref) ?? false;
-    if (sees) return this.messages;
     return this.messages.map((m) => {
-      if (m.role !== 'user' || m.images === undefined || m.images.length === 0) return m;
-      const names = m.images.map((i, n) => i.name ?? `image ${String(n + 1)}`).join(', ');
+      if (m.role !== 'user') return m;
+      const images = m.images ?? [];
+      const notes = m.mediaNotes ?? [];
+      if (notes.length === 0 && (sees || images.length === 0)) return m;
+      const shown = sees ? notes.filter((n) => n.kind !== 'image') : notes;
+      const parts = [m.content];
+      if (!sees && images.length > 0 && !notes.some((n) => n.kind === 'image')) {
+        const names = images.map((i, n) => i.name ?? `image ${String(n + 1)}`).join(', ');
+        parts.push(
+          `[${String(images.length)} image(s) were attached (${names}), but this model cannot see images.]`,
+        );
+      }
+      if (shown.length > 0) parts.push(`${MEDIA_NOTES_HEADER}\n\n${renderMediaNotes(shown)}`);
       return {
         role: 'user',
-        content: `${m.content}\n\n[${String(m.images.length)} image(s) were attached (${names}), but this model cannot see images.]`,
+        content: parts.join('\n\n'),
+        ...(sees && images.length > 0 ? { images } : {}),
       };
     });
   }
 
-  /**
-   * When the prompt carries images and the model in use cannot see them, the turn goes to a
-   * vision-capable model instead (and says so).
-   */
-  private visionModelFor(
-    opts: RunOptions,
-  ): { ref: string; fallbacks: string[]; notice?: string } | undefined {
-    if (opts.images === undefined || opts.images.length === 0) return undefined;
-    const current = opts.model ?? this.model ?? this.deps.defaultModel?.();
-    if (current !== undefined && (this.deps.supportsVision?.(parseModelRef(current)) ?? false))
-      return undefined;
-    const [vision, ...others] = this.deps.visionModels?.() ?? [];
-    if (vision === undefined) {
-      opts.onEvent({
-        type: 'notice',
-        level: 'warning',
-        text: 'No vision-capable model is available, so the model only sees the image file names. Set `visionModel` in settings, or add a key for a provider with vision models.',
-      });
-      return undefined;
+  /** The prompt of the task in progress, for models that read media on the agent's behalf. */
+  private currentPrompt = '';
+
+  /** The last few turns, briefly, so a model reading media knows what the agent is doing. */
+  private recap(): string {
+    const lines: string[] = [];
+    for (const m of this.messages.slice(-8)) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const text = m.content
+        .replace(
+          /<conversation-summary>[\s\S]*?<\/conversation-summary>/g,
+          '[earlier conversation]',
+        )
+        .replace(/\s+/g, ' ')
+        .trim();
+      const calls =
+        m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0
+          ? ` (used ${m.toolCalls.map((c) => c.name).join(', ')})`
+          : '';
+      if (text === '' && calls === '') continue;
+      const short = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+      lines.push(`${m.role === 'user' ? 'User' : 'Agent'}: ${short}${calls}`);
     }
+    return lines.join('\n');
+  }
+
+  private mediaTask(goal?: string): MediaTask {
     return {
-      ref: vision,
-      fallbacks: others,
-      notice: `Using ${vision} to look at the image${opts.images.length === 1 ? '' : 's'}${current === undefined ? '' : ` (${current} cannot see images)`}.`,
+      prompt: this.currentPrompt,
+      recap: this.recap(),
+      ...(goal === undefined ? {} : { goal }),
     };
+  }
+
+  /**
+   * Has a capable model read what the prompt carries that the working model cannot: images
+   * when it cannot see, recordings always. The working model stays in charge of the turn.
+   */
+  private async readAttachments(opts: StepOptions): Promise<MediaNote[]> {
+    const images = opts.images ?? [];
+    const videos = opts.videos ?? [];
+    if (images.length === 0 && videos.length === 0) return [];
+    const notice = (level: 'info' | 'warning', text: string): void => {
+      opts.onEvent({ type: 'notice', level, text });
+    };
+    const selected = opts.model ?? this.model ?? this.deps.defaultModel?.();
+    let current: string | undefined;
+    try {
+      current = selected === undefined ? undefined : formatModelRef(parseModelRef(selected));
+    } catch {
+      current = undefined;
+    }
+    const sees =
+      current !== undefined && (this.deps.supportsVision?.(parseModelRef(current)) ?? false);
+    const media = this.deps.media;
+    const notes: MediaNote[] = [];
+    if (images.length > 0 && !sees) {
+      if (media === undefined) notice('warning', NO_VISION_MODEL);
+      else {
+        const r = await media.describeImages(images, {
+          task: this.mediaTask(),
+          signal: opts.signal,
+          label: images.map((_, i) => `[Image #${String(i + 1)}]`).join(', '),
+          reason: current === undefined ? '' : ` (${current} can't see images)`,
+          onNotice: notice,
+        });
+        if (r.ok) notes.push(r.note);
+        else notice('warning', r.error);
+      }
+    }
+    for (const [i, video] of videos.entries()) {
+      if (isAborted(opts.signal)) break;
+      const label = `[Video #${String(i + 1)}] ${video.name}`;
+      if (media === undefined) {
+        notice('warning', `Can't read ${label}: no model here can watch recordings.`);
+        continue;
+      }
+      const r = await media.describeVideo(video, {
+        task: this.mediaTask(),
+        signal: opts.signal,
+        label,
+        onNotice: notice,
+      });
+      if (r.ok) notes.push(r.note);
+      else notice('warning', r.error);
+    }
+    return notes;
+  }
+
+  /** For the Read tool: a description of an image or recording, with the task in mind. */
+  private async readMediaFile(
+    file: string,
+    signal: AbortSignal,
+    onEvent: RunOptions['onEvent'],
+  ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const media = this.deps.media;
+    if (media === undefined) return { ok: false, error: 'No model here can read images.' };
+    const r = await media.describeFile(file, {
+      task: this.mediaTask(`it opened ${file} with Read; describe it with the task in mind.`),
+      signal,
+      onNotice: (level, text) => {
+        onEvent({ type: 'notice', level, text });
+      },
+    });
+    return r.ok ? { ok: true, text: renderMediaNotes([r.note]) } : { ok: false, error: r.error };
   }
 
   private async step(
@@ -1065,6 +1174,7 @@ export class Agent {
           signal,
           host,
           ...(host.approvePlan ? { approvePlan: host.approvePlan } : {}),
+          readMedia: (file, sig) => this.readMediaFile(file, sig, onEvent),
           onProgress: (chunk) => {
             onEvent({ type: 'tool_progress', id: p.call.id, chunk });
           },

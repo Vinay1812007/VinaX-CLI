@@ -15,6 +15,8 @@ export interface KnownModel {
   contextWindow: number | undefined;
   /** Accepts images. */
   vision?: boolean;
+  /** Accepts video input (`video_url`). */
+  video?: boolean;
   /**
    * `false` when the model cannot take native tool definitions (VinaX then uses its text tool
    * protocol). NVIDIA's Llama 3.2 Vision rejects requests that carry both images and tools.

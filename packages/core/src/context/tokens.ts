@@ -8,6 +8,7 @@ function chars(m: ChatMessage): number {
   let n = m.content.length;
   if (m.role === 'assistant')
     for (const c of m.toolCalls ?? []) n += c.name.length + c.arguments.length + 16;
+  if (m.role === 'user') for (const note of m.mediaNotes ?? []) n += note.text.length + 80;
   return n;
 }
 

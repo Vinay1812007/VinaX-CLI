@@ -98,6 +98,12 @@ const imageSchema = z.looseObject({
   data: z.string(),
   name: z.string().optional(),
 });
+const mediaNoteSchema = z.looseObject({
+  kind: z.enum(['image', 'video']),
+  names: z.array(z.string()),
+  by: z.string().optional(),
+  text: z.string(),
+});
 const toolCallSchema = z.looseObject({ id: z.string(), name: z.string(), arguments: z.string() });
 const messageSchema = z.discriminatedUnion('role', [
   z.looseObject({ role: z.literal('system'), content: z.string() }),
@@ -105,6 +111,7 @@ const messageSchema = z.discriminatedUnion('role', [
     role: z.literal('user'),
     content: z.string(),
     images: z.array(imageSchema).optional(),
+    mediaNotes: z.array(mediaNoteSchema).optional(),
   }),
   z.looseObject({
     role: z.literal('assistant'),
