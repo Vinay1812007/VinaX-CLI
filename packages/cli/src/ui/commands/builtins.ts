@@ -64,12 +64,21 @@ import {
 } from './extra.js';
 import { plugin } from './plugins.js';
 import type { CommandContext, SlashCommand } from './types.js';
+import {
+  bashesCommand,
+  directoryCommand,
+  prCommentsCommand,
+  reviewCommand,
+  securityReviewCommand,
+  todosCommand,
+  toolsCommand,
+} from './workspace.js';
 
 const INIT_PROMPT = `Study this codebase and write a VINAX.md file in the project root that will help future VinaX sessions work here. Cover:
 1. How to build, test, lint and run it — exact commands, including how to run a single test.
 2. A short architecture overview: the big picture that takes reading several files to understand.
 3. Conventions that are not obvious from the code (naming, error handling, where things go).
-Keep it under 60 lines, factual and specific to this project — no generic advice. If VINAX.md already exists, improve it instead of starting over. Fold in anything useful from README.md, AGENTS.md or other assistant rule files.`;
+Keep it under 60 lines, factual and specific to this project — no generic advice. If VINAX.md already exists, improve it instead of starting over. Fold in anything useful from README.md, AGENTS.md, CLAUDE.md, GEMINI.md or other assistant rule files.`;
 
 function plural(n: number, word: string): string {
   return `${String(n)} ${word}${n === 1 ? '' : 's'}`;
@@ -120,6 +129,7 @@ const clear: SlashCommand = {
 
 const compact: SlashCommand = {
   name: 'compact',
+  aliases: ['compress'],
   argumentHint: '[focus]',
   description: 'Summarize the conversation so far to free up context',
   source: 'builtin',
@@ -391,11 +401,69 @@ const init: SlashCommand = {
   },
 };
 
+const MEMORY_SCOPE_LABELS = {
+  user: 'your personal notes',
+  project: 'project',
+  nested: 'folder',
+} as const;
+
+/** `/memory show|list|add|refresh` (Gemini CLI style); no argument opens a file in $EDITOR. */
+async function memorySubcommand(ctx: CommandContext, sub: string, rest: string): Promise<boolean> {
+  const mem = ctx.setup.memory;
+  switch (sub) {
+    case 'show': {
+      const text = mem.text();
+      ctx.panel(
+        'Memory',
+        text.trim() === ''
+          ? 'No instructions loaded. Create one with `/memory add <note>`, `/init` or `/memory`.'
+          : text,
+      );
+      return true;
+    }
+    case 'list':
+      ctx.panel(
+        'Memory files',
+        mem.files.length === 0
+          ? 'No instruction files found (VINAX.md, AGENTS.md, CLAUDE.md, GEMINI.md).'
+          : mem.files
+              .map((f) => `- \`${shortenPath(f.path)}\` _(${MEMORY_SCOPE_LABELS[f.scope]})_`)
+              .join('\n'),
+      );
+      return true;
+    case 'refresh':
+    case 'reload':
+      mem.reload();
+      ctx.notice('info', `Reloaded ${plural(mem.files.length, 'memory file')}.`);
+      return true;
+    case 'add': {
+      const user = /^(--user|-u)\s+/.test(rest);
+      const note = rest.replace(/^(--user|-u)\s+/, '').trim();
+      if (note === '') {
+        ctx.notice('warning', 'Usage: /memory add [--user] <note>');
+        return true;
+      }
+      const file = await mem.addNote(user ? 'user' : 'project', note);
+      ctx.notice('info', `Noted in ${shortenPath(file)}.`);
+      return true;
+    }
+    case '':
+    case 'edit':
+      return false;
+    default:
+      ctx.notice('warning', 'Usage: /memory [show | list | add [--user] <note> | refresh | edit]');
+      return true;
+  }
+}
+
 const memory: SlashCommand = {
   name: 'memory',
-  description: 'Edit a memory file (VINAX.md) in your editor',
+  description: 'Show, add to, reload or edit memory files (VINAX.md, AGENTS.md, CLAUDE.md, …)',
+  argumentHint: '[show|list|add <note>|refresh|edit]',
   source: 'builtin',
   async run(ctx) {
+    const [sub = '', ...words] = ctx.args.split(/\s+/);
+    if (await memorySubcommand(ctx, sub.toLowerCase(), words.join(' '))) return;
     const mem = ctx.setup.memory;
     const known = new Map<string, string>();
     known.set(mem.noteTarget('project'), 'Project memory');
@@ -447,6 +515,7 @@ const resume: SlashCommand = {
 
 const rewind: SlashCommand = {
   name: 'rewind',
+  aliases: ['restore', 'checkpoint'],
   description: 'Go back to an earlier prompt, restoring files and/or the conversation',
   source: 'builtin',
   run(ctx) {
@@ -1013,6 +1082,13 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   skills,
   init,
   memory,
+  toolsCommand,
+  directoryCommand,
+  reviewCommand,
+  securityReviewCommand,
+  prCommentsCommand,
+  todosCommand,
+  bashesCommand,
   resume,
   rewind,
   changes,

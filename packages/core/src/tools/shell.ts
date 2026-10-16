@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execa, type ResultPromise } from 'execa';
 import type { Env } from '../config/paths.js';
+import type { Sandbox, SpawnSpec } from './sandbox.js';
 
 export interface ShellInfo {
   kind: 'posix' | 'git-bash' | 'powershell';
@@ -153,6 +154,15 @@ export class ShellSession {
     return this.dir;
   }
 
+  /** How commands are confined (the `sandbox` setting); off unless the session sets one. */
+  sandbox: Sandbox = { mode: 'off' };
+
+  /** The program and arguments that run `command`, inside the sandbox when one is on. */
+  private spawnSpec(command: string): SpawnSpec {
+    const spec = { file: this.info.path, args: wrap(this.info, command) };
+    return 'wrap' in this.sandbox ? this.sandbox.wrap(spec) : spec;
+  }
+
   private childEnv(): Record<string, string | undefined> {
     return {
       ...this.env,
@@ -171,7 +181,8 @@ export class ShellSession {
   ): Promise<RunResult> {
     const started = Date.now();
     const cwd = fs.existsSync(this.dir) ? this.dir : process.cwd();
-    const child = execa(this.info.path, wrap(this.info, command), {
+    const spec = this.spawnSpec(command);
+    const child = execa(spec.file, spec.args, {
       cwd,
       env: this.childEnv(),
       extendEnv: false,
@@ -232,7 +243,8 @@ export class ShellSession {
 
   startBackground(command: string): string {
     const id = `job_${String(++this.jobCounter)}`;
-    const process = execa(this.info.path, wrap(this.info, command), {
+    const spec = this.spawnSpec(command);
+    const process = execa(spec.file, spec.args, {
       cwd: this.dir,
       env: this.childEnv(),
       extendEnv: false,
@@ -278,6 +290,16 @@ export class ShellSession {
     if (!job || job.done) return false;
     killTree(job.process.pid);
     return true;
+  }
+
+  /** Background jobs started this session, oldest first (for /bashes). */
+  listJobs(): { id: string; command: string; done: boolean; exitCode: number | undefined }[] {
+    return [...this.jobs.values()].map((j) => ({
+      id: j.id,
+      command: j.command,
+      done: j.done,
+      exitCode: j.exitCode,
+    }));
   }
 
   killAll(): void {

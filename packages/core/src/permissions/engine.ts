@@ -3,6 +3,7 @@ import type { PermissionMode } from '../config/schema.js';
 import { displayPath, inWorkspace } from '../tools/paths.js';
 import type { PermissionTarget, ToolKind } from '../tools/types.js';
 import { detectDanger } from './danger.js';
+import { isReadOnlyCommand } from './read-only-commands.js';
 import { parseRule, ruleMatches, type PermissionRule, type RuleEffect } from './rules.js';
 import { splitCommands, type SimpleCommand } from './shell-parse.js';
 
@@ -25,6 +26,15 @@ export interface EngineOptions {
   /** The shell's current directory, which can move away from `cwd` via `cd`. */
   shellCwd: () => string;
   home?: string;
+}
+
+/** Absolute, home-relative or parent-folder paths in a command (they may leave the project). */
+function mentionsOutsidePath(command: string): boolean {
+  return splitCommands(command).some((c) =>
+    c.words
+      .slice(1)
+      .some((w) => /^(\/|~|[A-Za-z]:[\\/])/.test(w) || /(^|[\\/])\.\.([\\/]|$)/.test(w)),
+  );
 }
 
 /** Commands whose rules are never auto-applied because they can hide other commands. */
@@ -189,8 +199,24 @@ export class PermissionEngine {
           'Plan mode is on: only reading and searching are allowed until the plan is approved (call ExitPlanMode).',
       };
     }
+    const readOnlyCommand =
+      call.kind === 'execute' &&
+      call.target.command !== undefined &&
+      !call.name.startsWith('mcp__') &&
+      isReadOnlyCommand(call.target.command);
+    if (mode === 'readOnly' && !call.readOnly && !readOnlyCommand) {
+      return {
+        kind: 'deny',
+        reason:
+          call.kind === 'execute'
+            ? 'Read-only mode is on: only commands that just read (ls, cat, grep, git status/diff/log, …) may run. Tell the user what you would run instead.'
+            : 'Read-only mode is on: files cannot be changed. Describe the change for the user instead.',
+      };
+    }
     const deny = this.match('deny', call);
     if (deny) return { kind: 'deny', reason: `Blocked by the deny rule ${deny.raw}` };
+    // Bypass approves everything that is not denied, dangerous actions included.
+    if (mode === 'bypass') return { kind: 'allow', reason: 'Bypass mode' };
 
     const suggestion = this.suggestion(call);
     const withSuggestion = suggestion === undefined ? {} : { suggestion };
@@ -226,6 +252,14 @@ export class PermissionEngine {
           ? { kind: 'allow', reason: 'Auto mode' }
           : { kind: 'ask', reason: 'Network access needs your approval.', ...withSuggestion };
       default: {
+        // Read-only mode runs commands that only read the project without asking.
+        if (
+          mode === 'readOnly' &&
+          readOnlyCommand &&
+          inWorkspace(this.opts.shellCwd(), this.opts.workspace) &&
+          !mentionsOutsidePath(call.target.command ?? '')
+        )
+          return { kind: 'allow', reason: 'Read-only command' };
         // Auto mode still asks for commands run from outside the project and for MCP tools,
         // which are third-party code.
         const auto =

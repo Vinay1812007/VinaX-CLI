@@ -20,13 +20,15 @@ import { parseModelRef, type ModelRef } from '../providers/types.js';
 import type { Runtime } from '../runtime.js';
 import type { SessionRecorder } from '../session/store.js';
 import { AppStateStore } from '../state/app-state.js';
-import { displayPath, resolvePath } from '../tools/paths.js';
+import { displayPath, isInside, resolvePath } from '../tools/paths.js';
 import { ReadTracker } from '../tools/read-tracker.js';
 import { createToolset } from '../tools/registry.js';
+import { createSandbox } from '../tools/sandbox.js';
 import { detectShell, ShellSession } from '../tools/shell.js';
 import { TodoStore } from '../tools/todo.js';
 import type { AnyTool } from '../tools/types.js';
 import { createWebFetchTool } from '../tools/webfetch.js';
+import { createWebSearchTool } from '../tools/websearch.js';
 import {
   createSkillTool,
   loadSkills,
@@ -69,6 +71,11 @@ export interface AgentSetup {
   /** Live list: MCP tools are added when a server is approved during the session. */
   tools: readonly AnyTool[];
   workspace: readonly string[];
+  /**
+   * Adds a folder tools may read and write without asking (`/directory add`); returns its
+   * absolute path, or `undefined` when it was already part of the workspace.
+   */
+  addDirectory: (dir: string) => string | undefined;
   memory: ProjectMemory;
   /** Git state when the session started, or `undefined` outside a repository. */
   git: GitInfo | undefined;
@@ -195,6 +202,7 @@ export async function createAgentSetup(
   ].map((d) => path.resolve(d));
   const shellInfo = detectShell(env);
   const shell = new ShellSession(shellInfo, cwd, env);
+  shell.sandbox = createSandbox(settings.sandbox, { workspace: () => workspace, env });
   const todos = new TodoStore();
   const permissions = new PermissionEngine({
     rules: settings.permissions,
@@ -211,6 +219,10 @@ export async function createAgentSetup(
   const git = await readGitInfo(cwd);
   const date = (opts.now ?? new Date()).toISOString().slice(0, 10);
   const warnings: string[] = [];
+  if ('unavailable' in shell.sandbox)
+    warnings.push(
+      `The ${shell.sandbox.mode} sandbox is on but ${shell.sandbox.unavailable} The Bash tool will refuse to run commands.`,
+    );
   let currentMode: PermissionMode = settings.permissions.defaultMode;
 
   // Plugin hooks are added to the ones in settings, never instead of them: installing a plugin
@@ -251,6 +263,7 @@ export async function createAgentSetup(
   const tools: AnyTool[] = [
     ...createToolset({ shell: shellInfo, todos }),
     createWebFetchTool(runtime.router),
+    createWebSearchTool({ env }),
     ...(skills.length === 0 ? [] : [createSkillTool(skills)]),
   ];
   const context = { cwd, workspace, shell, reads };
@@ -420,6 +433,12 @@ export async function createAgentSetup(
     checkpoints,
     tools,
     workspace,
+    addDirectory(dir) {
+      const abs = path.resolve(resolvePath(dir, cwd));
+      if (workspace.some((w) => isInside(abs, w))) return undefined;
+      workspace.push(abs);
+      return abs;
+    },
     memory,
     git,
     reads,

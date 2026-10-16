@@ -24,22 +24,7 @@
 
 ## Flags
 
-| Flag                                      | Meaning                                                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `-p, --print`                             | Answer once without the interactive UI, then exit                                                       |
-| `--output-format text\|json\|stream-json` | Print-mode output format (default `text`)                                                               |
-| `--model <provider:model \| alias>`       | Model to try first, e.g. `groq:openai/gpt-oss-120b`, `nvidia:openai/gpt-oss-20b` or `NVD_CHAT_OSS_20_B` |
-| `--permission-mode <mode>`                | Start in `default`, `acceptEdits` or `plan`                                                             |
-| `--allowedTools <rules>`                  | Allow without asking, e.g. `"Bash(npm test:*),Edit"`                                                    |
-| `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`                                                                  |
-| `--add-dir <path>`                        | Also let tools work in this folder (repeatable)                                                         |
-| `--max-turns <n>`                         | Stop after this many model calls per prompt                                                             |
-| `-w, --worktree [name]`                   | Work in an [isolated git worktree](/worktrees), created from `HEAD` if needed                           |
-| `-c, --continue`                          | Continue the most recent conversation in this folder                                                    |
-| `-r, --resume [session-id]`               | Resume a conversation                                                                                   |
-| `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/`, keys redacted                                   |
-| `-v, --version`                           | Print the version                                                                                       |
-| `-h, --help`                              | Show help                                                                                               |
+| Flag | Meaning |
 
 ## vinax config
 

@@ -169,6 +169,9 @@ const CORE = `You are VinaX, a coding agent that works in the user's terminal. Y
 const PLAN_MODE = `# Plan mode is on
 You may only read, search and ask clarifying questions. Do not try to change files or run commands. For a task that changes code, call ExitPlanMode with a short step-by-step plan once you understand the task, and wait for approval. For ordinary questions, answer directly without asking for plan approval.`;
 
+const READ_ONLY_MODE = `# Read-only mode is on
+You may read and search files and run commands that only read (ls, cat, grep, git status/diff/log). Changing files and running other commands is refused. Answer questions and explain what you would change, with code, instead of trying to change it.`;
+
 export function buildSystemPrompt(
   env: PromptEnvironment,
   mode: PermissionMode,
@@ -178,6 +181,7 @@ export function buildSystemPrompt(
     CORE,
     env.answering ?? DEFAULT_ANSWERING,
     ...(mode === 'plan' ? [PLAN_MODE] : []),
+    ...(mode === 'readOnly' ? [READ_ONLY_MODE] : []),
     [
       '# Environment',
       `- Project root: ${env.cwd}`,

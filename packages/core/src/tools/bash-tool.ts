@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import type { SandboxMode } from '../config/schema.js';
 import { splitCommands, type SimpleCommand } from '../permissions/shell-parse.js';
+import { sandboxRefusal } from './sandbox.js';
 import type { ShellInfo } from './shell.js';
 import { countLines, truncateMiddle } from './truncate.js';
 import { defineTool, type AnyTool } from './types.js';
@@ -60,6 +62,12 @@ export function interactiveCommandReason(command: string): string | undefined {
   return undefined;
 }
 
+function sandboxNote(mode: SandboxMode): string {
+  return mode === 'read-only'
+    ? '[sandbox: read-only — commands cannot write files (except temp) or use the network]'
+    : '[sandbox: workspace-write — commands can only write inside the project, temp and ~/.vinax]';
+}
+
 export function createBashTools(shell: ShellInfo): AnyTool[] {
   const bash = defineTool({
     name: 'Bash',
@@ -92,6 +100,9 @@ export function createBashTools(shell: ShellInfo): AnyTool[] {
           content: `Not run: ${refusal}`,
           summary: 'Refused: interactive command',
         };
+      const unsandboxed = sandboxRefusal(ctx.shell.sandbox);
+      if (unsandboxed !== undefined)
+        return { ok: false, content: unsandboxed, summary: 'Refused: sandbox unavailable' };
       if (i.run_in_background === true) {
         const id = ctx.shell.startBackground(i.command);
         return {
@@ -114,6 +125,14 @@ export function createBashTools(shell: ShellInfo): AnyTool[] {
       if (r.interrupted) notes.push('[interrupted by the user]');
       if (r.exitCode !== undefined && r.exitCode !== 0)
         notes.push(`[exit code ${String(r.exitCode)}]`);
+      if (
+        ctx.shell.sandbox.mode !== 'off' &&
+        r.exitCode !== 0 &&
+        /Operation not permitted|Read-only file system|Could not resolve host|Couldn't connect/i.test(
+          r.output,
+        )
+      )
+        notes.push(sandboxNote(ctx.shell.sandbox.mode));
       const body = r.output.trim() === '' ? '(no output)' : r.output.replace(/\s+$/, '');
       const content = truncateMiddle(
         `${body}${notes.length === 0 ? '' : `\n${notes.join('\n')}`}`,

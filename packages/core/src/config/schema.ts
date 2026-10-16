@@ -31,9 +31,26 @@ export const modelRefSchema = z
 /**
  * `auto` approves edits, commands and web access inside the project on its own; deny rules, ask
  * rules, dangerous commands and anything outside the project still stop and ask.
+ * `readOnly` (Codex's read-only) refuses every edit and every command that could change
+ * something, without asking. `bypass` (`--yolo`) approves everything except deny rules.
  */
-export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto'] as const;
+export const PERMISSION_MODES = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'readOnly',
+  'bypass',
+] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/**
+ * OS-level sandbox for Bash commands (Seatbelt on macOS, bubblewrap on Linux): `workspace-write`
+ * lets commands write only inside the project, temp folders and ~/.vinax; `read-only` also blocks
+ * writes there and cuts network access.
+ */
+export const SANDBOX_MODES = ['off', 'workspace-write', 'read-only'] as const;
+export type SandboxMode = (typeof SANDBOX_MODES)[number];
 
 export const THEME_NAMES = ['dark', 'light', 'colorblind'] as const;
 export type ThemeName = (typeof THEME_NAMES)[number];
@@ -150,6 +167,8 @@ export const settingsSchema = z.strictObject({
     )
     .optional(),
   disableAllHooks: z.boolean().optional(),
+  /** Run Bash commands in an OS sandbox: `off` (default), `workspace-write` or `read-only`. */
+  sandbox: z.enum(SANDBOX_MODES).optional(),
   gateway: z
     .strictObject({
       /** An optional VinaX gateway (set by `vinax login --gateway`). */
@@ -210,6 +229,7 @@ export interface ResolvedSettings {
   gateway: { url: string | undefined; timeoutMs: number };
   hooks: Partial<Record<HookEvent, HookMatcher[]>>;
   disableAllHooks: boolean;
+  sandbox: SandboxMode;
 }
 
 /**
@@ -282,6 +302,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   gateway: { url: undefined, timeoutMs: 120_000 },
   hooks: {},
   disableAllHooks: false,
+  sandbox: 'off',
 };
 
 /** Canonical form of a validated model setting (aliases become `<provider>:<model>`). */
@@ -330,5 +351,6 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     },
     hooks: s.hooks ?? {},
     disableAllHooks: s.disableAllHooks ?? false,
+    sandbox: s.sandbox ?? d.sandbox,
   };
 }

@@ -16,8 +16,13 @@ export interface MemoryFile {
   imports?: readonly string[];
 }
 
-/** Instruction file names, in the order they are read within one folder. */
-export const MEMORY_FILE_NAMES = ['VINAX.md', 'AGENTS.md'] as const;
+/**
+ * Instruction file names, in the order they are read within one folder. CLAUDE.md and GEMINI.md
+ * are read too, so a project set up for Claude Code or Gemini CLI works as it is.
+ */
+export const MEMORY_FILE_NAMES = ['VINAX.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'] as const;
+/** Read once, from the repository root (GitHub Copilot's repository instructions). */
+export const COPILOT_INSTRUCTIONS = path.join('.github', 'copilot-instructions.md');
 const MAX_IMPORT_DEPTH = 4;
 /** Memory is sent with every request; free tiers can't afford much (~2.5K tokens). */
 const MAX_MEMORY_CHARS = 9000;
@@ -90,6 +95,28 @@ function expand(text: string, dir: string): { content: string; imports: string[]
   return { content, imports: [...new Set(imports)] };
 }
 
+function sameContent(a: string, b: string): boolean {
+  return a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Adds `file` unless it is the same file (a symlink such as CLAUDE.md → AGENTS.md) or has the
+ * same text as one already loaded, so copies of one set of instructions are sent once.
+ */
+function pushUnique(files: MemoryFile[], file: MemoryFile, seen: readonly MemoryFile[] = files) {
+  const real = realPath(file.path);
+  if (seen.some((f) => realPath(f.path) === real || sameContent(f.content, file.content))) return;
+  files.push(file);
+}
+
+function realPath(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 function findRepoRoot(cwd: string): string | undefined {
   for (let dir = cwd; ; dir = path.dirname(dir)) {
     if (fs.existsSync(path.join(dir, '.git'))) return dir;
@@ -132,9 +159,14 @@ export class ProjectMemory {
       for (const name of MEMORY_FILE_NAMES) {
         const file = path.join(dir, name);
         const text = readText(file);
-        if (text !== undefined) files.push({ path: file, scope: 'project', ...expand(text, dir) });
+        if (text !== undefined)
+          pushUnique(files, { path: file, scope: 'project', ...expand(text, dir) });
       }
     }
+    const copilot = path.join(root, COPILOT_INSTRUCTIONS);
+    const copilotText = readText(copilot);
+    if (copilotText !== undefined)
+      pushUnique(files, { path: copilot, scope: 'project', ...expand(copilotText, root) });
     return memory;
   }
 
@@ -155,7 +187,11 @@ export class ProjectMemory {
       for (const name of MEMORY_FILE_NAMES) {
         const p = path.join(dir, name);
         const text = readText(p);
-        if (text !== undefined) found.push({ path: p, scope: 'nested', ...expand(text, dir) });
+        if (text !== undefined)
+          pushUnique(found, { path: p, scope: 'nested', ...expand(text, dir) }, [
+            ...this.files,
+            ...found,
+          ]);
       }
     }
     this.files.push(...found);

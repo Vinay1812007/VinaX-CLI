@@ -11,12 +11,13 @@ import {
   type OutputStyle,
   type PermissionMode,
   type ReasoningEffort,
+  type Sandbox,
   type ThemeName,
   type WritableScope,
 } from '@vinax/core';
 import { codeBlocks, copyToClipboard } from '../../clipboard.js';
 import type { SettingRow } from '../components/SettingsPanel.js';
-import { MODE_CYCLE, MODE_DESCRIPTIONS, MODE_LABELS } from '../components/StatusLine.js';
+import { MODE_CYCLE, MODE_DESCRIPTIONS, MODE_LABELS, modeCycle } from '../components/StatusLine.js';
 import { shortenPath } from '../format.js';
 import type { CommandContext, SlashCommand } from './types.js';
 
@@ -106,7 +107,13 @@ function settingsRows(ctx: CommandContext): SettingRow[] {
       label: 'Default permission mode',
       value: r.permissions.defaultMode,
       options: MODE_CYCLE,
-      labels: { default: 'manual', acceptEdits: 'accept edits', plan: 'plan', auto: 'auto' },
+      labels: {
+        default: 'manual',
+        acceptEdits: 'accept edits',
+        plan: 'plan',
+        auto: 'auto',
+        readOnly: 'read-only',
+      },
       hint: 'also switches this session',
     },
     {
@@ -299,6 +306,14 @@ async function removeRule(ctx: CommandContext): Promise<void> {
   ctx.notice('info', `Removed the ${pick.effect} rule ${pick.raw}.`);
 }
 
+/** The Bash sandbox in words, for /permissions and /status. */
+export function sandboxLabel(sb: Sandbox): string {
+  if (sb.mode === 'off') return 'off';
+  if ('unavailable' in sb)
+    return `${sb.mode} — unavailable, commands are refused: ${sb.unavailable}`;
+  return `${sb.mode} (${sb.kind === 'seatbelt' ? 'macOS Seatbelt' : 'bubblewrap'})`;
+}
+
 /** Claude Code-style /permissions: the rules by kind, then add, remove or change the mode. */
 export async function openPermissions(ctx: CommandContext): Promise<void> {
   const rules = ctx.setup.permissions.listRules();
@@ -313,6 +328,7 @@ export async function openPermissions(ctx: CommandContext): Promise<void> {
     [
       `Mode: **${MODE_LABELS[ctx.mode()]}** — ${MODE_DESCRIPTIONS[ctx.mode()]}`,
       `Folders tools may use: ${ctx.setup.workspace.map((w) => `\`${shortenPath(w)}\``).join(', ')}`,
+      `Sandbox for Bash: **${sandboxLabel(ctx.setup.shell.sandbox)}**`,
       '',
       ...section('allow', 'Allow'),
       '',
@@ -336,7 +352,7 @@ export async function openPermissions(ctx: CommandContext): Promise<void> {
   else if (choice === 'mode') {
     const mode = await ctx.pick(
       'Permission mode for this session',
-      MODE_CYCLE.map((m) => ({
+      modeCycle(ctx.mode()).map((m) => ({
         label: `${MODE_LABELS[m]}${m === ctx.mode() ? '  (current)' : ''}`,
         value: m,
         hint: MODE_DESCRIPTIONS[m],
@@ -351,7 +367,7 @@ export async function openPermissions(ctx: CommandContext): Promise<void> {
 
 export const permissionsCommand: SlashCommand = {
   name: 'permissions',
-  aliases: ['allowed-tools'],
+  aliases: ['allowed-tools', 'approvals'],
   description: 'Permission mode and rules: view, add, remove',
   source: 'builtin',
   run: (ctx) => openPermissions(ctx),

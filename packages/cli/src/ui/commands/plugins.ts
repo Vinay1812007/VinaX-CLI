@@ -129,6 +129,7 @@ function resolveId(ctx: CommandContext, arg: string): string | { error: string }
 
 export const plugin: SlashCommand = {
   name: 'plugin',
+  aliases: ['plugins', 'extensions'],
   argumentHint:
     '[marketplace add <repo> | install <name>@<marketplace> | enable|disable|uninstall]',
   description: 'Plugins: marketplaces, install, enable, disable and uninstall',

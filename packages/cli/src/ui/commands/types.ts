@@ -77,6 +77,11 @@ export interface SlashCommand {
   aliases?: readonly string[];
   description: string;
   argumentHint?: string | undefined;
+  /**
+   * A custom command with the same name replaces this built-in (for built-ins added after users
+   * may already have written their own, such as /review).
+   */
+  overridable?: boolean;
   source: 'builtin' | 'project' | 'user' | 'plugin';
   run: (ctx: CommandContext) => void | Promise<void>;
 }

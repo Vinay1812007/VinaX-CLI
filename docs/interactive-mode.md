@@ -71,12 +71,14 @@ The prompt box looks like Claude Code's: a grey rounded box with a `>` prompt an
 
 The footer always shows the permission mode, and **Shift+Tab** cycles through them:
 
-| Footer               | Mode          | What VinaX does without asking                                                                                                                  |
-| -------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `⏸ manual mode on`   | `default`     | Only reads inside the project; asks before edits, commands and web access                                                                       |
-| `⏵⏵ accept edits on` | `acceptEdits` | Also applies edits inside the project                                                                                                           |
-| `⏸ plan mode on`     | `plan`        | Read-only; researches and proposes a plan first                                                                                                 |
-| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project; dangerous commands, deny and ask rules, anything outside the project and MCP tools still ask |
+| Footer                    | Mode          | What VinaX does without asking                                                                                                                  |
+| ------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `⏸ manual mode on`        | `default`     | Only reads inside the project; asks before edits, commands and web access                                                                       |
+| `⏵⏵ accept edits on`      | `acceptEdits` | Also applies edits inside the project                                                                                                           |
+| `⏸ plan mode on`          | `plan`        | Read-only; researches and proposes a plan first                                                                                                 |
+| `⏵⏵ auto mode on`         | `auto`        | Edits, commands and web access inside the project; dangerous commands, deny and ask rules, anything outside the project and MCP tools still ask |
+| `⊘ read-only mode on`     | `readOnly`    | Reads, searches and read-only commands; every edit and other command is refused without asking                                                  |
+| `⚠ bypass permissions on` | `bypass`      | Everything except deny rules. Only in the cycle when the session started with `--yolo` or `--permission-mode bypass`                            |
 
 See [Permissions](/permissions#modes) for the details.
 
@@ -92,7 +94,7 @@ See [Permissions](/permissions#modes) for the details.
 | `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line. `Shift+Enter` works in terminals that report it                           |
 | `↑` / `↓`                                           | Move between lines, then walk this project's prompt history                         |
 | `Ctrl+R`                                            | Search prompt history; press again for older matches                                |
-| `Shift+Tab`                                         | Cycle modes: ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto                          |
+| `Shift+Tab`                                         | Cycle modes: ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto → ⊘ read-only            |
 | `Esc`                                               | Stop the current reply. What was written so far is kept                             |
 | `Esc Esc`                                           | Clear the prompt. On an empty prompt, open the [rewind](/permissions#rewind) picker |
 | `Ctrl+V`                                            | Paste an image from the clipboard (see [Images](#images))                           |

@@ -2,21 +2,22 @@
 
 <p class="lead">The tools VinaX's agent can call, and which of them ask first.</p>
 
-| Tool                     | What it does                                                                                        | Asks first?                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `Read`                   | Reads a file with line numbers; `offset`/`limit` for long files                                     | Only outside the project         |
-| `Glob`                   | Finds files by pattern, respecting `.gitignore`                                                     | No                               |
-| `Grep`                   | Searches file contents with ripgrep (or a built-in search), respecting `.gitignore`                 | No                               |
-| `LS`                     | Lists a folder two levels deep                                                                      | No                               |
-| `Edit`, `MultiEdit`      | Replace exact text. The file must have been read first, and the edit is refused if it changed since | Yes, unless auto-accepting edits |
-| `Write`                  | Creates a file, or replaces one that has been read                                                  | Yes, unless auto-accepting edits |
-| `Bash`                   | Runs a command                                                                                      | Yes, unless a rule allows it     |
-| `BashOutput`, `KillBash` | Read or stop a background command                                                                   | No                               |
-| `TodoWrite`              | Keeps the task list shown above the prompt                                                          | No                               |
-| `ExitPlanMode`           | Presents a plan for your approval in plan mode                                                      | You approve the plan             |
-| `WebFetch`               | Fetches a URL, converts HTML to Markdown and answers a question about it with the small model       | Yes, per domain                  |
-| `Task`                   | Runs a [sub-agent](/sub-agents)                                                                     | No (its own tools ask)           |
-| `mcp__<server>__<tool>`  | Tools from [MCP servers](/mcp)                                                                      | Yes, unless a rule allows it     |
+| Tool                     | What it does                                                                                        | Asks first?                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `Read`                   | Reads a file with line numbers; `offset`/`limit` for long files                                     | Only outside the project                     |
+| `Glob`                   | Finds files by pattern, respecting `.gitignore`                                                     | No                                           |
+| `Grep`                   | Searches file contents with ripgrep (or a built-in search), respecting `.gitignore`                 | No                                           |
+| `LS`                     | Lists a folder two levels deep                                                                      | No                                           |
+| `Edit`, `MultiEdit`      | Replace exact text. The file must have been read first, and the edit is refused if it changed since | Yes, unless auto-accepting edits             |
+| `Write`                  | Creates a file, or replaces one that has been read                                                  | Yes, unless auto-accepting edits             |
+| `Bash`                   | Runs a command                                                                                      | Yes, unless a rule allows it                 |
+| `BashOutput`, `KillBash` | Read or stop a background command                                                                   | No                                           |
+| `TodoWrite`              | Keeps the task list shown above the prompt                                                          | No                                           |
+| `ExitPlanMode`           | Presents a plan for your approval in plan mode                                                      | You approve the plan                         |
+| `WebSearch`              | Searches the web (DuckDuckGo without a key; Brave or Tavily with one) and lists results             | Yes, unless in auto mode or a rule allows it |
+| `WebFetch`               | Fetches a URL, converts HTML to Markdown and answers a question about it with the small model       | Yes, per domain                              |
+| `Task`                   | Runs a [sub-agent](/sub-agents)                                                                     | No (its own tools ask)                       |
+| `mcp__<server>__<tool>`  | Tools from [MCP servers](/mcp)                                                                      | Yes, unless a rule allows it                 |
 
 ## Bash
 
@@ -24,6 +25,22 @@
 - Commands time out after 2 minutes by default (10 at most) and can run in the background.
 - Interactive programs, such as editors, pagers and REPLs, are refused, because nobody can type into them.
 - On Windows, commands run in Git Bash when it's installed, otherwise in PowerShell.
+- With the [sandbox](/permissions#sandbox) on, commands run under `sandbox-exec` (macOS) or `bwrap` (Linux) and can only write inside the project (or nowhere, in `read-only`).
+
+`/tools` lists every tool available in the session, MCP tools included; `/tools desc` adds a line about each.
+
+## WebSearch
+
+Searches the web and returns a numbered list of results (title, URL, snippet); the model then reads the useful pages with WebFetch. No API key is needed: VinaX queries DuckDuckGo's HTML search. When `BRAVE_API_KEY` or `TAVILY_API_KEY` is set in your environment, it uses Brave Search or Tavily instead (Brave first).
+
+| Input             | Meaning                                                    |
+| ----------------- | ---------------------------------------------------------- |
+| `query`           | What to search for                                         |
+| `allowed_domains` | Only keep results from these domains (subdomains included) |
+| `blocked_domains` | Drop results from these domains                            |
+| `max_results`     | How many results to return, 1–20 (default 8)               |
+
+Searches time out after 15 seconds. Failures (rate limiting, network errors) are reported to the model, which carries on without them. Like WebFetch, WebSearch is network access: it asks in manual mode, runs on its own in auto mode, and can be allowed with the rule `WebSearch`.
 
 ## WebFetch
 

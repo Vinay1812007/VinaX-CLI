@@ -58,7 +58,7 @@ import { RewindPicker } from './RewindPicker.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { SnakeGame } from './SnakeGame.js';
-import { MODE_CYCLE, MODE_DESCRIPTIONS, StatusLine, type StatusNotice } from './StatusLine.js';
+import { MODE_DESCRIPTIONS, modeCycle, StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
 import { RunningTool } from './ToolEntry.js';
@@ -160,6 +160,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const [mode, setMode, modeRef] = useRefState<PermissionMode>(
     runtime.settings.resolved.permissions.defaultMode,
   );
+  /** Shift+Tab's modes: bypass is in the cycle only when the session started in it. */
+  const cycle = useRef(modeCycle(runtime.settings.resolved.permissions.defaultMode)).current;
   /** How the last turn ended, for the status line (cleared when the next one starts). */
   const [lastOutcome, setLastOutcome] = useState<
     { status: AgentOutcome['status']; durationMs: number } | undefined
@@ -623,8 +625,7 @@ export function ChatScreen(props: ChatScreenProps) {
   /** Shift+Tab: next permission mode; a pending approval the new mode allows is granted. */
   const cycleMode = (): void => {
     const request = pendingRef.current;
-    const next =
-      MODE_CYCLE[(MODE_CYCLE.indexOf(modeRef.current) + 1) % MODE_CYCLE.length] ?? 'default';
+    const next = cycle[(cycle.indexOf(modeRef.current) + 1) % cycle.length] ?? 'default';
     setMode(next);
     setNotice({ level: 'info', text: MODE_DESCRIPTIONS[next] });
     if (request?.kind === 'permission') {

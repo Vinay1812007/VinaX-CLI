@@ -23,7 +23,7 @@ API keys never go in settings files. They come from environment variables, the O
 | ----------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Model                   | opens the model picker                                               | For this session                                               |
 | Reasoning effort        | auto, low, medium, high                                              | Saved as `reasoningEffort`                                     |
-| Default permission mode | manual, accept edits, plan, auto                                     | Saved as `permissions.defaultMode`; also switches this session |
+| Default permission mode | manual, accept edits, plan, auto, read-only                          | Saved as `permissions.defaultMode`; also switches this session |
 | Theme                   | dark, light, colour-blind friendly                                   |                                                                |
 | Editor mode             | normal, vim                                                          |                                                                |
 | Auto-compact            | on, off                                                              | Applies to new sessions                                        |
@@ -66,36 +66,37 @@ vinax config unset model
 
 ## All settings
 
-| Key                                       | Default                     | Meaning                                                                           |
-| ----------------------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `model`                                   | `groq:openai/gpt-oss-120b`  | Main model: a `provider:model` ref or an [alias](/models#aliases)                 |
-| `smallModel`                              | `groq:openai/gpt-oss-20b`   | Model for titles, summaries and compaction                                        |
-| `planModel`                               | unset                       | Model for plan mode; unset uses the main model                                    |
-| `freeModelsOnly`                          | `true`                      | Test and list only free and free-tier models in `/model` and `/models`            |
-| `outputStyle`                             | `default`                   | How answers are written: `default`, `explanatory`, `learning`, `concise` or yours |
-| `fallbackChain`                           | see [Models](/models)       | Models tried after the main one                                                   |
-| `providers.<name>.enabled`                | `true`                      | Turn any provider off by name (see [Models](/models))                             |
-| `providers.<name>.baseUrl`                | the provider's API          | Point a provider at another OpenAI-compatible endpoint                            |
-| `router.maxRetries`                       | `2`                         | Retries on one model before falling back                                          |
-| `router.baseDelayMs`, `router.maxDelayMs` | `1000`, `20000`             | Backoff range                                                                     |
-| `router.maxWaitMs`                        | `20000`                     | Longest wait for a rate-limit window before falling back                          |
-| `router.requestTimeoutMs`                 | `90000`                     | Request timeout                                                                   |
-| `router.firstTokenTimeoutMs`              | `45000`                     | A model that sends nothing for this long counts as timed out and VinaX falls back |
-| `permissions.allow` / `ask` / `deny`      | `[]`                        | [Permission rules](/permissions#rules)                                            |
-| `permissions.defaultMode`                 | `default`                   | `default`, `acceptEdits`, `plan` or `auto`                                        |
-| `permissions.additionalDirectories`       | `[]`                        | Extra folders tools may work in                                                   |
-| `context.maxTokens`                       | `24000`                     | Conversation size kept by automatic compaction                                    |
-| `context.autoCompact`                     | `true`                      | Compact automatically                                                             |
-| `hooks`                                   | `{}`                        | [Hooks](/hooks)                                                                   |
-| `disableAllHooks`                         | `false`                     | Turn every hook off                                                               |
-| `gateway.url`                             | none                        | A [VinaX gateway](/gateway), set by `vinax login --gateway`                       |
-| `gateway.timeoutMs`                       | `120000`                    | Longest wait for a sleeping gateway to wake                                       |
-| `theme`                                   | `dark`                      | `dark`, `light` or `colorblind`                                                   |
-| `editorMode`                              | `normal`                    | `normal` or `vim`                                                                 |
-| `reasoningEffort`                         | none                        | `low`, `medium` or `high` for [reasoning models](/models#reasoning-effort)        |
-| `visionModel`                             | none (chosen automatically) | Model that answers prompts with [images](/interactive-mode#images)                |
-| `updateCheck`                             | `true`                      | Check for new VinaX releases at startup (at most once a day)                      |
-| `showTips`                                | `true`                      | Show tips on the welcome screen                                                   |
+| Key                                       | Default                     | Meaning                                                                                          |
+| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `model`                                   | `groq:openai/gpt-oss-120b`  | Main model: a `provider:model` ref or an [alias](/models#aliases)                                |
+| `smallModel`                              | `groq:openai/gpt-oss-20b`   | Model for titles, summaries and compaction                                                       |
+| `planModel`                               | unset                       | Model for plan mode; unset uses the main model                                                   |
+| `freeModelsOnly`                          | `true`                      | Test and list only free and free-tier models in `/model` and `/models`                           |
+| `outputStyle`                             | `default`                   | How answers are written: `default`, `explanatory`, `learning`, `concise` or yours                |
+| `fallbackChain`                           | see [Models](/models)       | Models tried after the main one                                                                  |
+| `providers.<name>.enabled`                | `true`                      | Turn any provider off by name (see [Models](/models))                                            |
+| `providers.<name>.baseUrl`                | the provider's API          | Point a provider at another OpenAI-compatible endpoint                                           |
+| `router.maxRetries`                       | `2`                         | Retries on one model before falling back                                                         |
+| `router.baseDelayMs`, `router.maxDelayMs` | `1000`, `20000`             | Backoff range                                                                                    |
+| `router.maxWaitMs`                        | `20000`                     | Longest wait for a rate-limit window before falling back                                         |
+| `router.requestTimeoutMs`                 | `90000`                     | Request timeout                                                                                  |
+| `router.firstTokenTimeoutMs`              | `45000`                     | A model that sends nothing for this long counts as timed out and VinaX falls back                |
+| `permissions.allow` / `ask` / `deny`      | `[]`                        | [Permission rules](/permissions#rules)                                                           |
+| `permissions.defaultMode`                 | `default`                   | `default`, `acceptEdits`, `plan`, `auto`, `readOnly` or `bypass` ([modes](/permissions#modes))   |
+| `sandbox`                                 | `off`                       | `off`, `workspace-write` or `read-only`: confine Bash commands ([sandbox](/permissions#sandbox)) |
+| `permissions.additionalDirectories`       | `[]`                        | Extra folders tools may work in                                                                  |
+| `context.maxTokens`                       | `24000`                     | Conversation size kept by automatic compaction                                                   |
+| `context.autoCompact`                     | `true`                      | Compact automatically                                                                            |
+| `hooks`                                   | `{}`                        | [Hooks](/hooks)                                                                                  |
+| `disableAllHooks`                         | `false`                     | Turn every hook off                                                                              |
+| `gateway.url`                             | none                        | A [VinaX gateway](/gateway), set by `vinax login --gateway`                                      |
+| `gateway.timeoutMs`                       | `120000`                    | Longest wait for a sleeping gateway to wake                                                      |
+| `theme`                                   | `dark`                      | `dark`, `light` or `colorblind`                                                                  |
+| `editorMode`                              | `normal`                    | `normal` or `vim`                                                                                |
+| `reasoningEffort`                         | none                        | `low`, `medium` or `high` for [reasoning models](/models#reasoning-effort)                       |
+| `visionModel`                             | none (chosen automatically) | Model that answers prompts with [images](/interactive-mode#images)                               |
+| `updateCheck`                             | `true`                      | Check for new VinaX releases at startup (at most once a day)                                     |
+| `showTips`                                | `true`                      | Show tips on the welcome screen                                                                  |
 
 ## Environment variables
 
