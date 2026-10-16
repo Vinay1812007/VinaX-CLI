@@ -36,13 +36,20 @@ function fromCustom(cmd: CustomCommand): SlashCommand {
   };
 }
 
-/** Built-in plus custom commands; a custom command cannot shadow a built-in. */
+/**
+ * Built-in plus custom commands. A custom command cannot shadow a built-in, except one marked
+ * `overridable`; it can take a built-in's alias (`/diff`), since an exact name wins over an alias.
+ */
 export async function loadCommands(
   runtime: Runtime,
 ): Promise<{ commands: SlashCommand[]; warnings: string[] }> {
   const { commands: custom, errors } = await loadCustomCommands(runtime.cwd, runtime.env);
   const warnings = [...errors];
-  const taken = new Set(BUILTIN_COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+  const customNames = new Set(custom.map((c) => c.name));
+  const builtins = BUILTIN_COMMANDS.filter(
+    (c) => c.overridable !== true || !customNames.has(c.name),
+  );
+  const taken = new Set(builtins.map((c) => c.name));
   const extra: SlashCommand[] = [];
   for (const c of custom) {
     if (taken.has(c.name))
@@ -51,14 +58,16 @@ export async function loadCommands(
       );
     else extra.push(fromCustom(c));
   }
-  return { commands: [...BUILTIN_COMMANDS, ...extra], warnings };
+  return { commands: [...builtins, ...extra], warnings };
 }
 
 export function findCommand(
   commands: readonly SlashCommand[],
   name: string,
 ): SlashCommand | undefined {
-  return commands.find((c) => c.name === name || (c.aliases ?? []).includes(name));
+  return (
+    commands.find((c) => c.name === name) ?? commands.find((c) => (c.aliases ?? []).includes(name))
+  );
 }
 
 /** Commands for the `/` menu: prefix matches first, then fuzzy matches. */

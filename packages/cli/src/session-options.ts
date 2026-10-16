@@ -1,4 +1,4 @@
-import type { PermissionMode, Settings } from '@vinax/core';
+import type { PermissionMode, SandboxMode, Settings } from '@vinax/core';
 
 /** Command-line options shared by interactive and print mode. */
 export interface SessionOptions {
@@ -6,6 +6,8 @@ export interface SessionOptions {
   model: string | undefined;
   verbose: boolean;
   permissionMode: PermissionMode | undefined;
+  /** `--sandbox`: how Bash commands are confined. */
+  sandbox?: SandboxMode | undefined;
   allowedTools: string[];
   disallowedTools: string[];
   addDirs: string[];
@@ -37,6 +39,7 @@ export function cliSettings(o: SessionOptions): Settings | undefined {
   };
   const settings: Settings = {
     ...(o.model === undefined ? {} : { model: o.model }),
+    ...(o.sandbox === undefined ? {} : { sandbox: o.sandbox }),
     ...(Object.keys(permissions).length === 0 ? {} : { permissions }),
     ...(Object.keys(budget).length === 0 ? {} : { budget }),
   };

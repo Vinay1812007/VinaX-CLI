@@ -12,6 +12,8 @@ export const MODE_LABELS: Record<PermissionMode, string> = {
   acceptEdits: '⏵⏵ accept edits on',
   plan: '⏸ plan mode on',
   auto: '⏵⏵ auto mode on',
+  readOnly: '⊘ read-only mode on',
+  bypass: '⚠ bypass permissions on',
 };
 
 /** What each mode means, for /permissions and the shortcuts help. */
@@ -20,10 +22,25 @@ export const MODE_DESCRIPTIONS: Record<PermissionMode, string> = {
   acceptEdits: 'edits inside the project are applied without asking',
   plan: 'read-only: VinaX researches and proposes a plan first',
   auto: 'edits, commands and web access inside the project run without asking; dangerous commands and outside-project access still ask; deny rules still block',
+  readOnly:
+    'read-only: VinaX may read, search and run read-only commands; every edit and other command is refused without asking',
+  bypass:
+    'DANGER: every edit, command and web request runs without asking, dangerous ones included; only deny rules still block',
 };
 
-/** Shift+Tab cycles through these. */
-export const MODE_CYCLE: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
+/** Shift+Tab cycles through these. Bypass joins only when the session started in it. */
+export const MODE_CYCLE: readonly PermissionMode[] = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'readOnly',
+];
+
+/** The Shift+Tab cycle for a session that started in `initial`. */
+export function modeCycle(initial: PermissionMode): readonly PermissionMode[] {
+  return initial === 'bypass' ? [...MODE_CYCLE, 'bypass'] : MODE_CYCLE;
+}
 
 export interface StatusNotice {
   level: 'info' | 'warning' | 'error';
@@ -76,6 +93,10 @@ export function modeColor(mode: PermissionMode, theme: Theme): string | undefine
       return theme.accent;
     case 'auto':
       return theme.warning;
+    case 'readOnly':
+      return theme.accent;
+    case 'bypass':
+      return theme.error;
     case 'default':
       return theme.muted;
   }

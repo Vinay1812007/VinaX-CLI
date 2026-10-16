@@ -1,10 +1,13 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import {
+  bypassRefusal,
   MODEL_REF_HINT,
   normalizeModelRef,
   PERMISSION_MODES,
+  SANDBOX_MODES,
   SettingsError,
   type PermissionMode,
+  type SandboxMode,
 } from '@vinax/core';
 import { configCommand } from './config-command.js';
 import { doctorCommand, healthCommand } from './doctor-command.js';
@@ -30,6 +33,10 @@ interface RootOptions {
   model?: string;
   verbose?: boolean;
   permissionMode?: PermissionMode;
+  yolo?: boolean;
+  dangerouslySkipPermissions?: boolean;
+  readOnly?: boolean;
+  sandbox?: SandboxMode;
   allowedTools?: string[];
   disallowedTools?: string[];
   addDir?: string[];
@@ -69,12 +76,27 @@ function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
+/** `--yolo`, `--read-only` and `--permission-mode` name one mode; giving two is a mistake. */
+function chosenMode(o: RootOptions): PermissionMode | undefined {
+  const picked = [
+    ...(o.permissionMode === undefined ? [] : [o.permissionMode]),
+    ...(o.yolo === true || o.dangerouslySkipPermissions === true ? (['bypass'] as const) : []),
+    ...(o.readOnly === true ? (['readOnly'] as const) : []),
+  ];
+  if (new Set(picked).size > 1)
+    throw new InvalidArgumentError(
+      `choose one permission mode; got ${picked.join(' and ')} (from --permission-mode, --yolo and --read-only)`,
+    );
+  return picked[0];
+}
+
 function sessionOptions(prompt: string | undefined, o: RootOptions): SessionOptions {
   return {
     prompt,
     model: o.model,
     verbose: o.verbose === true,
-    permissionMode: o.permissionMode,
+    permissionMode: chosenMode(o),
+    sandbox: o.sandbox,
     allowedTools: o.allowedTools ?? [],
     disallowedTools: o.disallowedTools ?? [],
     addDirs: o.addDir ?? [],
@@ -124,6 +146,21 @@ export async function main(
       new Option('--permission-mode <mode>', 'start in this mode').choices(PERMISSION_MODES),
     )
     .option(
+      '--read-only',
+      'read-only mode: VinaX may read, search and run read-only commands; edits and other commands are refused',
+    )
+    .option(
+      '--yolo',
+      'bypass mode: run every tool without asking (deny rules still apply); refused as root',
+    )
+    .addOption(new Option('--dangerously-skip-permissions', 'same as --yolo').hideHelp())
+    .addOption(
+      new Option(
+        '--sandbox <mode>',
+        'confine Bash commands: workspace-write (writes only in the project and temp) or read-only (no writes, no network)',
+      ).choices(SANDBOX_MODES),
+    )
+    .option(
       '--allowedTools <rules>',
       'allow these tools without asking, e.g. "Bash(npm test:*),Edit"',
       collectRules,
@@ -157,7 +194,24 @@ export async function main(
     })
     .exitOverride()
     .action(async (prompt: string | undefined, opts: RootOptions) => {
-      let session = sessionOptions(prompt, opts);
+      let session: SessionOptions;
+      try {
+        session = sessionOptions(prompt, opts);
+      } catch (e) {
+        io.stderr.write(
+          `${paint(io.stderr, 'red', `error: ${e instanceof Error ? e.message : String(e)}`, io.env)}\n`,
+        );
+        setExit(EXIT.usage);
+        return;
+      }
+      if (session.permissionMode === 'bypass') {
+        const refused = bypassRefusal(io.env);
+        if (refused !== undefined) {
+          io.stderr.write(`${paint(io.stderr, 'red', refused, io.env)}\n`);
+          setExit(EXIT.error);
+          return;
+        }
+      }
       let runIO = io;
       if (opts.worktree !== undefined && opts.worktree !== false) {
         try {

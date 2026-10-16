@@ -72,6 +72,24 @@ export {
 export { McpManager, mcpToolName, type McpServerState, type McpStatus } from './mcp/manager.js';
 export { createWebFetchTool, htmlToMarkdown } from './tools/webfetch.js';
 export {
+  createWebSearchTool,
+  parseDuckDuckGoHtml,
+  pickSearchProvider,
+  SEARCH_PROVIDER_LABELS,
+  unwrapDuckDuckGoUrl,
+  webSearch,
+  type SearchProvider,
+  type SearchResult,
+} from './tools/websearch.js';
+export {
+  bwrapArgs,
+  createSandbox,
+  sandboxRefusal,
+  seatbeltProfile,
+  writableRoots,
+  type Sandbox,
+} from './tools/sandbox.js';
+export {
   applySummary,
   elideToolOutputs,
   renderTranscript,
@@ -168,6 +186,8 @@ export {
 export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
 export { effectiveContextWindow } from './context/budget.js';
 export { detectDanger } from './permissions/danger.js';
+export { isReadOnlyCommand } from './permissions/read-only-commands.js';
+export { ALLOW_ROOT_BYPASS_ENV, BYPASS_WARNING, bypassRefusal } from './permissions/bypass.js';
 export { PermissionEngine, suggestBashRule, type Decision } from './permissions/engine.js';
 export {
   matchBashSpecifier,
@@ -203,6 +223,7 @@ export {
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
+  SANDBOX_MODES,
   settingsSchema,
   THEME_NAMES,
   type EditorMode,
@@ -210,6 +231,7 @@ export {
   type HookMatcher,
   type PermissionMode,
   type ResolvedSettings,
+  type SandboxMode,
   type Settings,
   type ThemeName,
 } from './config/schema.js';

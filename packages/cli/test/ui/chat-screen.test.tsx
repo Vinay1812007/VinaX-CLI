@@ -256,6 +256,8 @@ describe('ChatScreen', () => {
     await type(KEYS.shiftTab);
     expect(frame()).toContain('⏵⏵ auto mode on');
     await type(KEYS.shiftTab);
+    expect(frame()).toContain('read-only mode on');
+    await type(KEYS.shiftTab);
     expect(frame()).toContain('manual mode on');
     await type('?');
     expect(frame()).toContain('Keyboard shortcuts');
@@ -917,11 +919,11 @@ describe('ChatScreen workflow (M4)', () => {
   });
 
   it('warns that auto-compaction is approaching before it happens', async () => {
-    // The system prompt and tools alone (~3.3k tokens) have to land between the 75% warning and
-    // the 85% compaction point: 4100 puts them at ~80%, leaving room on both sides for the
+    // The system prompt and tools alone (~3.55k tokens) have to land between the 75% warning and
+    // the 85% compaction point: 4400 puts them at ~80%, leaving room on both sides for the
     // prompt to drift. If this starts failing, re-check that share before widening anything.
     const { frame, type } = await mount({
-      settings: { context: { maxTokens: 4100 } },
+      settings: { context: { maxTokens: 4400 } },
       groq: { script: { 'main-model': [{ text: 'ok' }] } },
     });
     await type('hi', KEYS.enter);
@@ -1346,5 +1348,56 @@ describe('ChatScreen extensibility (M5)', () => {
     const body = JSON.stringify(agentRequests(harness).at(-1)?.body);
     expect(body).toContain('this model cannot see images');
     expect(body).not.toContain('image_url');
+  });
+});
+
+describe('ChatScreen parity commands and modes', () => {
+  it('adds to, shows and reloads memory with /memory subcommands', async () => {
+    const { frame, type, read } = await mount();
+    await type('/memory add Always use pnpm', KEYS.enter);
+    await waitFor(() => frame().includes('Noted in'), 'note saved');
+    expect(await read('VINAX.md')).toContain('- Always use pnpm');
+    await type('/memory show', KEYS.enter);
+
+    await waitFor(() => flat(frame()).includes('Always use pnpm'), 'memory panel');
+    await type('/memory refresh', KEYS.enter);
+    await waitFor(() => frame().includes('Reloaded 1 memory file'), 'reloaded');
+  });
+
+  it('lists tools and adds a workspace folder', async () => {
+    const { frame, type, setup: s, harness } = await mount();
+    await type('/tools', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('WebSearch'), 'tools panel');
+    expect(frame()).toContain('WebFetch');
+    const extra = await fs.mkdtemp(path.join(path.dirname(harness.cwd), 'extra-'));
+    try {
+      await type(`/directory add ${extra}`, KEYS.enter);
+      await waitFor(() => flat(frame()).includes('Tools may now read and change files'), 'added');
+      expect(s.workspace).toContain(path.resolve(extra));
+    } finally {
+      await fs.rm(extra, { recursive: true, force: true });
+    }
+  });
+
+  it('sends a review prompt with /review', async () => {
+    const { frame, type, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'Looks fine.' }] } },
+    });
+    await type('/review', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Looks fine.'), 'answer');
+    expect(lastChatBody(harness)?.messages.at(-1)?.content).toContain(
+      'Review my uncommitted changes',
+    );
+  });
+
+  it('keeps bypass in the Shift+Tab cycle only when the session started in it', async () => {
+    const { frame, type } = await mount({ settings: { permissions: { defaultMode: 'bypass' } } });
+    expect(frame()).toContain('bypass permissions on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('manual mode on');
+    await type(KEYS.shiftTab, KEYS.shiftTab, KEYS.shiftTab, KEYS.shiftTab);
+    expect(frame()).toContain('read-only mode on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('bypass permissions on');
   });
 });

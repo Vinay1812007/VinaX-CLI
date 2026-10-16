@@ -3,6 +3,7 @@ import { cacheDir, logDir, type Env } from './config/paths.js';
 import type { Settings } from './config/schema.js';
 import { openSecretStore, type SecretStore } from './config/secrets.js';
 import { createFileLogger, noopLogger, type Logger } from './log/logger.js';
+import { BYPASS_WARNING, bypassRefusal } from './permissions/bypass.js';
 import { ModelCatalog } from './providers/catalog.js';
 import {
   PROBE_CONCURRENCY,
@@ -186,6 +187,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   // wake in the background; its models are simply tried until the catalog can be fetched.
   const unreachable = new Set<ProviderName>();
   const startupNotes: string[] = [];
+  if (resolved.permissions.defaultMode === 'bypass') {
+    const refused = bypassRefusal(env);
+    if (refused === undefined) startupNotes.push(BYPASS_WARNING);
+    else {
+      resolved.permissions.defaultMode = 'default';
+      startupNotes.push(`${refused} Starting in manual mode.`);
+    }
+  }
   if (gateway && viaGateway.size > 0) {
     const probe = await gateway.client.probe(2500);
     if (!probe.ok) {
