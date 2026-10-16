@@ -36,6 +36,7 @@ interface RootOptions {
   yolo?: boolean;
   dangerouslySkipPermissions?: boolean;
   readOnly?: boolean;
+  approvalMode?: ApprovalMode;
   sandbox?: SandboxMode;
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -76,16 +77,26 @@ function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
+/** Gemini CLI's `--approval-mode` names, mapped to VinaX's modes. */
+const APPROVAL_MODES = {
+  default: 'default',
+  auto_edit: 'acceptEdits',
+  plan: 'plan',
+  yolo: 'bypass',
+} as const satisfies Record<string, PermissionMode>;
+type ApprovalMode = keyof typeof APPROVAL_MODES;
+
 /** `--yolo`, `--read-only` and `--permission-mode` name one mode; giving two is a mistake. */
 function chosenMode(o: RootOptions): PermissionMode | undefined {
   const picked = [
     ...(o.permissionMode === undefined ? [] : [o.permissionMode]),
     ...(o.yolo === true || o.dangerouslySkipPermissions === true ? (['bypass'] as const) : []),
     ...(o.readOnly === true ? (['readOnly'] as const) : []),
+    ...(o.approvalMode === undefined ? [] : [APPROVAL_MODES[o.approvalMode]]),
   ];
   if (new Set(picked).size > 1)
     throw new InvalidArgumentError(
-      `choose one permission mode; got ${picked.join(' and ')} (from --permission-mode, --yolo and --read-only)`,
+      `choose one permission mode; got ${picked.join(' and ')} (from --permission-mode, --approval-mode, --yolo and --read-only)`,
     );
   return picked[0];
 }
@@ -154,6 +165,12 @@ export async function main(
       'bypass mode: run every tool without asking (deny rules still apply); refused as root',
     )
     .addOption(new Option('--dangerously-skip-permissions', 'same as --yolo').hideHelp())
+    .addOption(
+      new Option(
+        '--approval-mode <mode>',
+        'Gemini CLI names: default, auto_edit (acceptEdits), plan or yolo (bypass)',
+      ).choices(Object.keys(APPROVAL_MODES)),
+    )
     .addOption(
       new Option(
         '--sandbox <mode>',

@@ -1,8 +1,15 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import type { Runtime } from '@vinax/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { findCommand, loadCommands } from '../src/ui/commands/registry.js';
 import { cliSettings, type SessionOptions } from '../src/session-options.js';
-import { reviewPrompt } from '../src/ui/commands/workspace.js';
+import {
+  prCommentsPrompt,
+  reviewPrompt,
+  securityReviewPrompt,
+} from '../src/ui/commands/workspace.js';
 import { createHarness, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -85,6 +92,24 @@ describe('approval-mode flags', () => {
     expect(same.code).toBe(2);
   });
 
+  it('maps Gemini CLI --approval-mode names', async () => {
+    h = await createHarness({
+      groq: {
+        script: {
+          'main-model': [
+            { toolCalls: [tc('Write', { file_path: 'out.txt', content: 'hi\n' })] },
+            { text: 'Done.' },
+          ],
+        },
+      },
+    });
+    const r = await h.run(['-p', 'go', '--approval-mode', 'auto_edit']);
+    expect(r.code).toBe(0);
+    expect(await fs.readFile(path.join(h.cwd, 'out.txt'), 'utf8')).toBe('hi\n');
+    expect((await h.run(['-p', 'x', '--approval-mode', 'yolo', '--read-only'])).code).toBe(2);
+    expect((await h.run(['-p', 'x', '--approval-mode', 'sometimes'])).code).toBe(2);
+  });
+
   it('turns --sandbox into a settings layer', () => {
     const base: SessionOptions = {
       prompt: undefined,
@@ -102,6 +127,43 @@ describe('approval-mode flags', () => {
       sandbox: 'workspace-write',
       permissions: { defaultMode: 'readOnly' },
     });
+  });
+});
+
+describe('command registry', () => {
+  it('lets custom commands replace overridable built-ins and take aliases, but not core ones', async () => {
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vinax-reg-')));
+    try {
+      const dir = path.join(root, 'project', '.vinax', 'commands');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'review.md'), '---\ndescription: My review\n---\nReview.');
+      await fs.writeFile(path.join(dir, 'help.md'), '---\ndescription: My help\n---\nHelp.');
+      await fs.writeFile(path.join(dir, 'diff.md'), '---\ndescription: My diff\n---\nDiff.');
+      const runtime = {
+        cwd: path.join(root, 'project'),
+        env: { VINAX_HOME: path.join(root, 'home') },
+      } as unknown as Runtime;
+      const { commands, warnings } = await loadCommands(runtime);
+      expect(findCommand(commands, 'review')?.source).toBe('project');
+      expect(commands.filter((c) => c.name === 'review')).toHaveLength(1);
+      expect(findCommand(commands, 'help')?.source).toBe('builtin');
+      expect(warnings.some((w) => w.includes('/help'))).toBe(true);
+      // an exact name wins over a built-in's alias
+      expect(findCommand(commands, 'diff')?.source).toBe('project');
+      expect(findCommand(commands, 'compress')?.name).toBe('compact');
+      expect(findCommand(commands, 'add-dir')?.name).toBe('directory');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('review prompts', () => {
+  it('asks for a security review and for PR comments', () => {
+    expect(securityReviewPrompt('')).toContain('security review of my uncommitted changes');
+    expect(securityReviewPrompt('src/auth')).toContain('`src/auth`');
+    expect(prCommentsPrompt('12')).toContain('`gh pr view 12 --comments`');
+    expect(prCommentsPrompt('')).toContain('`gh pr view --comments`');
   });
 });
 

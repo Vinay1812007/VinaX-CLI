@@ -292,6 +292,16 @@ export class ShellSession {
     return true;
   }
 
+  /** Background jobs started this session, oldest first (for /bashes). */
+  listJobs(): { id: string; command: string; done: boolean; exitCode: number | undefined }[] {
+    return [...this.jobs.values()].map((j) => ({
+      id: j.id,
+      command: j.command,
+      done: j.done,
+      exitCode: j.exitCode,
+    }));
+  }
+
   killAll(): void {
     for (const job of this.jobs.values()) if (!job.done) killTree(job.process.pid);
   }

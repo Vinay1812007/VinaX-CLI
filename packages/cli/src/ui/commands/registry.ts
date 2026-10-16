@@ -45,13 +45,19 @@ export async function loadCommands(
 ): Promise<{ commands: SlashCommand[]; warnings: string[] }> {
   const { commands: custom, errors } = await loadCustomCommands(runtime.cwd, runtime.env);
   const warnings = [...errors];
-  const customNames = new Set(custom.map((c) => c.name));
-  const builtins = BUILTIN_COMMANDS.filter(
-    (c) => c.overridable !== true || !customNames.has(c.name),
-  );
-  const taken = new Set(builtins.map((c) => c.name));
+  const byName = new Map(custom.map((c) => [c.name, c]));
+  // a custom command takes an overridable built-in's place in the list (and in menus)
+  const replaced = new Set<string>();
+  const builtins = BUILTIN_COMMANDS.map((c) => {
+    const mine = c.overridable === true ? byName.get(c.name) : undefined;
+    if (mine === undefined) return c;
+    replaced.add(c.name);
+    return fromCustom(mine);
+  });
+  const taken = new Set(BUILTIN_COMMANDS.map((c) => c.name));
   const extra: SlashCommand[] = [];
   for (const c of custom) {
+    if (replaced.has(c.name)) continue;
     if (taken.has(c.name))
       warnings.push(
         `Custom command /${c.name} (${c.file}) has the same name as a built-in command and was skipped.`,

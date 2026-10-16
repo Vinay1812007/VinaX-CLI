@@ -1379,6 +1379,24 @@ describe('ChatScreen parity commands and modes', () => {
     }
   });
 
+  it('shows the task list and background commands', async () => {
+    const { frame, type, setup: s } = await mount();
+    await type('/todos', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('No tasks yet'), 'empty todos');
+    s.todos.set([
+      { content: 'Write the parser', status: 'completed' },
+      { content: 'Test it', status: 'in_progress' },
+    ]);
+    await type('/todos', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('◐ Test it'), 'todos');
+    expect(frame()).toContain('☑ Write the parser');
+    const id = s.shell.startBackground('sleep 5');
+    await type('/bashes', KEYS.esc, KEYS.enter);
+    await waitFor(() => flat(frame()).includes(`${id} running`), 'jobs');
+    await type(`/bashes kill ${id}`, KEYS.enter);
+    await waitFor(() => frame().includes(`Stopped ${id}.`), 'killed');
+  });
+
   it('sends a review prompt with /review', async () => {
     const { frame, type, harness } = await mount({
       groq: { script: { 'main-model': [{ text: 'Looks fine.' }] } },

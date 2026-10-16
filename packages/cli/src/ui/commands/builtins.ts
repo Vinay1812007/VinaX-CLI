@@ -73,7 +73,15 @@ import {
 } from './extra.js';
 import { plugin } from './plugins.js';
 import type { CommandContext, SlashCommand } from './types.js';
-import { directoryCommand, reviewCommand, toolsCommand } from './workspace.js';
+import {
+  bashesCommand,
+  directoryCommand,
+  prCommentsCommand,
+  reviewCommand,
+  securityReviewCommand,
+  todosCommand,
+  toolsCommand,
+} from './workspace.js';
 
 const INIT_PROMPT = `Study this codebase and write a VINAX.md file in the project root that will help future VinaX sessions work here. Cover:
 1. How to build, test, lint and run it — exact commands, including how to run a single test.
@@ -1276,6 +1284,10 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   toolsCommand,
   directoryCommand,
   reviewCommand,
+  securityReviewCommand,
+  prCommentsCommand,
+  todosCommand,
+  bashesCommand,
   resume,
   rewind,
   changes,

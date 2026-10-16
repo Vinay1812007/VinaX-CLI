@@ -44,7 +44,7 @@ export const PALETTE_ACTIONS: readonly PaletteAction[] = [
   {
     id: 'mode',
     label: 'Next permission mode',
-    description: 'manual → accept edits → plan → auto',
+    description: 'manual → accept edits → plan → auto → read-only',
     keys: 'Shift+Tab',
   },
   { id: 'shortcuts', label: 'Keyboard shortcuts', description: 'every key binding', keys: '?' },
