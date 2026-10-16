@@ -6,42 +6,49 @@
 
 Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 
-| Command                              | What it does                                                               |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| `/help`                              | Commands and keyboard shortcuts                                            |
-| `/clear` (`/new`)                    | Start a new conversation. The old one stays available in `/resume`         |
-| `/compact [focus]`                   | Summarize the conversation to free up context                              |
-| `/context`                           | What is filling the context window, and when auto-compaction starts        |
-| `/model [provider:model \| alias]`   | Switch the model for this session (with a searchable picker)               |
-| `/models [test]`                     | Providers, models that answer, the fallback order and aliases; then switch |
-| `/resume`                            | Continue an earlier conversation in this folder                            |
-| `/rewind`                            | Go back to an earlier prompt, restoring files and/or the conversation      |
-| `/changes` (`/diff`)                 | Review files changed this session: diffs, and undo per file (`Ctrl+G`)     |
-| `/init`                              | Analyze the project and write a starter `VINAX.md`                         |
-| `/memory`                            | Edit a memory file in your `$EDITOR`                                       |
-| `/status`                            | Session, providers, remaining rate limits and OpenRouter quota             |
-| `/usage`                             | Tokens and cost: this session, today, the last 7 days and all time         |
-| `/doctor`                            | Check the installation, keys, search, shell, git, keychain and terminal    |
-| `/health`                            | A concise, grouped health summary (full details: `/doctor`)                |
-| `/about`                             | Version, runtime, install type, model, gateway, MCP and platform           |
-| `/update`                            | Installed vs latest version, and how to update this install                |
-| `/changelog`, `/whats-new`           | Release notes for recent versions                                          |
-| `/snake`, `/game`                    | Play Snake II, Nokia 3310-style, in colour                                 |
-| `/effort [auto\|low\|medium\|high]`  | How hard reasoning models think before answering                           |
-| `/copy [n]`                          | Copy the last answer, or its nth code block, to the clipboard              |
-| `/skills`                            | [Skills](/skills) VinaX can load for specific tasks                        |
-| `/output-style [name \| new <name>]` | How VinaX writes its answers: default, explanatory, learning, or yours     |
-| `/plugin [...]`                      | [Plugins](/plugins): marketplaces, install, enable, disable, uninstall     |
-| `/login`, `/logout`                  | Add or remove a provider key, or connect or disconnect a gateway           |
-| `/settings` (`/config`)              | Change settings in a panel: model, effort, mode, theme and more            |
-| `/permissions`                       | Permission mode and rules: view, add, remove, change mode                  |
-| `/hooks`                             | Show configured [hooks](/hooks)                                            |
-| `/mcp`                               | [MCP servers](/mcp), their tools, and approving project servers            |
-| `/agents`                            | [Sub-agents](/sub-agents) the Task tool can use                            |
-| `/theme`, `/vim`                     | Change the colour theme; toggle vim key bindings                           |
-| `/export [file]`                     | Save the conversation as Markdown                                          |
-| `/bug`                               | Open a pre-filled GitHub issue                                             |
-| `/exit` (`/quit`)                    | Quit                                                                       |
+| Command                                     | What it does                                                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `/help`                                     | Commands and keyboard shortcuts                                                         |
+| `/clear` (`/new`)                           | Start a new conversation. The old one stays available in `/resume`                      |
+| `/compact [focus]` (`/compress`)            | Summarize the conversation to free up context                                           |
+| `/context`                                  | What is filling the context window, and when auto-compaction starts                     |
+| `/model [provider:model \| alias]`          | Switch the model for this session (with a searchable picker)                            |
+| `/models [test]`                            | Providers, models that answer, the fallback order and aliases; then switch              |
+| `/resume`                                   | Continue an earlier conversation in this folder                                         |
+| `/rewind` (`/restore`, `/checkpoint`)       | Go back to an earlier prompt, restoring files and/or the conversation                   |
+| `/changes` (`/diff`)                        | Review files changed this session: diffs, and undo per file (`Ctrl+G`)                  |
+| `/init`                                     | Analyze the project and write a starter `VINAX.md`                                      |
+| `/memory [show\|list\|add <note>\|refresh]` | Edit a memory file in your `$EDITOR`, or show, list, add to or reload [memory](/memory) |
+| `/tools [desc]`                             | List the tools VinaX can use now, MCP tools included                                    |
+| `/directory [add <path>]` (`/add-dir`)      | Show the workspace folders, or let tools use another folder this session                |
+| `/review [pr \| branch]`                    | Review uncommitted changes, a branch, or a GitHub pull request (via `gh`)               |
+| `/security-review [path]`                   | Security review of uncommitted changes or a path                                        |
+| `/pr-comments [pr]`                         | Summarise the review comments on a GitHub pull request (via `gh`)                       |
+| `/todos`                                    | Show the agent's task list                                                              |
+| `/bashes [kill <id>]` (`/jobs`)             | List background commands, or stop one                                                   |
+| `/status`                                   | Session, providers, remaining rate limits and OpenRouter quota                          |
+| `/usage`                                    | Tokens and cost: this session, today, the last 7 days and all time                      |
+| `/doctor`                                   | Check the installation, keys, search, shell, git, keychain and terminal                 |
+| `/health`                                   | A concise, grouped health summary (full details: `/doctor`)                             |
+| `/about`                                    | Version, runtime, install type, model, gateway, MCP and platform                        |
+| `/update`                                   | Installed vs latest version, and how to update this install                             |
+| `/changelog`, `/whats-new`                  | Release notes for recent versions                                                       |
+| `/snake`, `/game`                           | Play Snake II, Nokia 3310-style, in colour                                              |
+| `/effort [auto\|low\|medium\|high]`         | How hard reasoning models think before answering                                        |
+| `/copy [n]`                                 | Copy the last answer, or its nth code block, to the clipboard                           |
+| `/skills`                                   | [Skills](/skills) VinaX can load for specific tasks                                     |
+| `/output-style [name \| new <name>]`        | How VinaX writes its answers: default, explanatory, learning, or yours                  |
+| `/plugin [...]` (`/extensions`)             | [Plugins](/plugins): marketplaces, install, enable, disable, uninstall                  |
+| `/login`, `/logout`                         | Add or remove a provider key, or connect or disconnect a gateway                        |
+| `/settings` (`/config`)                     | Change settings in a panel: model, effort, mode, theme and more                         |
+| `/permissions` (`/approvals`)               | Permission mode, sandbox and rules: view, add, remove, change mode                      |
+| `/hooks`                                    | Show configured [hooks](/hooks)                                                         |
+| `/mcp`                                      | [MCP servers](/mcp), their tools, and approving project servers                         |
+| `/agents`                                   | [Sub-agents](/sub-agents) the Task tool can use                                         |
+| `/theme`, `/vim`                            | Change the colour theme; toggle vim key bindings                                        |
+| `/export [file]`                            | Save the conversation as Markdown                                                       |
+| `/bug`                                      | Open a pre-filled GitHub issue                                                          |
+| `/exit` (`/quit`)                           | Quit                                                                                    |
 
 ### Models, health and about
 
@@ -66,6 +73,8 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 ## Custom commands
 
 Put a Markdown file in `.vinax/commands/` for the project, or `~/.vinax/commands/` just for you. The file name becomes the command, and subfolders become namespaces: `git/review.md` is `/git:review`.
+
+A custom command cannot replace a core built-in such as `/help`, but it does replace the newer built-ins `/review`, `/security-review`, `/pr-comments`, `/tools`, `/directory`, `/todos` and `/bashes`, and it takes precedence over a built-in's alias (a `diff.md` command beats `/changes`' alias `/diff`).
 
 ```markdown
 ---

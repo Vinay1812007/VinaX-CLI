@@ -12,8 +12,10 @@ VinaX (`vinax`) is an open-source AI coding agent for the terminal. It runs on m
 > **Status: all six milestones (M1–M6) are built.** VinaX reads, searches and edits your code,
 > runs commands and asks before anything risky. It has slash and custom commands, `@` file
 > mentions, project memory, saved sessions and automatic compaction, plus hooks, MCP servers,
-> sub-agents, skills, images and WebFetch. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
-> through an optional shared [gateway](docs/gateway.md).
+> sub-agents, skills, images, WebSearch and WebFetch, read-only and bypass approval modes and an
+> optional OS sandbox for commands. It runs on Groq, OpenRouter and NVIDIA with automatic fallback, or
+> through an optional shared [gateway](docs/gateway.md). See [how it compares](docs/parity.md) with
+> Claude Code, Codex CLI and Gemini CLI.
 >
 > 📖 **Documentation: https://vinay1812007.github.io/VinaX-CLI/**
 
@@ -263,6 +265,7 @@ one-line result underneath:
 | `Bash`               | Runs a command. The working directory persists between calls. Commands time out (2 min default, 10 max) and can run in the background (`BashOutput`, `KillBash`). Interactive programs are refused. On Windows it uses Git Bash when installed, otherwise PowerShell |
 | `TodoWrite`          | Keeps a live task list, shown above the prompt                                                                                                                                                                                                                       |
 | `ExitPlanMode`       | Presents a plan for your approval in plan mode                                                                                                                                                                                                                       |
+| `WebSearch`          | Searches the web: DuckDuckGo with no key, or Brave / Tavily when `BRAVE_API_KEY` / `TAVILY_API_KEY` is set. Filters by allowed/blocked domains; the model then reads results with WebFetch                                                                           |
 | `WebFetch`           | Fetches a URL, converts HTML to Markdown and has the small model answer a question about it. Asks per domain (`WebFetch(domain:example.com)`); redirects to another host are reported rather than followed                                                           |
 | `Task`               | Hands a self-contained job to a sub-agent with its own context and gets its report back                                                                                                                                                                              |
 | `mcp__server__tool`  | Tools from your MCP servers                                                                                                                                                                                                                                          |
@@ -299,12 +302,19 @@ Some actions **always** ask, even with allow rules or auto-accept on:
 
 **Modes** (Shift+Tab, or `--permission-mode`):
 
-| Footer               | Mode          | Behaviour                                                                                                                                                          |
-| -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `⏸ manual mode on`   | `default`     | Asks before edits and commands                                                                                                                                     |
-| `⏵⏵ accept edits on` | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                                                            |
-| `⏸ plan mode on`     | `plan`        | Read-only. VinaX researches, then presents a plan. You approve it (with or without auto-accept) or ask for changes                                                 |
-| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project run without asking. Dangerous commands, ask and deny rules, anything outside the project and MCP tools still ask |
+| Footer                    | Mode          | Behaviour                                                                                                                                                                 |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `⏸ manual mode on`        | `default`     | Asks before edits and commands                                                                                                                                            |
+| `⏵⏵ accept edits on`      | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                                                                   |
+| `⏸ plan mode on`          | `plan`        | Read-only. VinaX researches, then presents a plan. You approve it (with or without auto-accept) or ask for changes                                                        |
+| `⏵⏵ auto mode on`         | `auto`        | Edits, commands and web access inside the project run without asking. Dangerous commands, ask and deny rules, anything outside the project and MCP tools still ask        |
+| `⊘ read-only mode on`     | `readOnly`    | Reads, searches and read-only commands run; every edit and other command is refused without asking (`--read-only`)                                                        |
+| `⚠ bypass permissions on` | `bypass`      | Everything runs without asking, dangerous commands included; only deny rules refuse (`--yolo`). Refused as root. In the Shift+Tab cycle only if the session started in it |
+
+**Sandbox:** `--sandbox workspace-write` (or `"sandbox": "workspace-write"` in settings) runs Bash
+commands under `sandbox-exec` on macOS or `bwrap` on Linux, so they can only write inside the
+project, temp folders and `~/.vinax`; `read-only` also blocks writes there and cuts the network.
+See [Permissions → Sandbox](docs/permissions.md#sandbox).
 
 `/permissions` shows the rules and lets you add or remove allow, ask and deny rules, or change the
 mode, without editing JSON.
@@ -353,7 +363,9 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/models [test]`                   | Providers, models that answered a test, fallback order, aliases; then switch (`test` retests)                             |
 | `/resume`, `/rewind`               | Continue an earlier conversation; go back to an earlier prompt                                                            |
 | `/changes`                         | Review files changed this session: diffs, and undo per file (`Ctrl+G`)                                                    |
-| `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                                                                |
+| `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`, or `/memory show\|list\|add <note>\|refresh`                  |
+| `/tools`, `/directory add <path>`  | List the tools in use; let tools use another folder this session (also `/add-dir`)                                        |
+| `/review [pr \| branch]`           | Review uncommitted changes, a branch or a GitHub pull request                                                             |
 | `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; reported/estimated tokens and cost, requests today                      |
 | `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
 | `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
@@ -406,8 +418,9 @@ The template supports:
 them short:
 
 - `~/.vinax/VINAX.md` (personal)
-- `VINAX.md` and `AGENTS.md` in each folder from the repository root down to the working folder
-- `VINAX.md` and `AGENTS.md` in subfolders, when VinaX first works in them
+- `VINAX.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` in each folder from the repository root down to the working folder (copies are sent once)
+- `.github/copilot-instructions.md` at the repository root
+- the same four names in subfolders, when VinaX first works in them
 - `@path/to/file.md` inside a memory file, which imports that file (up to four levels deep)
 
 ## Sessions and context
@@ -544,20 +557,22 @@ vinax -p "fix the failing test" --allowedTools "Bash(npm test:*)" --permission-m
 vinax -p "summarize src/" --output-format stream-json --max-turns 10
 ```
 
-| Flag                                      | Meaning                                                                 |
-| ----------------------------------------- | ----------------------------------------------------------------------- |
-| `-p, --print`                             | Run once without the UI. Piped stdin is added to the prompt as context. |
-| `--output-format text\|json\|stream-json` | `json` prints one result object; `stream-json` prints NDJSON events.    |
-| `--model <provider:model \| alias>`       | Try this model first, ahead of the configured chain.                    |
-| `--permission-mode <mode>`                | `default`, `acceptEdits` or `plan`.                                     |
-| `--allowedTools <rules>`                  | Allow without asking, e.g. `"Bash(npm test:*),Edit"`.                   |
-| `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`.                                 |
-| `--add-dir <path>`                        | Let tools work in another folder too (repeatable).                      |
-| `--max-turns <n>`                         | Stop after this many model calls per prompt.                            |
-| `--token-budget <n>`, `--time-budget <s>` | Stop a task after this many tokens / seconds.                           |
-| `-w, --worktree [name]`                   | Work in an isolated git worktree; see `vinax worktree`.                 |
-| `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/` (keys redacted). |
-| `-v, --version`                           | Print the version.                                                      |
+| Flag                                      | Meaning                                                                    |
+| ----------------------------------------- | -------------------------------------------------------------------------- |
+| `-p, --print`                             | Run once without the UI. Piped stdin is added to the prompt as context.    |
+| `--output-format text\|json\|stream-json` | `json` prints one result object; `stream-json` prints NDJSON events.       |
+| `--model <provider:model \| alias>`       | Try this model first, ahead of the configured chain.                       |
+| `--permission-mode <mode>`                | `default`, `acceptEdits`, `plan`, `auto`, `readOnly` or `bypass`.          |
+| `--read-only`, `--yolo`                   | Shorthands for `readOnly` and `bypass` (`--dangerously-skip-permissions`). |
+| `--sandbox <mode>`                        | Confine Bash: `workspace-write` or `read-only`.                            |
+| `--allowedTools <rules>`                  | Allow without asking, e.g. `"Bash(npm test:*),Edit"`.                      |
+| `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`.                                    |
+| `--add-dir <path>`                        | Let tools work in another folder too (repeatable).                         |
+| `--max-turns <n>`                         | Stop after this many model calls per prompt.                               |
+| `--token-budget <n>`, `--time-budget <s>` | Stop a task after this many tokens / seconds.                              |
+| `-w, --worktree [name]`                   | Work in an isolated git worktree; see `vinax worktree`.                    |
+| `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/` (keys redacted).    |
+| `-v, --version`                           | Print the version.                                                         |
 
 Print mode cannot ask for approval. An action that would need approval fails with a hint naming
 the `--allowedTools` rule that would allow it, and the model carries on without it.

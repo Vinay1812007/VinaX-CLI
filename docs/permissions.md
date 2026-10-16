@@ -13,7 +13,7 @@ When VinaX needs approval, it shows what it wants to do: the command, the diff, 
 3. **No, and tell VinaX what to do differently.** Your note goes to the model and it carries on. Esc just stops.
 
 :::warning Always asked
-These always ask, whatever your rules or mode say:
+These always ask, whatever your rules or mode say (except in bypass mode, below):
 
 - recursive deletes such as `rm -rf`
 - force-pushes, `git reset --hard` and `git clean`
@@ -27,12 +27,14 @@ These always ask, whatever your rules or mode say:
 
 The footer shows the current mode. Shift+Tab cycles them in this order; `--permission-mode` sets one at start and `permissions.defaultMode` in [settings](/settings) sets the default.
 
-| Footer               | Mode          | Behaviour                                                                                                                    |
-| -------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `⏸ manual mode on`   | `default`     | Asks before edits, commands and web access                                                                                   |
-| `⏵⏵ accept edits on` | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                      |
-| `⏸ plan mode on`     | `plan`        | Read-only. VinaX researches, then presents a plan for you to approve (with or without auto-accept) or send back with changes |
-| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project run without asking                                                         |
+| Footer                    | Mode          | Behaviour                                                                                                                                              |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `⏸ manual mode on`        | `default`     | Asks before edits, commands and web access                                                                                                             |
+| `⏵⏵ accept edits on`      | `acceptEdits` | Edits inside the project are approved automatically; commands still ask                                                                                |
+| `⏸ plan mode on`          | `plan`        | Read-only. VinaX researches, then presents a plan for you to approve (with or without auto-accept) or send back with changes                           |
+| `⏵⏵ auto mode on`         | `auto`        | Edits, commands and web access inside the project run without asking                                                                                   |
+| `⊘ read-only mode on`     | `readOnly`    | Reads, searches and read-only commands (`ls`, `cat`, `grep`, `git status`/`diff`/`log`…) run; every edit and other command is refused without asking   |
+| `⚠ bypass permissions on` | `bypass`      | Everything runs without asking, dangerous commands included. Only deny rules still refuse. Not in the Shift+Tab cycle unless the session started in it |
 
 Auto mode is for letting VinaX work through a task on its own. It still stops and asks for:
 
@@ -44,6 +46,47 @@ Auto mode is for letting VinaX work through a task on its own. It still stops an
 ```bash
 vinax --permission-mode auto
 ```
+
+### Read-only mode
+
+Like Codex CLI's read-only preset: VinaX can look but not touch. Edits, writes, MCP tools and any command that is not plainly read-only are refused at once with a message the model can act on, so nothing waits for you. A command counts as read-only when every part of it is a known reading program (`ls`, `cat`, `head`, `grep`, `rg`, `find` without `-delete`/`-exec`, `git status`/`diff`/`log`/`show`/`blame`, `jq`, …), nothing is redirected to a file, and there is no `$(…)`, backticks or `VAR=value` prefix. Read-only commands that mention a path outside the project still ask, as do reads outside it.
+
+```bash
+vinax --read-only            # same as --permission-mode readOnly
+vinax -p --read-only "explain the auth flow"
+```
+
+### Bypass mode
+
+The equivalent of Claude Code's `--dangerously-skip-permissions` and Codex's `--yolo`: every edit, command and web request runs without asking, including the "always asked" list. Deny rules still refuse. VinaX shows a warning when the session starts and the footer turns red.
+
+```bash
+vinax --yolo                 # also --dangerously-skip-permissions or --permission-mode bypass
+```
+
+Bypass mode is refused when VinaX runs as root (a bad command could damage the whole machine). In a disposable container, set `VINAX_ALLOW_ROOT_BYPASS=1`. Combine it with the [sandbox](#sandbox) so commands cannot write outside the project.
+
+## Sandbox
+
+The `sandbox` setting (or `--sandbox <mode>`) confines what Bash commands can do at the operating-system level, like Codex CLI's sandbox. It is off by default.
+
+| Mode              | Commands may write                                            | Network |
+| ----------------- | ------------------------------------------------------------- | ------- |
+| `off`             | anywhere your user can                                        | yes     |
+| `workspace-write` | the project, `--add-dir` folders, temp folders and `~/.vinax` | yes     |
+| `read-only`       | temp folders only                                             | no      |
+
+On macOS VinaX runs each command through `sandbox-exec` with a Seatbelt profile; on Linux it uses [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) when it is installed. Where no sandbox is available (Linux without `bwrap`, Windows) and the setting is not `off`, VinaX warns at start and the Bash tool **refuses** to run commands rather than running them unconfined. `/permissions` shows the sandbox in use.
+
+```json
+{ "sandbox": "workspace-write" }
+```
+
+```bash
+vinax --yolo --sandbox workspace-write   # run everything, but only write inside the project
+```
+
+The sandbox applies to the Bash tool (and `!` commands); file tools are governed by permissions and the workspace. Package managers that write caches in your home folder (`~/.npm`, `~/.cache`) may fail under `workspace-write`; add the folder with `--add-dir` if you need it. In a [worktree](/worktrees) the main checkout's `.git` folder is writable too, so commits work.
 
 ## Rules
 
@@ -72,7 +115,7 @@ A compound command such as `a && b | c` is allowed only when **every** part matc
 
 ### Managing rules with `/permissions`
 
-`/permissions` (also `/allowed-tools`) shows the mode and every rule in effect under Allow, Ask and Deny, with where each came from. Then it offers to:
+`/permissions` (also `/allowed-tools` and `/approvals`) shows the mode and every rule in effect under Allow, Ask and Deny, with where each came from. Then it offers to:
 
 - **Add an allow, ask or deny rule.** The rule is checked, saved where you choose (this project only for you in `.vinax/settings.local.json`, this project shared in `.vinax/settings.json`, or all your projects in `~/.vinax/settings.json`) and applied straight away.
 - **Remove a rule**, picked from a searchable list. It is removed from the session and from your settings files.
