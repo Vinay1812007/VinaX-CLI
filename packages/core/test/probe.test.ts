@@ -283,7 +283,7 @@ describe('model tests over HTTP', () => {
     const gateway = new GatewayClient(server.url.replace(/\/v1$/, ''), { timeoutMs: 5000 });
     const provider = createGatewayProvider('nvidia', gateway, 'vxg_tok', {
       settings,
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       logger: noopLogger,
     });
     const [result] = await probeModels(provider, ['openai/gpt-oss-20b']);
@@ -307,7 +307,7 @@ describe('model tests over HTTP', () => {
         apiKey: key,
         timeoutMs: 90_000,
         keyCheckTimeoutMs,
-        ledger: new RateLimitLedger(() => Infinity),
+        ledger: new RateLimitLedger(),
         logger: noopLogger,
         keyCheck: {
           completionModels: ['openai/gpt-oss-20b', 'meta/llama-3.2-11b-vision-instruct'],
@@ -333,7 +333,7 @@ describe('model tests over HTTP', () => {
       apiKey: 'nvapi-x',
       timeoutMs: 90_000,
       keyCheckTimeoutMs: 100,
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       logger: noopLogger,
       keyCheck: { completionModels: ['openai/gpt-oss-20b'] },
     });

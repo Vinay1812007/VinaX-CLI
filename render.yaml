@@ -23,11 +23,6 @@ services:
       # Comma-separated name:sha256 entries; create them with `pnpm gateway:token <name>`.
       - key: VINAX_TOKEN_HASHES
         sync: false
-      # Per-token limits (kept in memory; they reset when the service restarts or wakes up).
-      - key: RATE_LIMIT_RPM
-        value: '20'
-      - key: RATE_LIMIT_RPD
-        value: '500'
       - key: MAX_BODY_BYTES
         value: '8000000'
       # Tried in order when a client asks for "model": "auto".

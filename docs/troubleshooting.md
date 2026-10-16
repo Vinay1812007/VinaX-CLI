@@ -14,12 +14,18 @@ temporary provider error, network, model not available) with suggested next step
 Groq's free tier allows about 30 requests a minute, and each model has its own tokens-per-minute
 budget. One agent step is one request, and a long conversation can use most of a minute's tokens.
 When a wait would take longer than `router.maxWaitMs` (20 s), VinaX moves to the next model in
-`fallbackChain` and shows a dim notice. `/status` shows the remaining limits, and `/usage` shows
-today's totals.
+`fallbackChain` and shows a dim notice. `/status` shows the remaining limits the providers report.
 
 OpenRouter's `:free` models allow 50 requests a day per account, or 1,000 after a one-time $10
 credit purchase. When OpenRouter reports the quota as used up, VinaX skips those models until it
 resets instead of waiting.
+
+### "Waiting for the NVIDIA rate limit"
+
+VinaX never limits NVIDIA usage itself. NVIDIA's free endpoints limit requests per minute on their
+side; when NVIDIA answers 429, VinaX waits (as long as `Retry-After` says, otherwise backing off up
+to 30 s) and retries the same model until it answers. It does not skip the model or fall back.
+Press `Esc` to stop waiting.
 
 ### NVIDIA requests fail
 
@@ -72,9 +78,9 @@ VinaX found that a file differs from what it last wrote: you edited it, a shell 
 
 The session file has lines VinaX could not use. They were skipped and the rest was loaded; the notice lists the line numbers and the file's path, and the file is not modified. An interrupted last write is moved to `<session>.jsonl.torn` instead. See [Damaged session files](/sessions#damaged-session-files).
 
-### A task stopped "at the budget" or "going in circles"
+### A task stopped "going in circles"
 
-Budgets come from `budget.tokens` / `budget.seconds` in settings or `--token-budget` / `--time-budget`. A task that keeps repeating a failing call is stopped so it does not burn tokens. In both cases what was done is kept: send a message to continue. See [Usage, budgets and cost](/usage).
+VinaX notices a task that stops making progress: the same tool call (same tool, same input) failing again and again, the same call returning the same result again and again, or five model replies in a row whose tool calls all failed. The model is warned first. If it keeps going, the task stops with `⟲ stopped: going in circles` and a notice explaining which call repeated, its last error, and what to do: tell VinaX what to try instead, run the failing command yourself with `!`, or rewind with `Esc Esc`. What was done is kept: send a message to continue. Polling a background command with `BashOutput` does not count.
 
 ### Windows
 

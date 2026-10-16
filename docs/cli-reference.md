@@ -34,8 +34,6 @@
 | `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`                                                                  |
 | `--add-dir <path>`                        | Also let tools work in this folder (repeatable)                                                         |
 | `--max-turns <n>`                         | Stop after this many model calls per prompt                                                             |
-| `--token-budget <n>`                      | Stop a task after this many tokens, reported or estimated ([budgets](/usage#budgets))                   |
-| `--time-budget <seconds>`                 | Stop a task after this many seconds                                                                     |
 | `-w, --worktree [name]`                   | Work in an [isolated git worktree](/worktrees), created from `HEAD` if needed                           |
 | `-c, --continue`                          | Continue the most recent conversation in this folder                                                    |
 | `-r, --resume [session-id]`               | Resume a conversation                                                                                   |

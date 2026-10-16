@@ -7,8 +7,8 @@ OpenRouter and NVIDIA keys on a server, so people you give a token to can use Vi
   each user's machine.
 - **It is opt-in.** VinaX talks to Groq, OpenRouter and NVIDIA directly with your own keys
   unless you run `vinax login --gateway`. Even then, a provider you have a key for keeps using it.
-- **It is stateless.** There is no database. Tokens are stored as hashes in an environment variable,
-  and rate-limit counters live in memory.
+- **It is stateless.** There is no database. Tokens are stored as hashes in an environment variable.
+  The gateway sets no request limits of its own; only the providers' limits apply.
 
 > **Quota warning.** Everyone behind one gateway shares its free-tier limits: about 30 requests a
 > minute and a per-model token budget on Groq, and 50 `:free` requests a day on OpenRouter (1,000
@@ -69,8 +69,6 @@ again. Free services also get 750 instance-hours a month. VinaX handles the slee
 | `OPENROUTER_API_KEY`                                      | —                                                           | OpenRouter key used for `openrouter:` models                                |
 | `NVIDIA_API_KEY`                                          | —                                                           | NVIDIA key used for `nvidia:` models                                        |
 | `VINAX_TOKEN_HASHES`                                      | —                                                           | `name:sha256` entries, comma or newline separated                           |
-| `RATE_LIMIT_RPM`                                          | `20`                                                        | requests per minute per token                                               |
-| `RATE_LIMIT_RPD`                                          | `500`                                                       | requests per UTC day per token                                              |
 | `MAX_BODY_BYTES`                                          | `8000000`                                                   | largest accepted request body (images need several MB)                      |
 | `DEFAULT_MODELS`                                          | `groq:openai/gpt-oss-120b,openrouter:qwen/qwen3.8-27b:free` | tried in order for `"model": "auto"`                                        |
 | `UPSTREAM_TIMEOUT_MS`                                     | `60000`                                                     | wait for a provider to start answering                                      |
@@ -104,7 +102,7 @@ does its own fallback, because its router tracks each model's rate limits.
 
 - `401` means the token is missing or unknown.
 - `413` means the body is too large.
-- `429` comes from the per-token limit (with `retry-after`) or from a rate-limited provider.
+- `429` means every model tried was rate limited by its provider (`retry-after` is passed on).
 - `502` means no model could answer. A provider rejecting the _gateway's_ key also shows as 502, so
   clients never mistake it for their own token failing.
 

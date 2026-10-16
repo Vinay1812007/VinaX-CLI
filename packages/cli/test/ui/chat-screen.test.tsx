@@ -165,7 +165,6 @@ describe('ChatScreen', () => {
     expect(out).toContain('Some bold text.');
     expect(out).toContain('• one');
     expect(out).toContain('groq:main-model');
-    expect(out).toMatch(/\d+% context/);
   });
 
   it('supports multi-line input and collapses large pastes', async () => {
@@ -634,8 +633,8 @@ describe('ChatScreen review workflow', () => {
     await waitFor(() => frame().includes('Command palette'), 'palette');
     expect(frame()).toContain('Review changes');
     expect(frame()).toContain('Ctrl+G');
-    await type('usage');
-    await waitFor(() => frame().includes('/usage'), 'filtered');
+    await type('status');
+    await waitFor(() => frame().includes('/status'), 'filtered');
     expect(frame()).not.toContain('Review changes');
     await type(KEYS.enter);
     await waitFor(() => !frame().includes('Command palette'), 'ran');
@@ -883,50 +882,16 @@ describe('ChatScreen workflow (M4)', () => {
     );
   });
 
-  it('shows /status, /usage and /doctor panels', async () => {
+  it('shows /status and /doctor panels', async () => {
     const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
     await type('hi', KEYS.enter);
     await waitFor(() => frame().includes('◆ ok'), 'answer');
     await type('/status', KEYS.enter);
     await waitFor(() => frame().includes('Status'), 'status');
     expect(frame()).toContain('model: groq:main-model');
-    await type('/usage', KEYS.enter);
-    await waitFor(() => /Groq — \d+ requests? ·/.test(frame()), 'usage');
-    // rolled up beyond this session, so a day's spend is visible after it ends
-    const usagePanel = flat(frame());
-    expect(usagePanel).toMatch(/Today: \d+ requests · \d+ in/);
-    expect(usagePanel).toContain('Last 7 days (1 day)');
-    expect(usagePanel).toContain('All time (1 day)');
+    expect(frame()).not.toContain('% context');
     await type('/doctor', KEYS.enter);
     await waitFor(() => frame().includes('✔ Node.js'), 'doctor');
-  });
-
-  it('breaks the context window down in /context', async () => {
-    const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
-    await type('hi', KEYS.enter);
-    await waitFor(() => frame().includes('◆ ok'), 'answer');
-    await type('/context', KEYS.enter);
-    await waitFor(() => frame().includes('Context'), 'context panel');
-    expect(frame()).toContain('System prompt');
-    expect(frame()).toContain('Tool definitions');
-    expect(frame()).toContain('Messages');
-    expect(frame()).toContain('Free');
-    // The bars are drawn, and the auto-compaction point is stated before it is reached.
-    expect(frame()).toMatch(/[█░]/);
-    expect(frame()).toContain('Auto-compaction starts at');
-  });
-
-  it('warns that auto-compaction is approaching before it happens', async () => {
-    // The system prompt and tools alone (~3.3k tokens) have to land between the 75% warning and
-    // the 85% compaction point: 4100 puts them at ~80%, leaving room on both sides for the
-    // prompt to drift. If this starts failing, re-check that share before widening anything.
-    const { frame, type } = await mount({
-      settings: { context: { maxTokens: 4100 } },
-      groq: { script: { 'main-model': [{ text: 'ok' }] } },
-    });
-    await type('hi', KEYS.enter);
-    await waitFor(() => frame().includes('Older history is summarized automatically'), 'warning');
-    expect(frame()).toContain('/compact');
   });
 
   it('records the session for resuming and asks the app to clear', async () => {

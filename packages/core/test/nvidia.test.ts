@@ -102,7 +102,6 @@ describe('NVIDIA settings', () => {
     expect(DEFAULT_SETTINGS.providers.nvidia).toEqual({
       enabled: true,
       baseUrl: 'https://integrate.api.nvidia.com/v1',
-      rpm: Infinity,
     });
     expect(DEFAULT_SETTINGS.fallbackChain.at(-1)).toBe('nvidia:openai/gpt-oss-20b');
   });
@@ -112,7 +111,7 @@ describe('NVIDIA settings', () => {
       {
         model: 'NVD_CHAT_OSS_20_B',
         fallbackChain: ['nvidia.com:openai/gpt-oss-20b', 'groq:x'],
-        providers: { nvidia: { baseUrl: 'http://nim.internal:8000/v1', rpm: 5 } },
+        providers: { nvidia: { baseUrl: 'http://nim.internal:8000/v1' } },
       },
       'test',
     );
@@ -123,7 +122,6 @@ describe('NVIDIA settings', () => {
     expect(r.providers.nvidia).toEqual({
       enabled: true,
       baseUrl: 'http://nim.internal:8000/v1',
-      rpm: 5,
     });
   });
 
@@ -151,7 +149,7 @@ describe('NVIDIA credentials', () => {
 describe('NVIDIA provider', () => {
   const deps = (s: ResolvedSettings) => ({
     settings: s,
-    ledger: new RateLimitLedger(() => 40),
+    ledger: new RateLimitLedger(),
     logger: noopLogger,
   });
 
@@ -265,7 +263,7 @@ function router(
   return {
     router: new Router({
       providers: fakes,
-      ledger: new RateLimitLedger(() => 40),
+      ledger: new RateLimitLedger(),
       settings,
       sleep: () => Promise.resolve(),
     }),

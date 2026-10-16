@@ -1,4 +1,4 @@
-import type { AgentOutcome, FailureReport, ModelUsage, ToolDisplay } from '@vinax/core';
+import type { AgentOutcome, FailureReport, ToolDisplay } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
 
 export type TranscriptItem =
@@ -89,8 +89,6 @@ export interface TurnRecord {
   outputTokens: number | undefined;
   /** Tokens VinaX had to estimate (no usage report, or a reply cut off). */
   estimatedTokens?: number;
-  /** Measured and estimated tokens per model, for pricing. */
-  usageByModel?: Record<string, ModelUsage>;
   durationMs: number;
   /** Models switched to, with why: "openrouter:x (Groq 429: rate limited)". */
   fallbacks: string[];

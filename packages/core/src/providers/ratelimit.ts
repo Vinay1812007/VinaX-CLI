@@ -105,18 +105,12 @@ function stripUndefined(b: Bucket): Bucket {
 }
 
 /**
- * Tracks what each provider/model has left, from response headers plus a local sliding window
- * for requests-per-minute (Groq's headers report the daily request budget, not RPM).
+ * Tracks what each provider/model has left, from its response headers.
  * The router asks `check()` before sending, so we wait or fall back instead of causing a 429.
  */
 export class RateLimitLedger {
   private readonly snapshots = new Map<string, RateLimitSnapshot>();
-  private readonly recent = new Map<string, number[]>();
-
-  constructor(
-    private readonly rpmFor: (provider: ProviderName) => number,
-    private readonly now: () => number = Date.now,
-  ) {}
+  constructor(private readonly now: () => number = Date.now) {}
 
   static key(provider: ProviderName, model: string): string {
     return `${provider}:${model}`;
@@ -137,13 +131,6 @@ export class RateLimitLedger {
     this.snapshots.set(key, snap);
   }
 
-  recordRequest(provider: ProviderName, model: string): void {
-    const key = RateLimitLedger.key(provider, model);
-    const list = this.recent.get(key) ?? [];
-    list.push(this.now());
-    this.recent.set(key, list);
-  }
-
   snapshot(provider: ProviderName, model: string): RateLimitSnapshot | undefined {
     return this.snapshots.get(RateLimitLedger.key(provider, model));
   }
@@ -157,17 +144,6 @@ export class RateLimitLedger {
     const now = this.now();
     const key = RateLimitLedger.key(provider, model);
     const waits: WaitDecision[] = [];
-
-    const window = (this.recent.get(key) ?? []).filter((t) => t > now - 60_000);
-    this.recent.set(key, window);
-    const rpm = this.rpmFor(provider);
-    const oldest = window[0];
-    if (window.length >= rpm && oldest !== undefined) {
-      waits.push({
-        waitMs: oldest + 60_000 - now,
-        reason: `is at its ${String(rpm)} requests/min limit`,
-      });
-    }
 
     const snap = this.snapshots.get(key);
     if (snap) {

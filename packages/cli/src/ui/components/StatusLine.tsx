@@ -33,7 +33,6 @@ export interface StatusNotice {
 interface Props {
   mode: PermissionMode;
   model: string;
-  contextPct: number | undefined;
   notice: StatusNotice | undefined;
   /** Transient hint that replaces the mode label, e.g. "Press Ctrl+C again to exit". */
   hint: string | undefined;
@@ -88,7 +87,6 @@ const EFFORT_GLYPH: Record<string, string> = { low: '◔', medium: '◑', high: 
 export function StatusLine({
   mode,
   model,
-  contextPct,
   notice,
   hint,
   effort,
@@ -107,24 +105,16 @@ export function StatusLine({
       : notice?.level === 'warning'
         ? theme.warning
         : theme.muted;
-  const ctxColor =
-    contextPct === undefined || contextPct < 70
-      ? theme.muted
-      : contextPct < 85
-        ? theme.warning
-        : theme.error;
-  let ctx = contextPct === undefined ? '' : ` · ${String(contextPct)}% context`;
   let eff = effort === undefined ? '' : ` · ${EFFORT_GLYPH[effort] ?? '◑'} ${effort}`;
   const left = hint ?? MODE_LABELS[mode];
   // Fit on one line: drop the shortcuts hint, then the cycle hint, then shorten the model.
   // Widths are terminal columns (⏸ and ⏵ take two), not string lengths.
   const inner = Math.max(1, width - 2);
   let chipText = chip === undefined ? '' : `${chip.text} · `;
-  if (chip !== undefined && stringWidth(left + chipText + ctx + eff) + 10 > inner)
+  if (chip !== undefined && stringWidth(left + chipText + eff) + 10 > inner)
     chipText = `${chip.short} · `;
-  if (stringWidth(left + chipText + ctx + eff) + 10 > inner) eff = '';
-  if (stringWidth(left + chipText + ctx) + 10 > inner) ctx = '';
-  const fixed = stringWidth(left) + stringWidth(chipText) + stringWidth(ctx) + stringWidth(eff) + 2;
+  if (stringWidth(left + chipText + eff) + 10 > inner) eff = '';
+  const fixed = stringWidth(left) + stringWidth(chipText) + stringWidth(eff) + 2;
   const room = (extra: number): number => inner - fixed - extra;
   const want = Math.min(stringWidth(model), 24);
   const showCycle = hint === undefined && room(CYCLE_HINT.length) >= want;
@@ -151,7 +141,6 @@ export function StatusLine({
           {chipText === '' ? '' : ' · '}
           {modelShown}
           {eff === '' ? '' : <Text color={theme.accent}>{eff}</Text>}
-          {ctx === '' ? '' : <Text color={ctxColor}>{ctx}</Text>}
         </Text>
       </Box>
       {notice === undefined ? null : (

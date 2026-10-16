@@ -3,7 +3,6 @@ import { bodyLimit } from 'hono/body-limit';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import pkg from '../package.json' with { type: 'json' };
 import { UPSTREAMS, type GatewayConfig, type Upstream, type UpstreamName } from './config.js';
-import { RateLimiter } from './limits.js';
 import { hashToken } from './tokens.js';
 
 export const GATEWAY_VERSION: string = pkg.version;
@@ -70,7 +69,6 @@ export function createApp(config: GatewayConfig, deps: GatewayDeps = {}): Hono<E
     ((line: Record<string, unknown>) => {
       console.log(JSON.stringify(line));
     });
-  const limiter = new RateLimiter(config.rpm, config.rpd, now);
   let modelsCache: { at: number; body: unknown } | undefined;
   const app = new Hono<Env>();
 
@@ -155,11 +153,6 @@ export function createApp(config: GatewayConfig, deps: GatewayDeps = {}): Hono<E
         ),
     }),
     async (c) => {
-      const decision = limiter.take(c.get('tokenName'));
-      if (!decision.ok) {
-        c.header('retry-after', String(decision.retryAfterSec));
-        return c.json(errorBody(`VinaX gateway: ${decision.reason}.`, 'rate_limit'), 429);
-      }
       let body: Record<string, unknown>;
       try {
         const parsed: unknown = await c.req.json();

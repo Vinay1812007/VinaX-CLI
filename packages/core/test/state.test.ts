@@ -2,18 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  AppStateStore,
-  effectiveContextWindow,
-  encodeProjectPath,
-  ModelCatalog,
-  PromptHistory,
-  RateLimitLedger,
-  searchHistory,
-  type Provider,
-  type ProviderName,
-  type StreamDelta,
-} from '../src/index.js';
+import { AppStateStore, encodeProjectPath, PromptHistory, searchHistory } from '../src/index.js';
 
 let home: string;
 beforeEach(async () => {
@@ -70,30 +59,5 @@ describe('PromptHistory', () => {
     expect(encoded).toMatch(
       process.platform === 'win32' ? /^[A-Z]--Users-me-my-app$/i : /^-Users-me-my-app$/,
     );
-  });
-});
-
-class CatalogProvider implements Provider {
-  readonly name: ProviderName = 'groq';
-  listModels = () =>
-    Promise.resolve([{ id: 'm', contextWindow: 131_072, supportsTools: true, free: true }]);
-  validateKey = () => Promise.resolve({ ok: true as const });
-  // eslint-disable-next-line require-yield
-  async *stream(): AsyncGenerator<StreamDelta> {
-    await Promise.resolve();
-  }
-}
-
-describe('effectiveContextWindow', () => {
-  it('caps the context window by the tokens-per-minute budget', async () => {
-    const ledger = new RateLimitLedger(() => 100);
-    const deps = {
-      providers: new Map([['groq' as const, new CatalogProvider()]]),
-      catalog: new ModelCatalog(home),
-      ledger,
-    };
-    expect(await effectiveContextWindow({ provider: 'groq', model: 'm' }, deps)).toBe(131_072);
-    ledger.observe('groq', 'm', new Headers({ 'x-ratelimit-limit-tokens': '8000' }));
-    expect(await effectiveContextWindow({ provider: 'groq', model: 'm' }, deps)).toBe(6000);
   });
 });

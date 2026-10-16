@@ -8,7 +8,6 @@ import {
   type ProviderErrorKind,
 } from '../providers/errors.js';
 import type { RateLimitLedger } from '../providers/ratelimit.js';
-import type { UsageTracker } from '../state/usage.js';
 import {
   formatModelRef,
   parseModelRef,
@@ -72,6 +71,16 @@ const COOLDOWN_KINDS: ReadonlySet<LinkFailure['kind']> = new Set([
   'not_found',
   'server',
 ]);
+
+/**
+ * Providers whose rate limits VinaX waits out on the same model instead of falling back: NVIDIA's
+ * free endpoints only limit requests per minute, server-side, so a 429 clears within seconds.
+ * VinaX never caps them locally and keeps retrying until the model answers or the user stops.
+ */
+const WAITS_OUT_RATE_LIMITS: ReadonlySet<ProviderName> = new Set(['nvidia']);
+
+/** Longest wait between rate-limit retries when the provider gives no `Retry-After`. */
+export const RATE_LIMIT_MAX_BACKOFF_MS = 30_000;
 
 export class AllModelsFailedError extends Error {
   constructor(readonly failures: readonly LinkFailure[]) {
@@ -191,8 +200,6 @@ export interface RouterDeps {
   unhealthy?: ReadonlySet<string>;
   /** How long a model that timed out is moved behind the others; default {@link MODEL_COOLDOWN_MS}. */
   cooldownMs?: number;
-  /** Counts requests and tokens for `/usage`. */
-  usage?: UsageTracker;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
   now?: () => number;
@@ -331,7 +338,8 @@ export class Router {
       const est =
         estimateTokens(first.messages, first.tools) + (req.maxTokens ?? DEFAULT_OUTPUT_RESERVE);
       const decision = ledger.check(ref.provider, ref.model, est);
-      if (decision.waitMs > settings.router.maxWaitMs) {
+      const waitsOut = WAITS_OUT_RATE_LIMITS.has(ref.provider);
+      if (decision.waitMs > settings.router.maxWaitMs && !waitsOut) {
         const failure: LinkFailure = {
           ref,
           reason: `${providerLabel(ref.provider)} ${decision.reason ?? 'rate limited'}`,
@@ -353,16 +361,19 @@ export class Router {
         };
       }
       if (decision.waitMs > 0) {
-        yield { type: 'wait', ref, ms: decision.waitMs, reason: decision.reason ?? 'rate limit' };
-        await this.sleep(decision.waitMs, req.signal);
+        // a provider that is waited out is asked again soon: its answer says how long to wait
+        const ms = waitsOut
+          ? Math.min(decision.waitMs, RATE_LIMIT_MAX_BACKOFF_MS)
+          : decision.waitMs;
+        yield { type: 'wait', ref, ms, reason: decision.reason ?? 'rate limit' };
+        await this.sleep(ms, req.signal);
       }
 
       let toolFormatRetried = false;
+      let rateLimitWaits = 0;
       for (let attempt = 0; ; attempt++) {
         if (req.signal.aborted) throw new AbortError();
         yield { type: 'attempt', ref };
-        ledger.recordRequest(ref.provider, ref.model);
-        this.deps.usage?.recordRequest(ref);
         let emitted = false;
         let usage: Usage | undefined;
         const watch = new FirstTokenWatch(settings.router.firstTokenTimeoutMs);
@@ -396,7 +407,6 @@ export class Router {
             emitted = true;
             yield d;
           }
-          if (usage) this.deps.usage?.recordTokens(ref, usage);
           this.cooling.delete(formatModelRef(ref));
           yield { type: 'done', ref, usage };
           return;
@@ -423,6 +433,27 @@ export class Router {
               delayMs: 0,
               reason: `${err.message} — retrying with the text tool protocol`,
             };
+            attempt--;
+            continue;
+          }
+          if (err.kind === 'rate_limit' && waitsOut) {
+            const wait =
+              err.retryAfterMs ??
+              backoffDelay(
+                rateLimitWaits,
+                { baseMs: settings.router.baseDelayMs, maxMs: RATE_LIMIT_MAX_BACKOFF_MS },
+                this.random,
+              );
+            rateLimitWaits++;
+            yield {
+              type: 'retry',
+              ref,
+              attempt: rateLimitWaits,
+              delayMs: wait,
+              reason: `waiting for the ${providerLabel(ref.provider)} rate limit`,
+            };
+            await this.sleep(wait, req.signal);
+            // waiting out a rate limit does not use up the retries kept for real failures
             attempt--;
             continue;
           }

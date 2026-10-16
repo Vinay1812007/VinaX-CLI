@@ -23,8 +23,6 @@ import {
   runDoctor,
   SessionStore,
   splitArgs,
-  usageTotals,
-  UsageTracker,
   type ChatMessage,
 } from '../src/index.js';
 
@@ -110,63 +108,6 @@ describe('SessionStore', () => {
     expect(await fs.readFile(file, 'utf8')).toBe('v2');
     await restored.restoreTo(1, { resolution: 'overwrite' });
     expect(await fs.readFile(file, 'utf8')).toBe('v1');
-  });
-});
-
-describe('UsageTracker', () => {
-  it('accumulates requests and tokens per provider and model across flushes', () => {
-    const u = new UsageTracker({ VINAX_HOME: home }, () => '2026-09-23');
-    u.recordRequest({ provider: 'groq', model: 'a' });
-    u.recordTokens({ provider: 'groq', model: 'a' }, { promptTokens: 100, completionTokens: 20 });
-    u.flush();
-    u.recordRequest({ provider: 'groq', model: 'b' });
-    const day = u.snapshot();
-    expect(day.providers.groq).toMatchObject({
-      requests: 2,
-      promptTokens: 100,
-      completionTokens: 20,
-    });
-    expect(day.providers.groq?.models.b?.requests).toBe(1);
-    expect(
-      new UsageTracker({ VINAX_HOME: home }, () => '2026-09-23').read().providers.groq?.requests,
-    ).toBe(2);
-  });
-
-  it('adds days up for a window and for all time, and totals every provider', () => {
-    const on = (date: string) => new UsageTracker({ VINAX_HOME: home }, () => date);
-    const old = on('2026-09-01');
-    old.recordTokens({ provider: 'groq', model: 'a' }, { promptTokens: 10, completionTokens: 1 });
-    old.flush();
-    const recent = on('2026-09-20');
-    recent.recordRequest({ provider: 'groq', model: 'a' });
-    recent.recordTokens(
-      { provider: 'openrouter', model: 'b:free' },
-      { promptTokens: 5, completionTokens: 2 },
-    );
-    recent.flush();
-    const today = on('2026-09-23');
-    today.recordRequest({ provider: 'groq', model: 'a' });
-
-    // the pending counts of the tracker asked are written before it reads, so "today" is included
-    expect(today.rollup('2026-09-19').dates).toEqual(['2026-09-20', '2026-09-23']);
-    expect(usageTotals(today.rollup('2026-09-19').providers)).toEqual({
-      requests: 2,
-      promptTokens: 5,
-      completionTokens: 2,
-    });
-    const all = today.rollup();
-    expect(all.dates).toEqual(['2026-09-01', '2026-09-20', '2026-09-23']);
-    expect(usageTotals(all.providers)).toEqual({
-      requests: 2,
-      promptTokens: 15,
-      completionTokens: 3,
-    });
-    expect(all.providers.groq?.models.a).toEqual({
-      requests: 2,
-      promptTokens: 10,
-      completionTokens: 1,
-    });
-    expect(today.days()).toEqual(['2026-09-01', '2026-09-20', '2026-09-23']);
   });
 });
 

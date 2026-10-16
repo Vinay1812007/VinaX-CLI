@@ -63,13 +63,10 @@ describe('parseRateLimitHeaders', () => {
 });
 
 describe('RateLimitLedger.check', () => {
-  const setup = (rpm = 30): { ledger: RateLimitLedger; clock: { t: number } } => {
+  const setup = (): { ledger: RateLimitLedger; clock: { t: number } } => {
     const clock = { t: 1_000_000 };
     return {
-      ledger: new RateLimitLedger(
-        () => rpm,
-        () => clock.t,
-      ),
+      ledger: new RateLimitLedger(() => clock.t),
       clock,
     };
   };
@@ -79,23 +76,9 @@ describe('RateLimitLedger.check', () => {
     expect(ledger.check('groq', 'm', 500)).toEqual({ waitMs: 0 });
   });
 
-  it('waits for the RPM window to slide', () => {
-    const { ledger, clock } = setup(2);
-    ledger.recordRequest('groq', 'm');
-    clock.t += 10_000;
-    ledger.recordRequest('groq', 'm');
-    clock.t += 5_000;
-    expect(ledger.check('groq', 'm', 10)).toEqual({
-      waitMs: 45_000,
-      reason: 'is at its 2 requests/min limit',
-    });
-    clock.t += 45_000;
-    expect(ledger.check('groq', 'm', 10).waitMs).toBe(0);
-  });
-
-  it('does not impose a local RPM ceiling when one is disabled', () => {
-    const { ledger } = setup(Infinity);
-    for (let i = 0; i < 100; i++) ledger.recordRequest('nvidia', 'openai/gpt-oss-20b');
+  it('never caps requests locally', () => {
+    const { ledger } = setup();
+    for (let i = 0; i < 100; i++) ledger.check('nvidia', 'openai/gpt-oss-20b', 10);
     expect(ledger.check('nvidia', 'openai/gpt-oss-20b', 10)).toEqual({ waitMs: 0 });
   });
 

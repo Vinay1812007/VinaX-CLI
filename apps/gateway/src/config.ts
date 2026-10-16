@@ -19,9 +19,6 @@ export interface GatewayConfig {
   upstreams: Partial<Record<UpstreamName, Upstream>>;
   /** sha256(token) → token name (the name is what gets logged). */
   tokens: ReadonlyMap<string, string>;
-  /** Requests per minute and per UTC day allowed for each token. */
-  rpm: number;
-  rpd: number;
   maxBodyBytes: number;
   /** Tried in order for `"model": "auto"`. */
   defaultModels: readonly string[];
@@ -70,8 +67,6 @@ export function loadConfig(env: Env): GatewayConfig {
     port: int(env, 'PORT', 8787),
     upstreams,
     tokens,
-    rpm: int(env, 'RATE_LIMIT_RPM', 20),
-    rpd: int(env, 'RATE_LIMIT_RPD', 500),
     // room for a few images (base64) in a request
     maxBodyBytes: int(env, 'MAX_BODY_BYTES', 8_000_000),
     defaultModels: (

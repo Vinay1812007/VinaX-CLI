@@ -107,7 +107,6 @@ describe('task state chip', () => {
         <StatusLine
           mode="default"
           model="groq:openai/gpt-oss-120b"
-          contextPct={5}
           notice={undefined}
           hint={undefined}
           task={{ kind: 'waiting', since: 0, what: 'approval', more: 0 }}
@@ -322,12 +321,6 @@ describe('turn outcomes', () => {
       text: 'The model returned an empty answer.',
     });
     expect(outcomeItem({ ...base, status: 'interrupted' })).toMatchObject({ level: 'warning' });
-    expect(
-      outcomeItem({ ...base, status: 'budget', error: 'Stopped at the token budget' }),
-    ).toMatchObject({
-      level: 'warning',
-      text: 'Stopped at the token budget',
-    });
     expect(outcomeItem({ ...base, status: 'stuck', error: 'Stopped: x' })).toMatchObject({
       text: 'Stopped: x',
     });

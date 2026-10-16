@@ -81,12 +81,12 @@ vinax --model NVD_CHAT_OSS_20_B          # the same model, by its alias
 - **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with one-token completions sent to a few models at once (`openai/gpt-oss-20b`, `meta/llama-3.2-11b-vision-instruct` and some catalog models); any answer proves the key, so one hung model no longer fails the check. The check gives up after 15 seconds instead of waiting the full request timeout.
 - **Context window.** NVIDIA's catalog lists model ids only. VinaX knows the context window of the models it has aliases for (128K, 131,072 tokens, for `openai/gpt-oss-20b`).
 - **Picker.** NVIDIA's catalog also contains embedding, retired and unresponsive models, so the picker lists only the ones that answered a [model test](#model-tests). Any other catalog model still works with `/model nvidia:<model-id>` or `--model`.
-- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. NVIDIA has no local VinaX RPM ceiling by default; its API headers and 429 responses are still honored. Set `providers.nvidia.rpm` when a self-hosted NIM needs a local requests-per-minute limit, and use `providers.nvidia.enabled: false` to turn the provider off.
+- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. VinaX never caps NVIDIA usage locally; see [NVIDIA rate limits](#nvidia-rate-limits). Use `providers.nvidia.enabled: false` to turn the provider off.
 
 ```json
 {
   "model": "NVD_CHAT_OSS_20_B",
-  "providers": { "nvidia": { "baseUrl": "http://nim.internal:8000/v1", "rpm": 40 } }
+  "providers": { "nvidia": { "baseUrl": "http://nim.internal:8000/v1" } }
 }
 ```
 
@@ -165,9 +165,9 @@ To make a choice the default, run `vinax config set model <ref or alias>`.
 
 ## How a request is routed
 
-Before each request, VinaX checks what the model has left. That means its local requests-per-minute window, plus the token and request budgets from the provider's rate-limit headers. Then it does one of these:
+Before each request, VinaX checks what the provider's rate-limit headers say the model has left. VinaX sets no limits of its own. Then it does one of these:
 
-- **Sends** the request, if the budget allows it.
+- **Sends** the request, if the provider's limits allow it.
 - **Waits** briefly, up to `router.maxWaitMs` (20 s by default), with a dim notice.
 - **Falls back** to the next model in the chain, with a one-line notice:
 
@@ -185,15 +185,23 @@ Choosing the model again with `/model` tries it straight away.
 
 When every model fails, VinaX explains why in an error card: each model it tried, with its provider, the kind of failure (authentication failed, no API key, rate limited, temporary provider error, network error, model not available, request too large, tool-call error, request rejected) and the provider's message, plus what to try next (retry, switch with `/model`, add a key with `/login`, run `/health`, `/compact`).
 
+### NVIDIA rate limits
+
+VinaX never caps, skips or budgets NVIDIA locally. NVIDIA's free endpoints limit requests per minute on their side (about 40). When NVIDIA answers 429, VinaX waits on the same model, as long as `Retry-After` says or otherwise with exponential backoff up to 30 s, and retries until it answers. It does not fall back to another model or set NVIDIA aside, and the waits do not use up `router.maxRetries`. The status line shows the wait:
+
+<pre class="vx-terminal"><span class="dim">↻ waiting for the NVIDIA rate limit — retrying in 4.0s</span></pre>
+
+Press `Esc` to stop waiting.
+
 ## Free-tier limits
 
 | Provider                  | Limits (free tier)                                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Groq                      | About 30 requests/min, plus a per-model tokens-per-minute budget (about 8K on the larger coding models) |
 | OpenRouter `:free` models | 20 requests/min and **50 requests/day** per account; 1,000/day after a one-time $10 credit purchase     |
-| NVIDIA                    | Set by your NVIDIA account; VinaX honors provider rate-limit headers and 429 responses                  |
+| NVIDIA                    | Set by NVIDIA (about 40 requests/min); VinaX waits out 429s on the same model                           |
 
-Each agent step is one request, and a long conversation can use most of a minute's tokens. So expect some turns to be served by the fallback chain. `/status` shows the remaining limits and your OpenRouter quota, and `/usage` shows today's totals.
+Each agent step is one request, and a long conversation can use most of a minute's tokens. So expect some turns to be served by the fallback chain. `/status` shows the remaining limits the providers report.
 
 ## Tool calling on free models
 
@@ -218,8 +226,8 @@ Every argument is validated, and validation errors go back to the model so it ca
     "firstTokenTimeoutMs": 45000
   },
   "providers": {
-    "groq": { "rpm": 30 },
-    "openrouter": { "enabled": true, "rpm": 20 },
+    "groq": { "enabled": true },
+    "openrouter": { "enabled": true },
     "nvidia": { "enabled": true }
   }
 }

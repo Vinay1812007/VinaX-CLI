@@ -128,9 +128,9 @@ vinax config set model NVD_CHAT_OSS_20_B   # make it the default
   `model`/`smallModel`/`fallbackChain` in settings, `/model`, and custom command and sub-agent
   `model` frontmatter.
 - The API is `https://integrate.api.nvidia.com/v1` by default. Point
-  `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead. NVIDIA has no local VinaX
-  request ceiling by default, though provider rate-limit headers and 429s are still honored. Set
-  `providers.nvidia.rpm` explicitly for a self-hosted NIM.
+  `providers.nvidia.baseUrl` at a self-hosted NIM to use that instead. VinaX never caps NVIDIA
+  usage: when NVIDIA's own rate limit answers 429, VinaX waits (honouring `Retry-After`, otherwise
+  backing off up to 30 s) and retries the same model until it answers or you press Esc.
 - NVIDIA's `/models` list is public, so keys are checked with one-token completions to a few
   models at once (any answer proves the key, within 15 s). The catalog lists ids only, so VinaX
   supplies the 128K context window for the models it knows.
@@ -183,8 +183,8 @@ is out VinaX says so (checked at most once a day; set `VINAX_NO_UPDATE_CHECK=1` 
 The prompt box works like Claude Code's: a grey box with a `>` prompt and a rotating
 `Try "…"` example (`!` with a pink border for shell commands, `#` with a blue one for memory
 notes). Underneath, the footer shows the permission mode, `⏸ manual mode on`, `⏵⏵ accept edits on`,
-`⏸ plan mode on` or `⏵⏵ auto mode on` (Shift+Tab cycles them), then the model that answered, the
-[reasoning effort](docs/models.md#reasoning-effort) and how much of the context budget is used.
+`⏸ plan mode on` or `⏵⏵ auto mode on` (Shift+Tab cycles them), then the model that answered and
+the [reasoning effort](docs/models.md#reasoning-effort).
 
 Answers stream in as formatted Markdown: headings, lists, tables and syntax-highlighted code.
 While a reply is streaming, a pulsing `✻` spinner with a shimmer shows what VinaX is doing
@@ -334,9 +334,8 @@ Files edited outside VinaX since it changed them are listed first, with the diff
 overwritten without asking; overwritten versions are backed up. `Ctrl+G` (`/changes`) reviews and
 undoes changed files one at a time.
 
-**Budgets, loops and worktrees.** `--token-budget` / `--time-budget` (or `budget` in settings) cap
-each task; a task that keeps repeating a failing call stops with an explanation; costs appear only
-for models with explicit prices. `vinax --worktree [name]` works in an isolated git worktree that you
+**Loops and worktrees.** A task that keeps repeating a failing call stops with an explanation.
+`vinax --worktree [name]` works in an isolated git worktree that you
 review and apply with `vinax worktree diff|apply|remove` (it isolates file edits; it is not a
 sandbox).
 
@@ -354,7 +353,7 @@ Type `/` for a menu of commands (↑↓ to choose, Tab to complete, Enter to run
 | `/resume`, `/rewind`               | Continue an earlier conversation; go back to an earlier prompt                                                            |
 | `/changes`                         | Review files changed this session: diffs, and undo per file (`Ctrl+G`)                                                    |
 | `/init`, `/memory`                 | Write a starter `VINAX.md`; edit memory files in `$EDITOR`                                                                |
-| `/status`, `/usage`                | Session, remaining rate limits, OpenRouter quota; reported/estimated tokens and cost, requests today                      |
+| `/status`                          | Session, providers, keys and remaining rate limits                                                                        |
 | `/doctor`, `/health`               | Full checks (Node, settings, keys live, ripgrep, shell, git, keychain, terminal, gateway, MCP); a concise grouped summary |
 | `/about`                           | Version, runtime, install type, provider, model, gateway, MCP, platform                                                   |
 | `/update`, `/changelog`            | Check for a newer release and how to update; what's new in recent releases                                                |
@@ -429,12 +428,12 @@ prompt count and the model picked with `/model`, which is also restored when you
 counts of staged, unstaged and untracked files, a short status and the last five commits (all
 capped), which helps with "review my changes", "commit these changes" and "explain this diff".
 
-**Compaction.** VinaX works within a conversation budget: `context.maxTokens`, 24K tokens by
-default, capped by the model's own window. The status line shows how much is used. At 85%,
-VinaX first removes old, long tool outputs, which costs nothing. If that isn't enough, it has the
-small model summarize the conversation into Goal, Decisions, Files, Commands, Current state and
-Next steps sections. `/compact [focus]` does this on demand; `context.autoCompact: false` turns
-off the automatic version.
+**Compaction.** VinaX keeps long sessions within `context.maxTokens` (24K tokens by default,
+capped by the model's own window) on its own. Near the limit, VinaX first removes old, long tool
+outputs. If that isn't enough, it has the small model summarize the conversation into Goal,
+Decisions, Files, Commands, Current state and Next steps sections, and says so in one short line.
+`/compact [focus]` does this on demand; `context.autoCompact: false` turns off the automatic
+version.
 
 ## Hooks, MCP and sub-agents
 
@@ -554,7 +553,6 @@ vinax -p "summarize src/" --output-format stream-json --max-turns 10
 | `--disallowedTools <rules>`               | Never allow, e.g. `"Bash(git push:*)"`.                                 |
 | `--add-dir <path>`                        | Let tools work in another folder too (repeatable).                      |
 | `--max-turns <n>`                         | Stop after this many model calls per prompt.                            |
-| `--token-budget <n>`, `--time-budget <s>` | Stop a task after this many tokens / seconds.                           |
 | `-w, --worktree [name]`                   | Work in an isolated git worktree; see `vinax worktree`.                 |
 | `--verbose`                               | Write a debug log of every request to `~/.vinax/logs/` (keys redacted). |
 | `-v, --version`                           | Print the version.                                                      |
@@ -596,14 +594,15 @@ entry is ready, has no key or was skipped. Models that failed their last model t
 unless you chose them by name, and a model that timed out is set aside for 10 minutes so the
 session stays on the model it fell back to.
 
-Before each request the router checks what the model has left: its local requests-per-minute
-window, and the token and request budgets reported in the provider's rate-limit headers. Then it
-does one of these:
+Before each request the router checks what the provider's rate-limit headers say the model has
+left. VinaX sets no limits of its own. Then it does one of these:
 
-- **Sends** the request if the budget allows it.
+- **Sends** the request if the provider's limits allow it.
 - **Waits** briefly (up to `router.maxWaitMs`, 20s by default) and shows a dim notice.
 - **Falls back** to the next model in the chain and prints a one-line notice such as
   `↪ Groq 429: Rate limit reached … — switched to openrouter:qwen/qwen3.8-27b:free`.
+- **Waits it out** for NVIDIA: a 429 from NVIDIA never makes VinaX skip the model or fall back;
+  it waits (`Retry-After`, or backoff up to 30 s) and retries the same model until it answers.
 
 Transient errors (5xx, timeouts, network) are retried with exponential backoff and jitter
 before falling back. VinaX never switches models once output has started streaming.
@@ -639,7 +638,7 @@ Example `~/.vinax/settings.json`:
 {
   "model": "groq:openai/gpt-oss-120b",
   "fallbackChain": ["openrouter:qwen/qwen3.8-27b:free"],
-  "providers": { "openrouter": { "rpm": 20 } },
+  "providers": { "openrouter": { "enabled": true } },
   "router": { "maxRetries": 2, "maxWaitMs": 20000, "requestTimeoutMs": 90000 }
 }
 ```

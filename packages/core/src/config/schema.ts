@@ -66,8 +66,6 @@ export type HookMatcher = z.infer<typeof hookMatcherSchema>;
 const providerSettingsSchema = z.strictObject({
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
-  /** Requests per minute to allow locally before waiting. Mirrors the provider's free-tier RPM. */
-  rpm: z.number().int().positive().optional(),
 });
 
 const routerSettingsSchema = z.strictObject({
@@ -167,28 +165,6 @@ export const settingsSchema = z.strictObject({
       autoCompact: z.boolean().optional(),
     })
     .optional(),
-  /** Limits for one task (one prompt and everything VinaX does for it, sub-agents included). */
-  budget: z
-    .strictObject({
-      /** Tokens (input + output, measured or estimated) before VinaX stops and reports. */
-      tokens: z.number().int().positive().optional(),
-      /** Seconds of work before VinaX stops and reports. */
-      seconds: z.number().int().positive().optional(),
-    })
-    .optional(),
-  /**
-   * Prices you know, in US dollars per million tokens, by model ref. Costs are only shown for
-   * models with explicit prices (from here or the provider's catalog); otherwise "unknown".
-   */
-  pricing: z
-    .record(
-      modelRefSchema,
-      z.strictObject({
-        inputPerMillion: z.number().min(0),
-        outputPerMillion: z.number().min(0),
-      }),
-    )
-    .optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -196,7 +172,6 @@ export type Settings = z.infer<typeof settingsSchema>;
 export interface ProviderSettings {
   enabled: boolean;
   baseUrl: string;
-  rpm: number;
 }
 
 export interface RouterSettings {
@@ -232,9 +207,6 @@ export interface ResolvedSettings {
   freeModelsOnly: boolean;
   outputStyle: string;
   context: { maxTokens: number; autoCompact: boolean };
-  budget: { tokens: number | undefined; seconds: number | undefined };
-  /** USD per million tokens, keyed by canonical model ref. */
-  pricing: Record<string, { inputPerMillion: number; outputPerMillion: number }>;
   gateway: { url: string | undefined; timeoutMs: number };
   hooks: Partial<Record<HookEvent, HookMatcher[]>>;
   disableAllHooks: boolean;
@@ -256,40 +228,37 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   ],
   visionModel: undefined,
   providers: {
-    groq: { enabled: true, baseUrl: 'https://api.groq.com/openai/v1', rpm: 30 },
-    openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1', rpm: 20 },
-    // NVIDIA's hosted API (build.nvidia.com). Unlike the other free providers, it has no
-    // artificial local RPM ceiling: its response headers and 429s remain authoritative.
-    // Set providers.nvidia.rpm explicitly when using a self-hosted NIM that needs one.
-    nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1', rpm: Infinity },
-    // These providers enforce their own account and paid/free-tier limits. VinaX does not
-    // invent a lower local cap; response headers and 429s determine backoff.
+    groq: { enabled: true, baseUrl: 'https://api.groq.com/openai/v1' },
+    openrouter: { enabled: true, baseUrl: 'https://openrouter.ai/api/v1' },
+    // NVIDIA's hosted API (build.nvidia.com). VinaX never caps it locally: when NVIDIA answers
+    // 429, VinaX waits and retries the same model until it answers.
+    nvidia: { enabled: true, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+    // Providers enforce their own account and free-tier limits; response headers and 429s
+    // determine backoff.
     gemini: {
       enabled: true,
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      rpm: Infinity,
     },
-    openai: { enabled: true, baseUrl: 'https://api.openai.com/v1', rpm: Infinity },
+    openai: { enabled: true, baseUrl: 'https://api.openai.com/v1' },
     // Claude has a native Messages API adapter; the default is Anthropic's public endpoint.
-    claude: { enabled: true, baseUrl: 'https://api.anthropic.com/v1', rpm: Infinity },
-    deepseek: { enabled: true, baseUrl: 'https://api.deepseek.com', rpm: Infinity },
-    mistral: { enabled: true, baseUrl: 'https://api.mistral.ai/v1', rpm: Infinity },
-    cerebras: { enabled: true, baseUrl: 'https://api.cerebras.ai/v1', rpm: Infinity },
+    claude: { enabled: true, baseUrl: 'https://api.anthropic.com/v1' },
+    deepseek: { enabled: true, baseUrl: 'https://api.deepseek.com' },
+    mistral: { enabled: true, baseUrl: 'https://api.mistral.ai/v1' },
+    cerebras: { enabled: true, baseUrl: 'https://api.cerebras.ai/v1' },
     // Z.AI's pay-as-you-go OpenAI-compatible base. The coding-plan (/api/coding/paas/v4) and
     // Anthropic-format (/api/anthropic) bases take the same key but reject each other's traffic.
-    zai: { enabled: true, baseUrl: 'https://api.z.ai/api/paas/v4', rpm: Infinity },
+    zai: { enabled: true, baseUrl: 'https://api.z.ai/api/paas/v4' },
     modelscope: {
       enabled: true,
       baseUrl: 'https://api-inference.modelscope.cn/v1',
-      rpm: Infinity,
     },
     // SiliconFlow's international domain; api.siliconflow.cn is the separate China endpoint.
-    siliconflow: { enabled: true, baseUrl: 'https://api.siliconflow.com/v1', rpm: Infinity },
+    siliconflow: { enabled: true, baseUrl: 'https://api.siliconflow.com/v1' },
     // Ollama's hosted cloud. The OpenAI-compatible layer is /v1, not /api/v1. Point this at
     // http://localhost:11434/v1 to use a local Ollama server instead.
-    ollama: { enabled: true, baseUrl: 'https://ollama.com/v1', rpm: Infinity },
-    kilo: { enabled: true, baseUrl: 'https://api.kilo.ai/api/gateway', rpm: Infinity },
-    hetzner: { enabled: true, baseUrl: 'https://inference.hetzner.com/api/v1', rpm: Infinity },
+    ollama: { enabled: true, baseUrl: 'https://ollama.com/v1' },
+    kilo: { enabled: true, baseUrl: 'https://api.kilo.ai/api/gateway' },
+    hetzner: { enabled: true, baseUrl: 'https://inference.hetzner.com/api/v1' },
   },
   router: {
     maxRetries: 2,
@@ -308,8 +277,6 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   freeModelsOnly: true,
   outputStyle: 'default',
   context: { maxTokens: 24_000, autoCompact: true },
-  budget: { tokens: undefined, seconds: undefined },
-  pricing: {},
   gateway: { url: undefined, timeoutMs: 120_000 },
   hooks: {},
   disableAllHooks: false,
@@ -355,13 +322,6 @@ export function resolveSettings(s: Settings): ResolvedSettings {
     freeModelsOnly: s.freeModelsOnly ?? d.freeModelsOnly,
     outputStyle: s.outputStyle ?? d.outputStyle,
     context: { ...d.context, ...s.context },
-    budget: {
-      tokens: s.budget?.tokens ?? d.budget.tokens,
-      seconds: s.budget?.seconds ?? d.budget.seconds,
-    },
-    pricing: Object.fromEntries(
-      Object.entries(s.pricing ?? {}).map(([ref, price]) => [canonical(ref), price]),
-    ),
     gateway: {
       url: s.gateway?.url ?? d.gateway.url,
       timeoutMs: s.gateway?.timeoutMs ?? d.gateway.timeoutMs,

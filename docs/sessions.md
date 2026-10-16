@@ -37,11 +37,7 @@ In a git repository, VinaX tells the model where things stand when the session s
 
 ## Compaction
 
-Free-tier models have small per-minute token budgets, so VinaX works within a conversation budget: `context.maxTokens`, 24K tokens by default, capped by the model's own window. The footer shows how much is used.
-
-At **75%** VinaX warns that compaction is coming, so you can finish the thought, `/compact` with a focus of your own, or `/clear`. `/context` breaks the window down by system prompt, project memory, skills, tool definitions and messages, and says how much room is left before compaction.
-
-At **85%** VinaX compacts in two stages:
+VinaX keeps long sessions within `context.maxTokens` (24K tokens by default, capped by the model's own window) on its own, so a conversation never outgrows the model. There is no meter to watch: when the conversation gets close to the limit, VinaX compacts it in two stages and says so in one short line:
 
 1. **Trim old tool output.** Long results from earlier steps are shortened. This is free.
 2. **Summarize.** If that isn't enough, the small model writes a structured summary with Goal, Decisions, Files, Commands, Current state and Next steps sections. The summary replaces the older turns.
