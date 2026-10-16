@@ -123,18 +123,20 @@ VinaX sends the effort only when you set one: as `reasoning_effort` to Groq and 
 
 ## Vision models
 
-gpt-oss and most other defaults are text-only. When a prompt carries [images](/interactive-mode#images) and the current model can't see them, that turn goes to a vision model instead, and a notice says which one. VinaX builds a list of vision models, best first:
+gpt-oss and most other defaults are text-only. When a prompt carries [images or recordings](/interactive-mode#images) the current model can't see, a vision model reads them and its description goes to your model, which keeps answering the turn; a notice says which model looked. VinaX builds a list of vision models, best first:
 
 1. the `visionModel` setting, if set (a model ref or alias)
 2. vision models already in your `model`/`fallbackChain`
 3. vision models VinaX knows on a provider you use: NVIDIA's `meta/llama-3.2-11b-vision-instruct`, then `meta/llama-3.2-90b-vision-instruct`
 4. models a provider's catalog marks as taking images (OpenRouter's `input_modalities`), free ones first
 
-Providers you reach with your own key come before ones behind a [gateway](/gateway), because image requests are large. If the first model fails, the turn falls back through the other vision models, not your text-only chain. A model that does not answer in time is skipped at once when another model is next, instead of being retried.
+Catalogs that don't say (OpenAI's, for one) are filled in from well-known multimodal families: `gpt-4o`, `gpt-4.1`, `gpt-5`, `o1`/`o3`/`o4-mini`, Claude, Gemini, Llama 4, Gemma 3, Pixtral, Qwen VL and model ids containing `vision` or `vl`. Audio, embedding and search variants never count.
+
+Providers you reach with your own key come before ones behind a [gateway](/gateway), because image requests are large. If the first model fails, the description falls back through the other vision models, not your text-only chain. A model that does not answer in time is skipped at once when another model is next, instead of being retried.
 
 NVIDIA's Llama 3.2 Vision models reject requests that carry both images and tool definitions, so VinaX talks to them with its text tool protocol; any other model that fails the same way is switched automatically.
 
-Text-only models later in the conversation get a short note that an image was attached, not the image itself.
+Text-only models later in the conversation get the saved description, not the image itself. Recordings go whole to models marked as taking video (NVIDIA's `nemotron-*-nano-omni` and Cosmos reasoning models), otherwise as sampled frames to a vision model.
 
 ```json
 { "visionModel": "nvidia:meta/llama-3.2-11b-vision-instruct" }

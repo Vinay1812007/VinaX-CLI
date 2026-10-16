@@ -144,6 +144,7 @@ export {
 } from './state/usage.js';
 export {
   createAgentSetup,
+  pickVideoModels,
   pickVisionModel,
   pickVisionModels,
   type AgentSetup,
@@ -158,6 +159,22 @@ export {
   MAX_IMAGE_BYTES,
   sniffImageType,
 } from './files/images.js';
+export {
+  describeMedia,
+  DESCRIBER_PROMPT,
+  ffmpegInstallHint,
+  looksLikeVideoPath,
+  MAX_FRAMES,
+  MAX_VIDEO_BYTES,
+  MediaReader,
+  renderMediaNotes,
+  type DescribeRequest,
+  type DescribeResult,
+  type MediaReaderDeps,
+  type MediaTask,
+  type VideoFile,
+} from './files/media.js';
+export { inferVideo, inferVision } from './providers/media-capability.js';
 export {
   buildSystemPrompt,
   gitSection,
@@ -268,6 +285,7 @@ export {
   type ImageAttachment,
   type ImageMediaType,
   type KeyCheck,
+  type MediaNote,
   type ModelInfo,
   type ModelRef,
   type Provider,
@@ -277,6 +295,8 @@ export {
   type ToolCall,
   type ToolSpec,
   type Usage,
+  type VideoAttachment,
+  type VideoMediaType,
 } from './providers/types.js';
 export { AbortError, backoffDelay, sleep } from './router/backoff.js';
 export {

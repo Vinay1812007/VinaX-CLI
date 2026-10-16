@@ -4,6 +4,7 @@ import path from 'node:path';
 import { IgnoreFilter } from '../tools/ignore-filter.js';
 import { displayPath, inWorkspace, isInside, resolvePath, toPosix } from '../tools/paths.js';
 import type { ReadTracker } from '../tools/read-tracker.js';
+import { looksLikeImagePath, looksLikeVideoPath } from './images.js';
 
 const ATTACH_MAX_LINES = 400;
 const ATTACH_MAX_CHARS = 8000;
@@ -307,11 +308,13 @@ function rank(
 /**
  * Attaches the files and folders mentioned as `@path` in a prompt: their contents (line
  * numbered, like the Read tool) are appended, and files count as read so they can be edited.
+ * Images and recordings get a pointer to Read instead; files that cannot be attached (too big,
+ * binary) are named in `skipped` so the user is told rather than left guessing.
  */
 export async function attachMentions(
   prompt: string,
   ctx: { cwd: string; workspace: readonly string[]; reads: ReadTracker },
-): Promise<{ prompt: string; attached: string[] }> {
+): Promise<{ prompt: string; attached: string[]; skipped: string[] }> {
   const refs = [
     ...new Set(
       [...prompt.matchAll(/(?:^|\s)@((?:~\/|\.{0,2}\/)?[^\s`'"]+)/g)].map((m) => m[1] ?? ''),
@@ -319,6 +322,7 @@ export async function attachMentions(
   ];
   const blocks: string[] = [];
   const attached: string[] = [];
+  const skipped: string[] = [];
   for (const ref of refs) {
     const clean = ref.replace(/[.,;:!?)]+$/, '');
     const target = resolvePath(clean, ctx.cwd);
@@ -336,9 +340,25 @@ export async function attachMentions(
       attached.push(`${toPosix(shown)}/`);
       continue;
     }
-    if (stat.size > 2_000_000) continue;
+    if (looksLikeImagePath(target) || looksLikeVideoPath(target)) {
+      const what = looksLikeVideoPath(target) ? 'Screen recording' : 'Image';
+      blocks.push(
+        `<file path="${shown}">\n[${what}, ${(stat.size / 1_000_000).toFixed(1)} MB. Use the Read tool on this path to have it described.]\n</file>`,
+      );
+      attached.push(toPosix(shown));
+      continue;
+    }
+    if (stat.size > 2_000_000) {
+      skipped.push(
+        `@${toPosix(shown)} was not attached: it is ${(stat.size / 1_000_000).toFixed(1)} MB (the limit is 2 MB). Ask for the part you need, or let VinaX read it with its tools.`,
+      );
+      continue;
+    }
     const buf = await fs.readFile(target);
-    if (buf.subarray(0, 8000).includes(0)) continue;
+    if (buf.subarray(0, 8000).includes(0)) {
+      skipped.push(`@${toPosix(shown)} was not attached: it is a binary file.`);
+      continue;
+    }
     const text = buf.toString('utf8');
     ctx.reads.record(target, text);
     const lines = text.replace(/\r\n/g, '\n').split('\n');
@@ -357,5 +377,9 @@ export async function attachMentions(
     blocks.push(`<file path="${shown}">\n${clipped}${more}\n</file>`);
     attached.push(toPosix(shown));
   }
-  return { prompt: blocks.length === 0 ? prompt : `${prompt}\n\n${blocks.join('\n\n')}`, attached };
+  return {
+    prompt: blocks.length === 0 ? prompt : `${prompt}\n\n${blocks.join('\n\n')}`,
+    attached,
+    skipped,
+  };
 }

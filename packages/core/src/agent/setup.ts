@@ -12,7 +12,9 @@ import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
 import { McpManager } from '../mcp/manager.js';
 import { ProjectMemory } from '../memory/memory.js';
 import { PermissionEngine } from '../permissions/engine.js';
+import { MediaReader } from '../files/media.js';
 import { KNOWN_MODELS, knownModel } from '../providers/known-models.js';
+import { inferVideo, inferVision } from '../providers/media-capability.js';
 import { parseModelRef, type ModelRef } from '../providers/types.js';
 import type { Runtime } from '../runtime.js';
 import type { SessionRecorder } from '../session/store.js';
@@ -125,8 +127,9 @@ export function pickVisionModels(
     ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => `${k.provider}:${k.model}`),
   ];
   for (const [provider, list] of runtime.models) {
-    const free = list.filter((m) => m.vision === true && m.free);
-    const paid = list.filter((m) => m.vision === true && !m.free);
+    const sees = (m: { id: string }) => supportsVision({ provider, model: m.id });
+    const free = list.filter((m) => sees(m) && m.free);
+    const paid = list.filter((m) => sees(m) && !m.free);
     candidates.push(...[...free, ...paid].map((m) => `${provider}:${m.id}`));
   }
   const ok = [...new Set(candidates)].filter((ref) => ref === settings.visionModel || usable(ref));
@@ -138,6 +141,37 @@ export function pickVisionModels(
   return settings.visionModel === undefined
     ? ordered
     : [settings.visionModel, ...ordered.filter((r) => r !== settings.visionModel)];
+}
+
+/**
+ * Models that take video input (`video: true` in the catalog or {@link KNOWN_MODELS}, or a known
+ * video family), best first: ones in your model settings, then free, then paid.
+ */
+export function pickVideoModels(
+  runtime: Runtime,
+  supportsVideo: (ref: ModelRef) => boolean,
+): string[] {
+  const settings = runtime.settings.resolved;
+  const candidates: string[] = [
+    ...[settings.model, ...settings.fallbackChain].filter((ref) =>
+      supportsVideo(parseModelRef(ref)),
+    ),
+    ...KNOWN_MODELS.filter((k) => k.video === true).map((k) => `${k.provider}:${k.model}`),
+  ];
+  for (const [provider, list] of runtime.models) {
+    const takes = list.filter((m) => supportsVideo({ provider, model: m.id }));
+    candidates.push(
+      ...[...takes.filter((m) => m.free), ...takes.filter((m) => !m.free)].map(
+        (m) => `${provider}:${m.id}`,
+      ),
+    );
+  }
+  return [...new Set(candidates)].filter((ref) => {
+    const r = parseModelRef(ref);
+    if (!runtime.providers.has(r.provider) || runtime.skipped.has(ref)) return false;
+    const list = runtime.models.get(r.provider);
+    return list === undefined || list.some((m) => m.id === r.model);
+  });
 }
 
 /** Wires tools, permissions, hooks, MCP, sub-agents, checkpoints and the system prompt. */
@@ -238,8 +272,17 @@ export async function createAgentSetup(
   const supportsVision = (ref: ModelRef): boolean =>
     runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.vision ??
     knownModel(ref.provider, ref.model)?.vision ??
-    false;
+    inferVision(ref.model);
   const visionModels = (): string[] => pickVisionModels(runtime, supportsVision);
+  const supportsVideo = (ref: ModelRef): boolean =>
+    runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.video ??
+    knownModel(ref.provider, ref.model)?.video ??
+    inferVideo(ref.model);
+  const media = new MediaReader({
+    router: runtime.router,
+    visionModels,
+    videoModels: () => pickVideoModels(runtime, supportsVideo),
+  });
   const onPathTouched = (file: string): string | undefined => {
     const found = memory.discover(file);
     if (found.length === 0) return undefined;
@@ -273,6 +316,9 @@ export async function createAgentSetup(
       systemPrompt: (mode, instr) =>
         `${basePrompt(mode, instr)}\n\n# Your role: ${def.name} sub-agent\n${def.prompt}\nYou were given one task by the main VinaX agent. Work on your own, then reply with a concise report of what you found or changed (with file paths). The report goes back to the main agent, not straight to the user.`,
       supportsTools,
+      supportsVision,
+      visionModels,
+      media,
       maxTurns: SUBAGENT_MAX_TURNS,
       nested: true,
       onPathTouched,
@@ -342,6 +388,7 @@ export async function createAgentSetup(
     supportsTools,
     supportsVision,
     visionModels,
+    media,
     defaultModel: () => settings.model,
     budget: () => runtime.settings.resolved.budget,
     contextWindow: (ref) =>

@@ -25,6 +25,7 @@ import {
   type AgentSetup,
   type EditorMode,
   type ImageAttachment,
+  type VideoFile,
   type PermissionMode,
   type Runtime,
   type SessionWriter,
@@ -303,15 +304,22 @@ export function ChatScreen(props: ChatScreenProps) {
     if (next !== undefined) void handleSubmitRef.current(next);
   };
 
-  const runTurn = async (q: Queued & { images?: ImageAttachment[] }): Promise<void> => {
+  const runTurn = async (
+    q: Queued & { images?: ImageAttachment[]; videos?: VideoFile[]; skipped?: string[] },
+  ): Promise<void> => {
     push({ kind: 'user', text: q.display });
-    if (q.images !== undefined && q.images.length > 0) {
-      push({
-        kind: 'notice',
-        level: 'info',
-        text: `Attached ${q.images.map((img, i) => `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`).join(', ')}`,
-      });
-    }
+    const chips = [
+      ...(q.images ?? []).map(
+        (img, i) =>
+          `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`,
+      ),
+      ...(q.videos ?? []).map(
+        (v, i) => `[Video #${String(i + 1)}] ${v.name} (${formatBytes(v.size)})`,
+      ),
+    ];
+    if (chips.length > 0)
+      push({ kind: 'notice', level: 'info', text: `Attached ${chips.join(', ')}` });
+    for (const text of q.skipped ?? []) push({ kind: 'notice', level: 'warning', text });
     const ac = new AbortController();
     abortRef.current = ac;
     streamRef.current = { tail: '', committed: false };
@@ -338,6 +346,7 @@ export function ChatScreen(props: ChatScreenProps) {
       ...(q.allowRules === undefined ? {} : { allowRules: q.allowRules }),
       ...(q.model === undefined ? {} : { model: q.model }),
       ...(q.images === undefined || q.images.length === 0 ? {} : { images: q.images }),
+      ...(q.videos === undefined || q.videos.length === 0 ? {} : { videos: q.videos }),
     });
     tracker.endThinking();
     abortRef.current = undefined;
@@ -544,12 +553,12 @@ export function ChatScreen(props: ChatScreenProps) {
     nextImage.current += found.images.length;
     const images = [...pasted.map(([, img]) => img), ...found.images];
     const display = s.display === s.prompt ? found.text : s.display;
-    const { prompt, attached } = await attachMentions(found.text, {
+    const { prompt, attached, skipped } = await attachMentions(found.text, {
       cwd: runtime.cwd,
       workspace: setup.workspace,
       reads: setup.reads,
     });
-    await runTurn({ ...s, prompt, display, images });
+    await runTurn({ ...s, prompt, display, images, videos: found.videos, skipped });
     nextImage.current = 1;
     if (attached.length > 0) refreshContext();
   };
