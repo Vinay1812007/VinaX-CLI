@@ -780,8 +780,14 @@ export class Agent {
         ...(mode === 'plan' ? { purpose: 'plan' as const } : {}),
         ...(this.effort === undefined ? {} : { reasoningEffort: this.effort }),
         prepare,
-        onToolFormatError: (ref) =>
-          this.useTextProtocol(ref, onEvent, 'sent a tool call the provider rejected'),
+        onToolFormatError: (ref, why) =>
+          this.useTextProtocol(
+            ref,
+            onEvent,
+            why === 'interrupted'
+              ? 'broke off mid-reply twice'
+              : 'sent a tool call the provider rejected',
+          ),
         ...((opts.model ?? this.modelSelection) === undefined
           ? {}
           : { model: opts.model ?? this.modelSelection }),
@@ -803,6 +809,13 @@ export class Agent {
             break;
           case 'reasoning':
             outputChars += ev.text.length;
+            onEvent(ev);
+            break;
+          case 'restart':
+            // the reply broke off and is asked for again: what it said so far does not count
+            // (the next `attempt` resets the parser and tool calls; nothing has run yet)
+            estimateAttempt();
+            text = '';
             onEvent(ev);
             break;
           case 'text':

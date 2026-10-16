@@ -13,6 +13,9 @@ import {
   redact,
   createProvider,
   resolveSettings,
+  toWireMessages,
+  wireArguments,
+  type ChatMessage,
   type StreamDelta,
 } from '../src/index.js';
 
@@ -191,7 +194,7 @@ describe('OpenAICompatibleProvider', () => {
   it('marks a whole catalog free when the provider publishes no prices', async () => {
     server = await startMockServer({
       apiKeys: ['gsk_goodkey000000'],
-      models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.1-8b-instruct' }],
+      models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.2-11b-vision-instruct' }],
     });
     const provider = new OpenAICompatibleProvider({
       name: 'nvidia',
@@ -205,7 +208,7 @@ describe('OpenAICompatibleProvider', () => {
     });
     expect((await provider.listModels()).map((m) => [m.id, m.free])).toEqual([
       ['openai/gpt-oss-20b', true],
-      ['meta/llama-3.1-8b-instruct', true],
+      ['meta/llama-3.2-11b-vision-instruct', true],
     ]);
   });
 });
@@ -254,5 +257,100 @@ describe('debug log', () => {
     expect(text).not.toContain('my-plain-secret');
     expect(JSON.parse(text)).toMatchObject({ event: 'request', apiKey: '[REDACTED]' });
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+});
+
+describe('request hygiene for strict (vLLM) chat templates', () => {
+  const history: ChatMessage[] = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'hi' },
+    // a reply that only reasoned: nothing to send
+    { role: 'assistant', content: '' },
+    { role: 'user', content: 'list files' },
+    {
+      role: 'assistant',
+      content: '',
+      toolCalls: [
+        { id: 'c1', name: 'Glob', arguments: '' },
+        { id: 'c2', name: 'Read', arguments: '{"path":' },
+        { id: 'c3', name: 'Bash', arguments: '{"command":"ls"}' },
+      ],
+    },
+    { role: 'tool', toolCallId: 'c1', name: 'Glob', content: 'a.ts' },
+    { role: 'assistant', content: 'Done.' },
+  ];
+
+  it('drops empty assistant turns that carry no tool calls', () => {
+    const wire = toWireMessages(history);
+    expect(wire.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+    ]);
+    expect(toWireMessages([{ role: 'assistant', content: '  \n' }])).toEqual([]);
+  });
+
+  it('sends null content next to tool calls and {} for empty or broken arguments', () => {
+    const call = toWireMessages(history)[3] as {
+      content: unknown;
+      tool_calls: { function: { arguments: string } }[];
+    };
+    expect(call.content).toBeNull();
+    expect(call.tool_calls.map((c) => c.function.arguments)).toEqual([
+      '{}',
+      '{}',
+      '{"command":"ls"}',
+    ]);
+    expect(wireArguments('[1]')).toBe('{}');
+    expect(wireArguments(' {"a":1} ')).toBe(' {"a":1} ');
+  });
+
+  it('names the tool on tool results', () => {
+    expect(toWireMessages(history)[4]).toEqual({
+      role: 'tool',
+      tool_call_id: 'c1',
+      content: 'a.ts',
+      name: 'Glob',
+    });
+  });
+
+  it('sends the cleaned history on the wire', async () => {
+    server = await startMockServer({ script: { m: [{ text: 'ok' }] } });
+    await drain(
+      makeProvider(server.url).stream({
+        model: 'm',
+        messages: history,
+        signal: new AbortController().signal,
+      }),
+    );
+    const body = server.requests.at(-1)?.body as { messages: { role: string }[] };
+    expect(body.messages).toHaveLength(6);
+    expect(body.messages[4]).toMatchObject({ role: 'tool', name: 'Glob' });
+  });
+});
+
+describe('an error event partway through the stream', () => {
+  it('surfaces as a server error after the text that came before it', async () => {
+    server = await startMockServer({
+      script: { m: [{ text: ['Hel', 'lo'], streamError: 'list index out of range' }] },
+    });
+    const seen: StreamDelta[] = [];
+    const err = await (async () => {
+      for await (const d of makeProvider(server.url).stream({
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+        signal: new AbortController().signal,
+      }))
+        seen.push(d);
+    })().catch((e: unknown) => e);
+    expect(seen).toEqual([
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+    ]);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err).toMatchObject({ kind: 'server', message: 'Groq: list index out of range' });
   });
 });

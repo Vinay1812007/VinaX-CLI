@@ -355,6 +355,42 @@ describe('Agent (native tool calling)', () => {
     expect(visible).not.toContain('vx:call');
   });
 
+  it('discards a reply that broke off, retries, then switches to the text protocol', async () => {
+    const broke = 'list index out of range';
+    const c = await start({
+      files: { 'a.txt': 'still works\n' },
+      groq: {
+        script: {
+          main: [
+            // tool calls streamed, then the server fails: they must not run
+            {
+              text: 'Reading.',
+              toolCalls: [{ name: 'Read', arguments: '{"file_path":"a.txt"}' }],
+              streamError: broke,
+            },
+            { text: ['Read', 'ing again'], streamError: broke },
+            { text: '<vx:call name="Read">\n{"file_path": "a.txt"}\n</vx:call>' },
+            { text: 'It says: still works.' },
+          ],
+        },
+      },
+    });
+    const out = await run(c, 'read a.txt');
+    expect(out).toMatchObject({ status: 'done', text: 'It says: still works.' });
+    expect(c.events.filter((e) => e.type === 'restart')).toHaveLength(2);
+    // the file was read exactly once, by the reply that finished
+    expect(c.events.filter((e) => e.type === 'tool_call')).toHaveLength(1);
+    expect(
+      c.events.some((e) => e.type === 'notice' && e.text.includes('broke off mid-reply twice')),
+    ).toBe(true);
+    const sent = bodies(c.groq);
+    expect(sent).toHaveLength(4);
+    expect(sent[1]?.tools).toBeDefined();
+    expect(sent[2]?.tools).toBeUndefined();
+    // the broken replies left nothing in the history
+    expect(sent[3]?.messages.some((m) => (m.content ?? '').includes('Reading'))).toBe(false);
+  });
+
   it('uses the text protocol from the start for models without tool support', async () => {
     const c = await start({
       model: 'openrouter:notools:free',
@@ -545,7 +581,7 @@ describe('Agent recovery', () => {
     expect(c.setup.agent.turns).toEqual([]);
   });
 
-  it('keeps the partial answer when the stream breaks after output began', async () => {
+  it('asks again when the stream breaks after output began, keeping only the full answer', async () => {
     const c = await start({
       groq: {
         script: {
@@ -555,18 +591,18 @@ describe('Agent recovery', () => {
               breakAfterChunks: 2,
               chunkDelayMs: 100,
             },
+            { text: 'The whole answer.' },
           ],
         },
       },
     });
     const out = await run(c, 'hello');
-    expect(out.status).toBe('failed');
-    expect(out.error).toMatch(/stopped mid-response/);
+    expect(out).toMatchObject({ status: 'done', text: 'The whole answer.' });
+    expect(c.events.some((e) => e.type === 'restart')).toBe(true);
     const last = c.setup.agent.messages.at(-1);
-    expect(last?.role).toBe('assistant');
-    expect(last?.content).toMatch(/^Part one\. /);
-    expect(last?.content).not.toContain('Never sent.');
-    // no silent fallback to another model after text was shown
+    expect(last).toMatchObject({ role: 'assistant', content: 'The whole answer.' });
+    expect(c.setup.agent.messages.some((m) => m.content.includes('Part one'))).toBe(false);
+    // the same model answered, so nothing fell back
     expect(bodies(c.openrouter)).toEqual([]);
   });
 });

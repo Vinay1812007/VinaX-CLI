@@ -5,6 +5,7 @@ import { AbortError } from '../router/backoff.js';
 import { chatModels, freeToTry } from './chat-models.js';
 import { toProviderError, type ProviderError } from './errors.js';
 import { KNOWN_MODELS } from './known-models.js';
+import { findCatalogModel } from './nvidia-free.js';
 import type { ModelInfo, Provider, ProviderName } from './types.js';
 
 /**
@@ -79,9 +80,9 @@ export function probeCandidates(
   const ids = new Set<string>();
   for (const k of KNOWN_MODELS) {
     if (k.provider !== provider) continue;
-    const listed = catalog?.find((m) => m.id === k.model);
+    const listed = catalog === undefined ? undefined : findCatalogModel(provider, catalog, k.model);
     if (catalog !== undefined && listed === undefined) continue;
-    if (allowed(listed ?? {})) ids.add(k.model);
+    if (allowed(listed ?? {})) ids.add(listed?.id ?? k.model);
   }
   for (const m of chatModels(catalog ?? [], provider)) if (allowed(m)) ids.add(m.id);
   return [...ids];

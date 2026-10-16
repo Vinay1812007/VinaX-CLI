@@ -12,6 +12,7 @@ import {
   OpenAICompatibleProvider,
   PROBE_TTL_MS,
   ProbeCache,
+  NVIDIA_FREE_CHAT_MODELS,
   probeCandidates,
   probeModels,
   ProviderError,
@@ -188,20 +189,18 @@ describe('probeCandidates', () => {
     const catalog = [
       info('openai/gpt-oss-20b'),
       info('nvidia/nv-embedqa-e5-v5'),
-      info('meta/llama-3.1-8b-instruct'),
+      info('google/gemma-4-31b-it'),
       info('tiny', { contextWindow: 2048 }),
     ];
     // known models lead, then the catalog's chat models
     expect(probeCandidates('nvidia', catalog, { freeOnly: true })).toEqual([
       'openai/gpt-oss-20b',
-      'meta/llama-3.1-8b-instruct',
+      'google/gemma-4-31b-it',
     ]);
-    // without a catalog only VinaX's known models remain
-    expect(probeCandidates('nvidia', undefined, { freeOnly: true })).toEqual([
-      'openai/gpt-oss-20b',
-      'meta/llama-3.2-11b-vision-instruct',
-      'meta/llama-3.2-90b-vision-instruct',
-    ]);
+    // without a catalog only VinaX's known models remain: NVIDIA's free chat models
+    expect(new Set(probeCandidates('nvidia', undefined, { freeOnly: true }))).toEqual(
+      new Set(NVIDIA_FREE_CHAT_MODELS),
+    );
     const priced = [
       info('free:free'),
       info('paid', { free: false, pricing: { prompt: 0.000001, completion: 0.000002 } }),
@@ -351,7 +350,7 @@ describe('runtime model tests', () => {
     const server = await mock({
       models: [
         { id: 'openai/gpt-oss-20b' },
-        { id: 'meta/llama-3.1-8b-instruct' },
+        { id: 'google/gemma-4-31b-it' },
         { id: 'nvidia/nv-embedqa-e5-v5' },
       ],
       ...(opts.script === undefined ? {} : { script: opts.script }),
@@ -361,7 +360,7 @@ describe('runtime model tests', () => {
       JSON.stringify({
         model: opts.model,
         smallModel: opts.model,
-        fallbackChain: ['nvidia:meta/llama-3.1-8b-instruct'],
+        fallbackChain: ['nvidia:google/gemma-4-31b-it'],
         providers: {
           nvidia: { baseUrl: server.url },
           groq: { enabled: false },
@@ -384,14 +383,14 @@ describe('runtime model tests', () => {
       model: 'nvidia:openai/gpt-oss-20b',
       script: {
         'openai/gpt-oss-20b': [{ status: 404, error: { message: 'Function not found' } }],
-        'meta/llama-3.1-8b-instruct': [{ text: 'OK' }, { text: 'hello' }],
+        'google/gemma-4-31b-it': [{ text: 'OK' }, { text: 'hello' }],
       },
     });
     const runtime = await create();
     expect(runtime.needsProbe('nvidia')).toBe(true);
     expect(runtime.probeCandidates('nvidia')).toEqual([
       'openai/gpt-oss-20b',
-      'meta/llama-3.1-8b-instruct',
+      'google/gemma-4-31b-it',
     ]);
     const progress: [number, number][] = [];
     const run = await runtime.probeModels('nvidia', {
@@ -403,9 +402,7 @@ describe('runtime model tests', () => {
     expect([...runtime.unhealthy]).toEqual(['nvidia:openai/gpt-oss-20b']);
     expect(runtime.needsProbe('nvidia')).toBe(false);
     // the default model failed its test, so a turn goes straight to one that answered
-    expect(runtime.router.chain('main').map((r) => r.model)).toEqual([
-      'meta/llama-3.1-8b-instruct',
-    ]);
+    expect(runtime.router.chain('main').map((r) => r.model)).toEqual(['google/gemma-4-31b-it']);
     // …unless it is asked for by name
     expect(runtime.router.chain('main', 'nvidia:openai/gpt-oss-20b')[0]?.model).toBe(
       'openai/gpt-oss-20b',
@@ -415,7 +412,7 @@ describe('runtime model tests', () => {
     ) as { results: ProbeResult[] };
     expect(file.results.map((r) => [r.model, r.ok])).toEqual([
       ['openai/gpt-oss-20b', false],
-      ['meta/llama-3.1-8b-instruct', true],
+      ['google/gemma-4-31b-it', true],
     ]);
 
     // the next start reads the results back without asking the provider again
@@ -437,7 +434,7 @@ describe('runtime model tests', () => {
       model: 'nvidia:openai/gpt-oss-20b',
       script: {
         'openai/gpt-oss-20b': [{ delayMs: 2000, text: 'late' }],
-        'meta/llama-3.1-8b-instruct': [{ delayMs: 2000, text: 'late' }],
+        'google/gemma-4-31b-it': [{ delayMs: 2000, text: 'late' }],
       },
     });
     const runtime = await create();

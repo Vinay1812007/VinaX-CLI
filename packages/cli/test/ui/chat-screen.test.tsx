@@ -1065,7 +1065,8 @@ describe('ChatScreen extensibility (M5)', () => {
     await type('/models', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes('Fallback order'), 'models panel');
     expect(frame()).toContain('Current nvidia:openai/gpt-oss-20b · alias NVD_CHAT_OSS_20_B');
-    expect(frame()).toContain('NVIDIA nvidia.com — key configured · 2 models in catalog');
+    // embed-qa has no free chat endpoint, so the catalog VinaX keeps has one model
+    expect(frame()).toContain('NVIDIA nvidia.com — key configured · 1 model in catalog');
     expect(frame()).toContain('1 of 1 answered the last test');
     // results are fresh, so /models does not test again
     expect(harness.nvidia.requests.filter((r) => r.path === '/v1/chat/completions')).toHaveLength(
@@ -1081,10 +1082,10 @@ describe('ChatScreen extensibility (M5)', () => {
     const { frame, type, harness } = await mount({
       settings: { model: 'nvidia:openai/gpt-oss-20b' },
       nvidia: {
-        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.1-8b-instruct' }],
+        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'google/gemma-4-31b-it' }],
         script: {
           'openai/gpt-oss-20b': [notFound, notFound, notFound],
-          'meta/llama-3.1-8b-instruct': [{ text: 'p' }, { text: 'OK' }, { text: 'OK' }],
+          'google/gemma-4-31b-it': [{ text: 'p' }, { text: 'OK' }, { text: 'OK' }],
         },
       },
     });
@@ -1099,10 +1100,10 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(words()).toContain('Saved the NVIDIA key to the credentials file.');
     expect(words()).not.toContain('could not verify');
     expect(words()).toContain(
-      'nvidia:openai/gpt-oss-20b did not answer the test (HTTP 404), so this session switches to nvidia:meta/llama-3.1-8b-instruct.',
+      'nvidia:openai/gpt-oss-20b did not answer the test (HTTP 404), so this session switches to nvidia:google/gemma-4-31b-it.',
     );
     await waitFor(
-      () => words().includes('Using nvidia:meta/llama-3.1-8b-instruct for this session'),
+      () => words().includes('Using nvidia:google/gemma-4-31b-it for this session'),
       'switched',
     );
     const tests = () =>
@@ -1121,7 +1122,7 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(words()).toContain('nvidia:openai/gpt-oss-20b');
     await waitFor(() => frame().includes('Switch model?'), 'switch picker');
     // only the model that answered is offered
-    expect(frame()).toContain('meta/llama-3.1-8b-instruct');
+    expect(frame()).toContain('google/gemma-4-31b-it');
     expect(frame()).not.toMatch(/^\s*›?\s*openai\/gpt-oss-20b/m);
     await type(KEYS.esc);
   });

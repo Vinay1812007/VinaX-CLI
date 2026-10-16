@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { withKnownMetadata } from './known-models.js';
+import { restrictToFreeModels } from './nvidia-free.js';
 import type { ModelInfo, Provider, ProviderName } from './types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -80,7 +81,9 @@ export class ModelCatalog {
     opts: { refresh?: boolean; signal?: AbortSignal } = {},
   ): Promise<CatalogResult> {
     const result = await this.fetch(provider, opts);
-    return { ...result, models: withKnownMetadata(provider.name, result.models) };
+    // a list cached before NVIDIA was cut down to its free models gets the same treatment
+    const models = restrictToFreeModels(provider.name, result.models);
+    return { ...result, models: withKnownMetadata(provider.name, models) };
   }
 
   private async fetch(

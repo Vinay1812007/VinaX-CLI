@@ -53,6 +53,8 @@ const TOOL_OUTPUT_IN_STREAM = 4000;
 /** Renders agent events and the final result in the requested output format. */
 class Output {
   private text = '';
+  /** Where the current attempt's text starts in `text`, dropped if the reply breaks off. */
+  private attemptStart = 0;
   private readonly fallbacks: FallbackRecord[] = [];
   private toolCalls = 0;
   sessionId: string | undefined;
@@ -166,8 +168,25 @@ class Output {
         this.notice(`… ${ev.text}`);
         return;
       case 'attempt':
+        this.attemptStart = this.text.length;
         if (this.verbose) this.notice(`→ ${formatModelRef(ev.ref)}`);
         return;
+      case 'restart': {
+        // The reply broke off and is asked for again. Plain text already written cannot be taken
+        // back, so a marker line separates it from the new reply.
+        const partial = this.text.slice(this.attemptStart);
+        this.text = this.text.slice(0, this.attemptStart);
+        if (this.format === 'text' && partial !== '') this.io.stdout.write('\n[retrying…]\n');
+        if (this.format === 'stream-json')
+          this.line({
+            type: 'notice',
+            kind: 'restart',
+            model: formatModelRef(ev.ref),
+            reason: ev.reason,
+          });
+        this.notice(`↻ ${formatModelRef(ev.ref)} broke off mid-reply: ${ev.reason}`);
+        return;
+      }
       case 'tool_progress':
       case 'done':
         return;

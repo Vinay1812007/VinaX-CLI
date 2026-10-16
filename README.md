@@ -134,11 +134,22 @@ vinax config set model NVD_CHAT_OSS_20_B   # make it the default
 - NVIDIA's `/models` list is public, so keys are checked with one-token completions to a few
   models at once (any answer proves the key, within 15 s). The catalog lists ids only, so VinaX
   supplies the 128K context window for the models it knows.
-- NVIDIA's catalog has ~80 entries, many of them embeddings, retired or hung. After `/login` and
-  before `/model` or `/models`, VinaX sends each free chat model a tiny request and lists only the
-  ones that answer; `/models test` checks again.
-- The default fallback chain ends with `nvidia:openai/gpt-oss-20b`; it's skipped until you add an
-  NVIDIA key.
+- VinaX uses only NVIDIA's [free-endpoint](https://build.nvidia.com/models?filters=nimType%3Anim_type_preview)
+  chat models, strongest agentic first: `nvidia/nemotron-3-super-120b-a12b`, `openai/gpt-oss-20b`,
+  `nvidia/nemotron-3-ultra-550b-a55b`, `nvidia/nemotron-3.5-super-vl-120b-a12b`,
+  `meta/muse-glimmer-30b`, `z-ai/glm-5-3-flash`, `poolside/laguna-xs-2.1`,
+  `nvidia/nemotron-3.5-lightning-30b-a3b`, `stepfun-ai/step-5-preview`,
+  `deepseek-ai/deepseek-v4.1-flash`, `google/gemma-4-31b-it`, `google/diffusiongemma-26b-a4b-it`,
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`, `nvidia/cosmos3-nano-reasoner`, the Llama 3.2
+  Vision models and `z-ai/glm-5-3`. The rest of NVIDIA's catalog is not listed, tested or used as a
+  fallback. Ids are matched by slug, so NVIDIA's own spelling (`glm-5.3`) is what gets sent. See
+  [docs/models.md](docs/models.md#nvidia-free-endpoints).
+- After `/login` and before `/model` or `/models`, VinaX sends each free chat model a tiny request
+  and lists only the ones that answer; `/models test` checks again.
+- When NVIDIA fails partway through a reply (`list index out of range`), VinaX discards the partial
+  reply and asks again: same model, then with the text tool protocol, then the next model.
+- The default fallback chain ends with `nvidia:nvidia/nemotron-3-super-120b-a12b` and
+  `nvidia:openai/gpt-oss-20b`; they're skipped until you add an NVIDIA key.
 
 ## Interactive mode
 

@@ -26,6 +26,11 @@ export interface MockTurn {
   chunkDelayMs?: number;
   /** Destroy the socket after this many content chunks (simulates a dropped stream). */
   breakAfterChunks?: number;
+  /**
+   * After the text and tool calls, send an SSE `error` payload with this message and end the
+   * stream, the way vLLM-based servers (NVIDIA NIM) fail mid-reply.
+   */
+  streamError?: string;
 }
 
 export interface RecordedRequest {
@@ -140,6 +145,11 @@ async function reply(res: http.ServerResponse, model: string, turn: MockTurn): P
         tool_calls: [{ index, function: { arguments: call.arguments.slice(half) } }],
       }),
     );
+  }
+  if (turn.streamError !== undefined) {
+    sse(res, { error: { message: turn.streamError, type: 'InternalServerError', code: 500 } });
+    res.end();
+    return;
   }
   sse(res, chunk(model, {}, turn.toolCalls && turn.toolCalls.length > 0 ? 'tool_calls' : 'stop'));
   const usage = turn.usage ?? { prompt_tokens: 10, completion_tokens: parts.length };

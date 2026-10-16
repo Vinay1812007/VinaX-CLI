@@ -75,6 +75,23 @@ describe('vinax -p', () => {
     expect(r.stderr).toMatch(/^↻ Groq 503: mock error 503 — retrying in 0\.0s\n$/);
   });
 
+  it('marks a reply that broke off mid-stream and prints the retried one', async () => {
+    h = await createHarness({
+      groq: {
+        script: {
+          'main-model': [
+            { text: ['Half an '], streamError: 'list index out of range' },
+            { text: 'Whole answer' },
+          ],
+        },
+      },
+    });
+    const r = await h.run(['-p', 'hi']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe('Half an \n[retrying…]\nWhole answer\n');
+    expect(r.stderr).toContain('broke off mid-reply: Groq: list index out of range');
+  });
+
   it('emits NDJSON events with --output-format stream-json', async () => {
     h = await createHarness({
       groq: {
