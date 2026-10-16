@@ -11,7 +11,6 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/help`                              | Commands and keyboard shortcuts                                            |
 | `/clear` (`/new`)                    | Start a new conversation. The old one stays available in `/resume`         |
 | `/compact [focus]`                   | Summarize the conversation to free up context                              |
-| `/context`                           | What is filling the context window, and when auto-compaction starts        |
 | `/model [provider:model \| alias]`   | Switch the model for this session (with a searchable picker)               |
 | `/models [test]`                     | Providers, models that answer, the fallback order and aliases; then switch |
 | `/resume`                            | Continue an earlier conversation in this folder                            |
@@ -19,8 +18,7 @@ Type `/` for the menu. Use ↑/↓ to choose, Tab to complete and Enter to run.
 | `/changes` (`/diff`)                 | Review files changed this session: diffs, and undo per file (`Ctrl+G`)     |
 | `/init`                              | Analyze the project and write a starter `VINAX.md`                         |
 | `/memory`                            | Edit a memory file in your `$EDITOR`                                       |
-| `/status`                            | Session, providers, remaining rate limits and OpenRouter quota             |
-| `/usage`                             | Tokens and cost: this session, today, the last 7 days and all time         |
+| `/status`                            | Session, providers, keys and remaining rate limits                         |
 | `/doctor`                            | Check the installation, keys, search, shell, git, keychain and terminal    |
 | `/health`                            | A concise, grouped health summary (full details: `/doctor`)                |
 | `/about`                             | Version, runtime, install type, model, gateway, MCP and platform           |

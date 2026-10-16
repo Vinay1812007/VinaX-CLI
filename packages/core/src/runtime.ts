@@ -31,7 +31,6 @@ import {
   type ProviderName,
 } from './providers/types.js';
 import { Router } from './router/router.js';
-import { UsageTracker } from './state/usage.js';
 import type { SecretName } from './config/secrets.js';
 
 /** One model test of a provider, with the results that are current afterwards. */
@@ -89,7 +88,6 @@ export interface Runtime {
   ): Promise<ProbeRun | undefined>;
   /** Drops a provider's test results, e.g. because its key changed. */
   forgetProbes(name: ProviderName): Promise<void>;
-  usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
   /**
@@ -174,7 +172,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const logger = opts.verbose === true ? createFileLogger(logDir(env)) : noopLogger;
   const secrets = await openSecretStore(env);
   const resolved = settings.resolved;
-  const ledger = new RateLimitLedger((p) => resolved.providers[p].rpm);
+  const ledger = new RateLimitLedger();
   const { providers, missingKeys, gateway, viaGateway } = await createProviders({
     settings: resolved,
     secrets,
@@ -248,7 +246,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     settingsWarnings: settings.warnings,
   });
 
-  const usage = new UsageTracker(env);
   let gatewayLink = gateway;
   const useGatewayFor = (name: ProviderName): boolean => {
     if (!gatewayLink || !resolved.providers[name].enabled || !GATEWAY_PROVIDER_NAMES.includes(name))
@@ -260,7 +257,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   return {
     cwd: opts.cwd,
     env,
-    usage,
     probes,
     unhealthy,
     probeCandidates: candidatesFor,
@@ -407,7 +403,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       logger,
       skip,
       unhealthy,
-      usage,
       models,
     }),
     skipped: skip,

@@ -35,7 +35,7 @@ export function createAppDeps(opts: SessionOptions, io: CliIO): AppDeps {
   const probe = async (provider: ProviderName, key: string) =>
     createProvider(provider, key, {
       settings: await scratchSettings(),
-      ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+      ledger: new RateLimitLedger(),
       logger: noopLogger,
     });
   return {

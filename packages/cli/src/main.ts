@@ -34,8 +34,6 @@ interface RootOptions {
   disallowedTools?: string[];
   addDir?: string[];
   maxTurns?: number;
-  tokenBudget?: number;
-  timeBudget?: number;
   continue?: boolean;
   resume?: boolean | string;
   worktree?: boolean | string;
@@ -79,8 +77,6 @@ function sessionOptions(prompt: string | undefined, o: RootOptions): SessionOpti
     disallowedTools: o.disallowedTools ?? [],
     addDirs: o.addDir ?? [],
     maxTurns: o.maxTurns,
-    tokenBudget: o.tokenBudget,
-    timeBudget: o.timeBudget,
     continueLast: o.continue === true,
     resume: o.resume,
   };
@@ -135,12 +131,6 @@ export async function main(
     )
     .option('--add-dir <path>', 'also let tools work in this folder (repeatable)', collect)
     .option('--max-turns <n>', 'stop after this many model calls per prompt', parsePositiveInt)
-    .option(
-      '--token-budget <n>',
-      'stop a task after it uses this many tokens (reported or estimated, sub-agents included)',
-      parsePositiveInt,
-    )
-    .option('--time-budget <seconds>', 'stop a task after this many seconds', parsePositiveInt)
     .option(
       '-w, --worktree [name]',
       'work in an isolated git worktree (created from HEAD if needed); review and apply with vinax worktree',

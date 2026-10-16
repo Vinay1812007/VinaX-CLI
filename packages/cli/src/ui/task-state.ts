@@ -1,5 +1,5 @@
 import type { AgentOutcome } from '@vinax/core';
-import { formatClock, formatTokens } from './format.js';
+import { formatClock } from './format.js';
 
 /**
  * What the session is doing right now, for the status line. Each state reads differently so the
@@ -7,8 +7,8 @@ import { formatClock, formatTokens } from './format.js';
  */
 export type TaskState =
   | { kind: 'idle' }
-  /** A turn, command or `!` shell command is running; `tokens` shows use against a budget. */
-  | { kind: 'running'; since: number; tokens?: { used: number; budget: number } }
+  /** A turn, command or `!` shell command is running. */
+  | { kind: 'running'; since: number }
   /** VinaX is blocked on the user: an approval, a plan or a question (`more` wait behind it). */
   | { kind: 'waiting'; since: number; what: 'approval' | 'plan' | 'question'; more: number }
   /** The last turn ended; kept until the next one starts. */
@@ -38,7 +38,6 @@ const ENDED: Record<
   max_turns: { glyph: '⏹', text: 'stopped at --max-turns', tone: 'warning' },
   declined: { glyph: '⊘', text: 'stopped: you declined', tone: 'muted' },
   blocked: { glyph: '⊘', text: 'blocked by a hook', tone: 'warning' },
-  budget: { glyph: '⏹', text: 'stopped at the budget', tone: 'warning' },
   stuck: { glyph: '⟲', text: 'stopped: going in circles', tone: 'warning' },
 };
 
@@ -52,18 +51,7 @@ export function taskChip(state: TaskState, queued: number, now: number): TaskChi
         : { text: `${String(queued)} queued`, short: `${String(queued)}q`, tone: 'muted' };
     case 'running': {
       const clock = formatClock(now - state.since);
-      const t =
-        state.tokens === undefined
-          ? ''
-          : ` · ${formatTokens(state.tokens.used)}/${formatTokens(state.tokens.budget)} tokens`;
-      return {
-        text: `● working ${clock}${t}${q}`,
-        short: `● ${clock}`,
-        tone:
-          state.tokens !== undefined && state.tokens.used > state.tokens.budget * 0.8
-            ? 'warning'
-            : 'accent',
-      };
+      return { text: `● working ${clock}${q}`, short: `● ${clock}`, tone: 'accent' };
     }
     case 'waiting': {
       const clock = formatClock(now - state.since);

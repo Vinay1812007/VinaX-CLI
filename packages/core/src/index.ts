@@ -22,14 +22,10 @@ export {
 export {
   Agent,
   COMPACT_AT,
-  COMPACT_WARN_AT,
   INTERRUPTED_MARKER,
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
-  type ContextBreakdown,
-  type ContextSlice,
-  type TaskBudget,
   type PermissionAnswer,
   type PermissionRequest,
   type ToolMode,
@@ -135,14 +131,6 @@ export {
   type OutputStyle,
 } from './agent/output-styles.js';
 export {
-  usageTotals,
-  UsageTracker,
-  type DayUsage,
-  type ProviderUsage,
-  type UsageCounts,
-  type UsageRollup,
-} from './state/usage.js';
-export {
   createAgentSetup,
   pickVisionModel,
   pickVisionModels,
@@ -166,7 +154,6 @@ export {
   type GitInfo,
 } from './agent/system-prompt.js';
 export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
-export { effectiveContextWindow } from './context/budget.js';
 export { detectDanger } from './permissions/danger.js';
 export { PermissionEngine, suggestBashRule, type Decision } from './permissions/engine.js';
 export {
@@ -311,18 +298,7 @@ export {
 export { createRuntime, type ProbeRun, type Runtime, type RuntimeOptions } from './runtime.js';
 export { diffDisplay, diffSummary } from './tools/diff.js';
 export { displayPath, resolvePath } from './tools/paths.js';
-export {
-  addUsage,
-  costOf,
-  emptyUsage,
-  formatCost,
-  mergeModelUsage,
-  priceFor,
-  totalTokens,
-  type CostEstimate,
-  type ModelUsage,
-  type Price,
-} from './state/cost.js';
+export { addUsage, emptyUsage, totalTokens, type ModelUsage } from './state/cost.js';
 export { LoopGuard, STUCK_ADVICE, type LoopVerdict } from './agent/loop-guard.js';
 export {
   defaultWorktreeName,

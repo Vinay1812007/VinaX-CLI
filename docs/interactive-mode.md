@@ -39,24 +39,23 @@ After you upgrade, the first session shows a **What's new** panel with the relea
 - **The turn summary.** A turn that used tools ends with a line like `▸ Done └ Updated 2 files · 5 tool calls · 12.3s`.
 - **Error cards.** When a turn fails, a card shows each model that was tried, its provider, the kind of failure and the provider's message, and what to try next: retry, `/model`, `/login`, `/health` or `/compact`.
 - **Your prompts** appear in the transcript as `> your prompt`.
-- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows what VinaX is doing (see [Task state](#task-state)), the model that answered, the effort (`◔ low`, `◑ medium`, `● high`) when set, and how much of the context budget is used. Fallback and rate-limit notices appear under it.
+- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows what VinaX is doing (see [Task state](#task-state)), the model that answered, and the effort (`◔ low`, `◑ medium`, `● high`) when set. Fallback and rate-limit notices appear under it.
 - **The task list** appears above the prompt whenever VinaX tracks steps with `TodoWrite`.
 
 ### Task state
 
 The footer says at a glance whether VinaX is working, needs you, or stopped, and why:
 
-| Footer                         | Meaning                                                                                 |
-| ------------------------------ | --------------------------------------------------------------------------------------- |
-| `● working 0:12`               | A turn, command or `!` shell command is running (with tokens against a budget)          |
-| `◆ needs your approval · 0:05` | Waiting for you: an approval, a plan (`plan needs your review`) or a question           |
-| `2 queued`                     | Messages you typed while VinaX was busy, sent in order when it finishes                 |
-| `✓ done · 0:08`                | The last turn finished                                                                  |
-| `⏹ interrupted`                | You stopped it; what was done so far is kept                                            |
-| `✖ failed`                     | The models could not answer; an error card above says what to try                       |
-| `⏹ stopped at the budget`      | A [token or time budget](/usage#budgets) ran out                                        |
-| `⟲ stopped: going in circles`  | The task kept repeating a failing call; see [Usage](/usage#when-a-task-goes-in-circles) |
-| `⊘ stopped: you declined`      | You declined an action                                                                  |
+| Footer                         | Meaning                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `● working 0:12`               | A turn, command or `!` shell command is running                                                                 |
+| `◆ needs your approval · 0:05` | Waiting for you: an approval, a plan (`plan needs your review`) or a question                                   |
+| `2 queued`                     | Messages you typed while VinaX was busy, sent in order when it finishes                                         |
+| `✓ done · 0:08`                | The last turn finished                                                                                          |
+| `⏹ interrupted`                | You stopped it; what was done so far is kept                                                                    |
+| `✖ failed`                     | The models could not answer; an error card above says what to try                                               |
+| `⟲ stopped: going in circles`  | The task kept repeating a failing call; see [Troubleshooting](/troubleshooting#a-task-stopped-going-in-circles) |
+| `⊘ stopped: you declined`      | You declined an action                                                                                          |
 
 On a narrow terminal the state shortens to its symbol and clock (`◆ 0:05`).
 
@@ -156,12 +155,10 @@ Clicking to move the cursor inside the prompt would mean capturing the mouse, wh
   <span class="dim">Session</span>  20260929-164512-abc123 · Fix login bug
   <span class="dim">Resume</span>   <span class="accent">vinax --resume 20260929-164512-abc123</span>
   <span class="dim">Time</span>     12m 04s total · 3m 10s working · 8 prompts · 23 tool calls
-  <span class="dim">Tokens</span>   45K in · 3.1K out (reported) · ~2.4K estimated
-  <span class="dim">Cost</span>     unknown (no price for nvidia:openai/gpt-oss-20b)
   <span class="dim">Changes</span>  4 files · +120 −34 lines
   <span class="dim">Models</span>   nvidia:openai/gpt-oss-20b</pre>
 
-A session with no prompts just prints `✻ Bye!`. Reported and estimated tokens and the cost are explained in [Usage, budgets and cost](/usage).
+A session with no prompts just prints `✻ Bye!`.
 
 ## Themes
 

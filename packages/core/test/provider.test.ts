@@ -22,11 +22,7 @@ afterEach(async () => {
   server = undefined;
 });
 
-function makeProvider(
-  url: string,
-  ledger = new RateLimitLedger(() => 30),
-  apiKey = 'gsk_testkey123456',
-) {
+function makeProvider(url: string, ledger = new RateLimitLedger(), apiKey = 'gsk_testkey123456') {
   return new OpenAICompatibleProvider({
     name: 'groq',
     baseURL: url,
@@ -54,7 +50,7 @@ describe('OpenAICompatibleProvider', () => {
       });
       const provider = createProvider(name, 'new-provider-key', {
         settings: resolveSettings({ providers: { [name]: { baseUrl: server.url } } }),
-        ledger: new RateLimitLedger(() => Infinity),
+        ledger: new RateLimitLedger(),
         logger: noopLogger,
       });
       expect(await provider.validateKey()).toEqual({ ok: true });
@@ -83,7 +79,7 @@ describe('OpenAICompatibleProvider', () => {
         ],
       },
     });
-    const ledger = new RateLimitLedger(() => 30);
+    const ledger = new RateLimitLedger();
     const deltas = await drain(
       makeProvider(server.url, ledger).stream({
         model: 'm',
@@ -198,7 +194,7 @@ describe('OpenAICompatibleProvider', () => {
       baseURL: server.url,
       apiKey: 'gsk_goodkey000000',
       timeoutMs: 5000,
-      ledger: new RateLimitLedger(() => 30),
+      ledger: new RateLimitLedger(),
       logger: noopLogger,
       keyCheck: { path: '/models' },
       freeCatalog: true,

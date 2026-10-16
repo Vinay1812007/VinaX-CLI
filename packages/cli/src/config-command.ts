@@ -58,7 +58,7 @@ export async function storeProviderKey(
   if (settings) {
     const check = await createProvider(provider, key, {
       settings,
-      ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+      ledger: new RateLimitLedger(),
       logger: noopLogger,
     }).validateKey();
     if (!check.ok && check.rejected) {
@@ -99,7 +99,7 @@ async function testModelsAfterLogin(
   const err = (s: string) => io.stderr.write(`${s}\n`);
   const client = createProvider(provider, key, {
     settings,
-    ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+    ledger: new RateLimitLedger(),
     logger: noopLogger,
   });
   let catalog: ModelInfo[] | undefined;

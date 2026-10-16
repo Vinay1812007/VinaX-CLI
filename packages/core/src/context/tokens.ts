@@ -27,11 +27,3 @@ export function estimateTokens(
   for (const t of tools) total += 8 + Math.ceil(JSON.stringify(t).length / CHARS_PER_TOKEN);
   return total;
 }
-
-/**
- * The same estimate for a bare string, with no per-message overhead. Used to attribute parts of
- * the system prompt (memory, skills) to their own line in `/context`.
- */
-export function estimateTextTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
-}

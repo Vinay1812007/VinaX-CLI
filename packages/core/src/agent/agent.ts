@@ -10,16 +10,15 @@ import {
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
-import { estimateTextTokens, estimateTokens } from '../context/tokens.js';
+import { estimateTokens } from '../context/tokens.js';
 import { AbortError } from '../router/backoff.js';
 import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
 import type { UserAnswer, UserQuestion } from '../tools/question-tool.js';
-import { addUsage, emptyUsage, totalTokens, type ModelUsage } from '../state/cost.js';
+import { addUsage, emptyUsage, type ModelUsage } from '../state/cost.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
 import {
-  TIME_BUDGET_ABORT,
   type AnyTool,
   type ToolContext,
   type ToolDisplay,
@@ -104,11 +103,10 @@ export type AgentEvent =
 
 export interface AgentOutcome {
   /**
-   * `budget`: the task reached its token or time budget. `stuck`: it was going in circles
-   * (the same call failing or repeating); `error` explains and says what to do next.
+   * `stuck`: the task was going in circles (the same call failing or repeating);
+   * `error` explains and says what to do next.
    */
-  status:
-    'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked' | 'budget' | 'stuck';
+  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked' | 'stuck';
   /** The final assistant text of the turn. */
   text: string;
   error?: string;
@@ -119,34 +117,9 @@ export interface AgentOutcome {
   usage: Usage;
   /** Tokens VinaX estimated for responses without a usage report (or cut off mid-stream). */
   estimatedUsage: Usage;
-  /** Both, per model ref, for pricing. */
+  /** Both, per model ref. */
   usageByModel: Record<string, ModelUsage>;
   models: string[];
-}
-
-/** Per-task limits; either may be unset. */
-export interface TaskBudget {
-  tokens?: number | undefined;
-  seconds?: number | undefined;
-}
-
-/** One line of `/context`: a part of the next request, and what it costs. */
-export interface ContextSlice {
-  key: 'system' | 'memory' | 'skills' | 'tools' | 'messages';
-  label: string;
-  tokens: number;
-}
-
-export interface ContextBreakdown {
-  slices: ContextSlice[];
-  /** Fixed per-request overhead that belongs to no slice. */
-  overhead: number;
-  /** Total of the slices plus overhead; equals `requestTokens(mode)`. */
-  used: number;
-  /** `Infinity` when no context budget applies. */
-  limit: number;
-  /** Where auto-compaction kicks in, or undefined when it is switched off. */
-  compactAt: number | undefined;
 }
 
 export interface AgentDeps {
@@ -156,11 +129,6 @@ export interface AgentDeps {
   context: Omit<ToolContext, 'signal' | 'onProgress'>;
   checkpoints: CheckpointStore;
   systemPrompt: (mode: PermissionMode, toolInstructions?: string) => string;
-  /**
-   * The parts of the system prompt worth reporting separately in `/context`. They are already
-   * inside `systemPrompt`; this only says how much of it they account for.
-   */
-  promptParts?: () => { memory: string; skills: string };
   /** From the model catalog: `false` means the model has no native tool calling. */
   supportsTools?: (ref: ModelRef) => boolean | undefined;
   /** Whether a model accepts images; images are replaced by a note for models that do not. */
@@ -186,18 +154,12 @@ export interface AgentDeps {
   nested?: boolean;
   /** Open items of the task list, carried verbatim through compaction. */
   activeTasks?: () => string | undefined;
-  /** Token and time limits for each task (read when a task starts). */
-  budget?: () => TaskBudget;
-  /** A model's context window, when its catalog says (for warnings before a request). */
-  contextWindow?: (ref: ModelRef) => number | undefined;
 }
 
 /** What one task has used and how it is going, shared by its steps. */
 class TaskState {
   readonly byModel: Record<string, ModelUsage> = {};
   readonly guard = new LoopGuard();
-  /** Set when a budget ran out: why, for the user. */
-  budgetHit: string | undefined;
   /** Set when the task is going in circles: why, for the user. */
   stuck: string | undefined;
 
@@ -222,22 +184,6 @@ class TaskState {
     }
     return { measured, estimated };
   }
-
-  total(): number {
-    const t = this.totals();
-    return totalTokens(t.measured) + totalTokens(t.estimated);
-  }
-
-  /** Why work is being stopped, for "Not run: …" notes. */
-  why(): string {
-    return this.budgetHit === undefined
-      ? 'the user interrupted'
-      : 'the task reached its time budget';
-  }
-}
-
-function kTokens(n: number): string {
-  return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
 }
 
 /** How many times a Stop hook may send the model back to work in one turn. */
@@ -245,12 +191,6 @@ const MAX_STOP_HOOK_RETRIES = 3;
 
 /** Auto-compaction starts when the request reaches this share of the context budget. */
 export const COMPACT_AT = 0.85;
-
-/**
- * Where the UI warns that auto-compaction is coming. Far enough below {@link COMPACT_AT} to leave
- * room to act, close enough that it is not crying wolf.
- */
-export const COMPACT_WARN_AT = 0.75;
 
 interface Prepared {
   call: ToolCall;
@@ -362,42 +302,6 @@ export class Agent {
       [{ role: 'system', content: this.deps.systemPrompt(mode) }, ...this.messages],
       specs,
     );
-  }
-
-  /**
-   * Where the next request's tokens go, for `/context`. The slices add up to
-   * {@link requestTokens}, so the panel and the status-line percentage never disagree.
-   */
-  contextBreakdown(mode: PermissionMode): ContextBreakdown {
-    const active = this.deps.tools.filter((t) =>
-      mode === 'plan' ? t.readOnly : t.name !== 'ExitPlanMode',
-    );
-    const specs = active.map(toolSpec);
-    const prompt = this.deps.systemPrompt(mode);
-    const parts = this.deps.promptParts?.() ?? { memory: '', skills: '' };
-    // estimateTokens seeds every total with the same 3-token request overhead, so subtracting it
-    // leaves just the contribution of the messages or tools that were passed in.
-    const BASE = estimateTokens([]);
-    const systemAll = estimateTokens([{ role: 'system', content: prompt }]) - BASE;
-    const memory = estimateTextTokens(parts.memory);
-    const skills = estimateTextTokens(parts.skills);
-    const tools = estimateTokens([], specs) - BASE;
-    const messages = estimateTokens(this.messages) - BASE;
-    const limit = this.deps.contextLimit?.() ?? Number.POSITIVE_INFINITY;
-    return {
-      slices: [
-        // Memory and skills are carved out of the prompt, so the remainder is the fixed scaffold.
-        { key: 'system', label: 'System prompt', tokens: Math.max(0, systemAll - memory - skills) },
-        { key: 'memory', label: 'Project memory', tokens: memory },
-        { key: 'skills', label: 'Skills', tokens: skills },
-        { key: 'tools', label: `Tool definitions (${String(specs.length)})`, tokens: tools },
-        { key: 'messages', label: `Messages (${String(this.messages.length)})`, tokens: messages },
-      ],
-      overhead: BASE,
-      used: this.requestTokens(mode),
-      limit,
-      compactAt: this.deps.contextLimit === undefined ? undefined : limit * COMPACT_AT,
-    };
   }
 
   /**
@@ -551,21 +455,13 @@ export class Agent {
       if (r.context.length > 0)
         content = `${prompt}\n\n<hook-context>\n${r.context.join('\n')}\n</hook-context>`;
     }
-    // The task runs on its own signal: the user's interrupt and the time budget both stop it.
-    const budget = this.deps.budget?.() ?? {};
+    // The task runs on its own signal, which the user's interrupt stops.
     const inner = new AbortController();
     const relay = (): void => {
       inner.abort();
     };
     if (runOpts.signal.aborted) inner.abort();
     else runOpts.signal.addEventListener('abort', relay, { once: true });
-    const timer =
-      budget.seconds === undefined
-        ? undefined
-        : setTimeout(() => {
-            task.budgetHit = `Stopped at the time budget: this task ran for ${String(budget.seconds)}s. What VinaX did so far is kept. Send a message to continue, or raise the limit with --time-budget or "budget.seconds" in settings.`;
-            inner.abort(TIME_BUDGET_ABORT);
-          }, budget.seconds * 1000);
     let opts: StepOptions = { ...runOpts, signal: inner.signal, task };
 
     const turn = ++this.turnCounter;
@@ -587,19 +483,6 @@ export class Agent {
     if (visionModel?.notice !== undefined)
       opts.onEvent({ type: 'notice', level: 'info', text: visionModel.notice });
     let stopRetries = 0;
-    const overBudget = (next: number): string | undefined => {
-      if (budget.tokens === undefined) return undefined;
-      const used = task.total();
-      if (used + next <= budget.tokens) return undefined;
-      const { measured, estimated } = task.totals();
-      const split = `${kTokens(totalTokens(measured))} measured, ${kTokens(totalTokens(estimated))} estimated`;
-      const what =
-        used >= budget.tokens
-          ? `this task used ~${kTokens(used)} tokens (${split}) of its ${kTokens(budget.tokens)} budget`
-          : `the next request (~${kTokens(next)} tokens) would take this task (~${kTokens(used)} so far: ${split}) past its ${kTokens(budget.tokens)} budget`;
-      return `Stopped at the token budget: ${what}. What VinaX did so far is kept. Send a message to continue (each task gets a fresh budget), or raise it with --token-budget or "budget.tokens" in settings.`;
-    };
-
     const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
     try {
       for (;;) {
@@ -615,10 +498,7 @@ export class Agent {
               onEvent: opts.onEvent,
             });
           } catch (err) {
-            if (opts.signal.aborted)
-              return task.budgetHit === undefined
-                ? outcome('interrupted')
-                : outcome('budget', task.budgetHit);
+            if (opts.signal.aborted) return outcome('interrupted');
             opts.onEvent({
               type: 'notice',
               level: 'warning',
@@ -626,12 +506,9 @@ export class Agent {
             });
           }
         }
-        const tooMuch = overBudget(this.requestTokens(opts.host.mode()));
-        if (tooMuch !== undefined) return outcome('budget', tooMuch);
         steps++;
         const step = await this.step(turn, steps, opts, models);
         lastText = step.text;
-        if (task.budgetHit !== undefined) return outcome('budget', task.budgetHit);
         if (step.status === 'stuck') return outcome('stuck', step.error);
         if (
           step.status === 'done' &&
@@ -660,12 +537,9 @@ export class Agent {
           }
         }
         if (step.status !== 'continue') return outcome(step.status, step.error, step.report);
-        const used = overBudget(0);
-        if (used !== undefined) return outcome('budget', used);
       }
     } finally {
       removeRules();
-      if (timer !== undefined) clearTimeout(timer);
       runOpts.signal.removeEventListener('abort', relay);
     }
   }
@@ -799,7 +673,7 @@ export class Agent {
             outputChars = 0;
             models.add(attempt);
             onEvent(ev);
-            this.noteCapabilities(ev.ref, promptEstimate, onEvent);
+            this.noteCapabilities(ev.ref, onEvent);
             break;
           case 'reasoning':
             outputChars += ev.text.length;
@@ -843,10 +717,7 @@ export class Agent {
       // a reply cut off mid-stream still cost tokens
       estimateAttempt();
       if (err instanceof AbortError) {
-        const marker =
-          task.budgetHit === undefined
-            ? INTERRUPTED_MARKER
-            : '[stopped: the task reached its time budget]';
+        const marker = INTERRUPTED_MARKER;
         this.push({
           role: 'assistant',
           content: text === '' ? marker : `${text}\n\n${marker}`,
@@ -914,8 +785,8 @@ export class Agent {
 
   private readonly noted = new Set<string>();
 
-  /** Says once per model when what it can do limits this session (tools, context size). */
-  private noteCapabilities(ref: ModelRef, requestTokens: number, onEvent: RunOptions['onEvent']) {
+  /** Says once per model when what it can do limits this session (tools). */
+  private noteCapabilities(ref: ModelRef, onEvent: RunOptions['onEvent']) {
     const key = formatModelRef(ref);
     if (
       this.deps.supportsTools?.(ref) === false &&
@@ -927,15 +798,6 @@ export class Agent {
         type: 'notice',
         level: 'info',
         text: `${key} has no native tool calling, so VinaX drives its tools through a text protocol (it works, but expect more formatting slips).`,
-      });
-    }
-    const window = this.deps.contextWindow?.(ref);
-    if (window !== undefined && requestTokens > window && !this.noted.has(`${key}:ctx`)) {
-      this.noted.add(`${key}:ctx`);
-      onEvent({
-        type: 'notice',
-        level: 'warning',
-        text: `${key} accepts about ${kTokens(window)} tokens, but this request is ~${kTokens(requestTokens)}, so it may be rejected. Run /compact, or choose a model with a larger context with /model.`,
       });
     }
   }
@@ -1057,7 +919,12 @@ export class Agent {
         });
         if (interrupted || signal.aborted) {
           interrupted = true;
-          finish(p.call.id, p.call.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+          finish(
+            p.call.id,
+            p.call.name,
+            fail('Not run: the user interrupted.', 'Interrupted'),
+            false,
+          );
           continue;
         }
         if (declined !== undefined) {
@@ -1148,7 +1015,12 @@ export class Agent {
           }
           if (isAborted(signal)) {
             interrupted = true;
-            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+            finish(
+              p.call.id,
+              tool.name,
+              fail('Not run: the user interrupted.', 'Interrupted'),
+              false,
+            );
             continue;
           }
           if (answer.kind === 'unavailable') {
@@ -1196,7 +1068,7 @@ export class Agent {
           onProgress: (chunk) => {
             onEvent({ type: 'tool_progress', id: p.call.id, chunk });
           },
-          // a sub-agent's tokens count towards this task (and its budget)
+          // a sub-agent's tokens count towards this task
           addUsage: (byModel) => {
             for (const [ref, u] of Object.entries(byModel)) {
               task.measured(ref, u.measured);
@@ -1209,7 +1081,12 @@ export class Agent {
           await this.deps.checkpoints.capture(affected);
           // Input can change the mode or cancel the turn while approval/checkpointing waits.
           if (signal.aborted) {
-            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+            finish(
+              p.call.id,
+              tool.name,
+              fail('Not run: the user interrupted.', 'Interrupted'),
+              false,
+            );
             return;
           }
           if (host.mode() === 'plan' && !tool.readOnly && tool.kind !== 'meta') {

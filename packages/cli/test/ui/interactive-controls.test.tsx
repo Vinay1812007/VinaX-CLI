@@ -247,7 +247,6 @@ describe('interactive controls', () => {
         <StatusLine
           mode={mode}
           model="groq:openai/gpt-oss-120b"
-          contextPct={25}
           notice={undefined}
           hint={undefined}
           width={30}

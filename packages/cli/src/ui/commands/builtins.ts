@@ -5,11 +5,7 @@ import path from 'node:path';
 import {
   AppStateStore,
   conversationMarkdown,
-  costOf,
   createProvider,
-  formatCost,
-  priceFor,
-  totalTokens,
   formatModelRef,
   HOOK_EVENTS,
   KNOWN_MODELS,
@@ -28,13 +24,8 @@ import {
   settingsPaths,
   THEME_NAMES,
   updateSettingsFile,
-  usageTotals,
-  type ModelUsage,
-  type Price,
   type ProbeRun,
   type ProviderName,
-  type ProviderUsage,
-  type UsageRollup,
 } from '@vinax/core';
 import { CHECK_ICON, healthMarkdown } from '../../health.js';
 import { openInBrowser } from '../../open-url.js';
@@ -473,70 +464,6 @@ const changes: SlashCommand = {
   },
 };
 
-const BAR_WIDTH = 22;
-
-/**
- * A proportional bar. Panels render Markdown, which carries no per-slice colour, so each row gets
- * its own bar instead of one colour-coded grid. Anything non-zero keeps at least one block so a
- * small-but-present slice never looks empty.
- */
-function bar(share: number, width = BAR_WIDTH): string {
-  if (!Number.isFinite(share) || share <= 0) return '░'.repeat(width);
-  const filled = Math.min(width, Math.max(1, Math.round(share * width)));
-  return '█'.repeat(filled) + '░'.repeat(width - filled);
-}
-
-const contextCommand: SlashCommand = {
-  name: 'context',
-  description: 'Show what is filling the context window',
-  source: 'builtin',
-  run(ctx) {
-    const { runtime, setup } = ctx;
-    const b = setup.agent.contextBreakdown(ctx.mode());
-    const model = setup.agent.model ?? runtime.settings.resolved.model;
-    const budgeted = Number.isFinite(b.limit);
-    const share = (n: number) => (budgeted ? n / b.limit : 0);
-    const pct = (n: number) => `${String(Math.round(share(n) * 100))}%`;
-    const lines: string[] = [
-      `**Model** \`${model}\``,
-      '',
-      budgeted
-        ? `**${formatTokens(b.used)}** of **${formatTokens(b.limit)}** tokens · ${pct(b.used)} used`
-        : `**${formatTokens(b.used)}** tokens · no context budget is configured`,
-      '',
-      '| Part | | Tokens | Share |',
-      '| --- | --- | ---: | ---: |',
-    ];
-    const rows = b.slices.filter((s) => s.tokens > 0 || s.key === 'messages');
-    for (const s of rows)
-      lines.push(
-        `| ${s.label} | \`${bar(share(s.tokens))}\` | ${formatTokens(s.tokens)} | ${pct(s.tokens)} |`,
-      );
-    if (budgeted) {
-      const free = Math.max(0, b.limit - b.used);
-      lines.push(`| Free | \`${bar(share(free))}\` | ${formatTokens(free)} | ${pct(free)} |`);
-    }
-    lines.push('');
-    if (b.compactAt === undefined)
-      lines.push(
-        'Auto-compaction is off (`context.autoCompact`), so the conversation is never summarized for you. Use `/compact` before you run out.',
-      );
-    else if (b.used >= b.compactAt)
-      lines.push(
-        `Past the auto-compaction point (${formatTokens(b.compactAt)}): the next turn summarizes older history to make room.`,
-      );
-    else
-      lines.push(
-        `Auto-compaction starts at ${formatTokens(b.compactAt)} — **${formatTokens(b.compactAt - b.used)}** to go.`,
-      );
-    lines.push(
-      '',
-      'Counts are estimates (~3.5 characters per token) of the *next* request, so they move as the conversation grows. `/compact` summarizes now; `/clear` starts fresh.',
-    );
-    ctx.panel('Context', lines.join('\n'));
-  },
-};
-
 const status: SlashCommand = {
   name: 'status',
   description: 'Session, providers and remaining rate limits',
@@ -545,7 +472,7 @@ const status: SlashCommand = {
     const { runtime, setup } = ctx;
     const lines: string[] = [
       `**Session** ${ctx.sessionTitle() ?? '(untitled)'} · \`${ctx.session.id}\``,
-      `- model: \`${setup.agent.model ?? runtime.settings.resolved.model}\` · mode: ${ctx.mode()} · context: ${ctx.contextPct() === undefined ? 'n/a' : `${String(ctx.contextPct())}%`} of ${formatTokens(setup.contextLimit())} tokens`,
+      `- model: \`${setup.agent.model ?? runtime.settings.resolved.model}\` · mode: ${ctx.mode()}`,
       `- memory: ${setup.memory.files.length === 0 ? 'none' : setup.memory.files.map((f) => `\`${shortenPath(f.path)}\``).join(', ')}`,
       `- output style: ${setup.outputStyle().name} — ${setup.outputStyle().description} (\`/output-style\`)`,
       '',
@@ -581,139 +508,13 @@ const status: SlashCommand = {
         );
       }
       const info = await provider?.accountInfo?.(AbortSignal.timeout(8000));
-      if (info) {
-        const free =
-          info.is_free_tier === 'true'
-            ? 'free tier (50 :free requests/day)'
-            : 'credits purchased (1,000 :free requests/day)';
+      if (info)
         lines.push(
-          `- account: ${free}${info.limit_remaining === undefined ? '' : ` · credit left: ${info.limit_remaining}`}`,
+          `- account: ${info.is_free_tier === 'true' ? 'free tier' : 'credits purchased'}`,
         );
-      }
       lines.push('');
     }
-    lines.push('Requests and tokens used today: `/usage`');
     ctx.panel('Status', lines.join('\n'));
-  },
-};
-
-/** The ISO date `back` days before `date`. */
-function daysBefore(date: string, back: number): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - back);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * Recorded counts as per-model usage, so a stored day can be costed like a live session. Only
- * what providers reported is stored, so none of it is estimated.
- */
-function recordedUsage(providers: ProviderUsage): Record<string, ModelUsage> {
-  const out: Record<string, ModelUsage> = {};
-  for (const [name, counts] of Object.entries(providers) as [
-    ProviderName,
-    ProviderUsage[ProviderName],
-  ][]) {
-    if (counts === undefined) continue;
-    for (const [model, c] of Object.entries(counts.models)) {
-      out[`${name}:${model}`] = {
-        measured: { promptTokens: c.promptTokens, completionTokens: c.completionTokens },
-        estimated: { promptTokens: 0, completionTokens: 0 },
-      };
-    }
-  }
-  return out;
-}
-
-/**
- * One "Last 7 days (3 days): 12 requests · 48K in · 9K out · $0.12" line. The day count says how
- * many of the window's days VinaX actually ran on, so it is left out for a single-day window.
- */
-function rollupLine(
-  label: string,
-  rollup: UsageRollup,
-  price: (ref: string) => Price | undefined,
-  countDays = true,
-): string {
-  const total = usageTotals(rollup.providers);
-  const days = countDays ? ` (${plural(rollup.dates.length, 'day')})` : '';
-  if (total.requests === 0) return `- ${label}${days}: nothing recorded`;
-  const cost = formatCost(costOf(recordedUsage(rollup.providers), price));
-  return `- ${label}${days}: ${plural(total.requests, 'request')} · ${formatTokens(total.promptTokens)} in · ${formatTokens(total.completionTokens)} out · ${cost}`;
-}
-
-const usage: SlashCommand = {
-  name: 'usage',
-  description: 'Tokens and cost for this session, today, the last 7 days and all time',
-  source: 'builtin',
-  run(ctx) {
-    const price = (ref: string) => priceFor(ref, ctx.runtime.settings.resolved, ctx.runtime.models);
-    const session = ctx.sessionUsage();
-    const lines: string[] = ['**This session**', ''];
-    const refs = Object.keys(session);
-    if (refs.length === 0) lines.push('No model calls yet.');
-    for (const ref of refs) {
-      const u = session[ref];
-      if (!u) continue;
-      const reported = totalTokens(u.measured);
-      const estimated = totalTokens(u.estimated);
-      const p = price(ref);
-      const priced =
-        reported + estimated === 0
-          ? ''
-          : p === undefined
-            ? ' · price unknown'
-            : ` · ${formatCost(costOf({ [ref]: u }, price))} (${p.source === 'settings' ? 'your settings' : 'the provider catalog'})`;
-      lines.push(
-        `- \`${ref}\`: ${formatTokens(u.measured.promptTokens)} in · ${formatTokens(u.measured.completionTokens)} out reported${estimated === 0 ? '' : ` · ~${formatTokens(estimated)} estimated`}${priced}`,
-      );
-    }
-    if (refs.length > 0) lines.push('', `Cost: **${formatCost(costOf(session, price))}**`);
-
-    const day = ctx.runtime.usage.snapshot();
-    lines.push(
-      '',
-      '**Across every VinaX session** (reported tokens, priced at today’s rates):',
-      '',
-      rollupLine('Today', { dates: [day.date], providers: day.providers }, price, false),
-      rollupLine('Last 7 days', ctx.runtime.usage.rollup(daysBefore(day.date, 6)), price),
-      rollupLine('All time', ctx.runtime.usage.rollup(), price),
-      '',
-      `**Today** (${day.date}), provider by provider:`,
-      '',
-    );
-    for (const name of PROVIDER_NAMES) {
-      const p = day.providers[name];
-      if (!p) continue;
-      lines.push(
-        `**${providerLabel(name)}** — ${plural(p.requests, 'request')} · ${formatTokens(p.promptTokens)} in · ${formatTokens(p.completionTokens)} out`,
-      );
-      for (const [m, c] of Object.entries(p.models)) {
-        const ref = `${name}:${m}`;
-        const cost =
-          price(ref) === undefined
-            ? ''
-            : ` · ${formatCost(costOf(recordedUsage({ [name]: { ...c, models: { [m]: c } } }), price))}`;
-        lines.push(
-          `- \`${m}\`: ${plural(c.requests, 'request')} · ${formatTokens(c.promptTokens + c.completionTokens)} tokens${cost}`,
-        );
-      }
-      if (name === 'openrouter') {
-        const free = Object.entries(p.models)
-          .filter(([m]) => m.endsWith(':free'))
-          .reduce((n, [, c]) => n + c.requests, 0);
-        lines.push(
-          `- \`:free\` requests: **${String(free)}/50** of the free daily cap (1,000 with credits)`,
-        );
-      }
-      lines.push('');
-    }
-    if (Object.keys(day.providers).length === 0) lines.push('No requests yet today.');
-    lines.push(
-      '',
-      'Reported = counted by the provider. Estimated = VinaX counted ~4 characters per token where the provider sent no count (or the reply was cut off). Costs use only explicit prices: `pricing` in settings or the provider catalog — a model with no published price is left out and named. Rollups are priced at today’s rates, so a price that has since changed is not what you were charged then.',
-    );
-    ctx.panel('Usage', lines.join('\n'));
   },
 };
 
@@ -934,7 +735,7 @@ const login: SlashCommand = {
     const check = await ctx.busy(`Checking the key with ${providerLabel(provider)}`, (signal) =>
       createProvider(provider, key, {
         settings: ctx.runtime.settings.resolved,
-        ledger: new RateLimitLedger(() => Number.POSITIVE_INFINITY),
+        ledger: new RateLimitLedger(),
         logger: noopLogger,
       }).validateKey(signal),
     );
@@ -1216,8 +1017,6 @@ export const BUILTIN_COMMANDS: readonly SlashCommand[] = [
   rewind,
   changes,
   status,
-  contextCommand,
-  usage,
   doctor,
   health,
   about,

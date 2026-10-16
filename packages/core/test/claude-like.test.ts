@@ -177,7 +177,7 @@ describe('provider: images, effort and reasoning', () => {
       const s = resolveSettings({ providers: { [name]: { baseUrl } } });
       return { ...s, router: { ...s.router, requestTimeoutMs: 5000 } };
     })(),
-    ledger: new RateLimitLedger(() => 100),
+    ledger: new RateLimitLedger(),
     logger: noopLogger,
   });
   const drain = async (it: AsyncIterable<StreamDelta>) => {
@@ -453,7 +453,7 @@ describe('router: timeouts and per-request fallbacks', () => {
   const make = (p: Slow, fallbackChain: string[]) =>
     new Router({
       providers: new Map([[p.name, p]]),
-      ledger: new RateLimitLedger(() => 100),
+      ledger: new RateLimitLedger(),
       settings: {
         ...resolveSettings({}),
         model: `${p.name}:a`,

@@ -9,11 +9,8 @@ import {
 } from '@vinax/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  costOf,
   createAgentSetup,
   createRuntime,
-  formatCost,
-  priceFor,
   type AgentEvent,
   type AgentHost,
   type AgentSetup,
@@ -598,41 +595,6 @@ describe('Agent control', () => {
     expect(Object.keys(out.usageByModel)).toEqual(['groq:main']);
   });
 
-  it('stops at the token budget before sending a request that would exceed it', async () => {
-    const call = {
-      toolCalls: [{ name: 'LS', arguments: '{}' }],
-      usage: { prompt_tokens: 3000, completion_tokens: 10 },
-    };
-    const c = await start({
-      settings: { budget: { tokens: 5000 } },
-      groq: { script: { main: [call, call, call, { text: 'done' }] } },
-    });
-    const out = await run(c, 'list a lot');
-    expect(out.status).toBe('budget');
-    expect(out.error).toMatch(/token budget.*5\.0K budget.*--token-budget/s);
-    // the second request (3K + ~a few hundred) would pass 5K, so it was never sent
-    expect(bodies(c.groq)).toHaveLength(1);
-    // the conversation stays well-formed: the tool call has its result
-    expect(c.setup.agent.messages.at(-1)?.role).toBe('tool');
-  });
-
-  it('stops a task at the time budget, even in the middle of a command', async () => {
-    const c = await start({
-      settings: { budget: { seconds: 1 }, permissions: { allow: ['Bash(sleep:*)'] } },
-      groq: {
-        script: { main: [{ toolCalls: [{ name: 'Bash', arguments: '{"command":"sleep 20"}' }] }] },
-      },
-    });
-    const started = Date.now();
-    const out = await run(c, 'wait');
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect(out.status).toBe('budget');
-    expect(out.error).toMatch(/time budget.*1s/);
-    const result = c.setup.agent.messages.at(-1);
-    expect(result).toMatchObject({ role: 'tool' });
-    expect(result?.content).toContain('[stopped: the task reached its time budget]');
-  });
-
   it('nudges, then stops a task that repeats a failing call, and explains what to do', async () => {
     const c = await start({
       groq: { script: { main: [read(1), read(2), read(3), { text: 'unreachable' }] } },
@@ -682,7 +644,7 @@ describe('Agent control', () => {
     expect(out.usage).toEqual({ promptTokens: 340, completionTokens: 34 });
   });
 
-  it('says when a model in use cannot call tools natively or is too small for the request', async () => {
+  it('says when a model in use cannot call tools natively, and never warns about its context size', async () => {
     const c = await start({
       groq: {
         models: [{ id: 'main', context_window: 200, supported_parameters: [] }],
@@ -692,97 +654,7 @@ describe('Agent control', () => {
     await run(c, 'hello');
     const notices = c.events.flatMap((e) => (e.type === 'notice' ? [e.text] : []));
     expect(notices.some((n) => n.includes('groq:main has no native tool calling'))).toBe(true);
-    expect(notices.some((n) => /groq:main accepts about 200 tokens/.test(n))).toBe(true);
-  });
-});
-
-describe('cost', () => {
-  const byModel = {
-    'openrouter:paid': {
-      measured: { promptTokens: 1_000_000, completionTokens: 100_000 },
-      estimated: { promptTokens: 0, completionTokens: 0 },
-    },
-    'groq:main': {
-      measured: { promptTokens: 500, completionTokens: 50 },
-      estimated: { promptTokens: 0, completionTokens: 0 },
-    },
-  };
-
-  it('prices only from explicit data and calls the rest unknown', () => {
-    const models = new Map([
-      [
-        'openrouter' as const,
-        [
-          {
-            id: 'paid',
-            contextWindow: 1,
-            supportsTools: true,
-            free: false,
-            pricing: { prompt: 0.000001, completion: 0.000002 },
-          },
-        ],
-      ],
-    ]);
-    const settings = { pricing: {} };
-    const price = (ref: string) => priceFor(ref, settings, models);
-    const c = costOf(byModel, price);
-    expect(c).toEqual({ usd: 1.2, unpriced: ['groq:main'], approximate: false });
-    expect(formatCost(c)).toBe('$1.20 + unknown more (no price for groq:main)');
-    expect(formatCost(costOf({ 'groq:main': byModel['groq:main'] }, price))).toBe(
-      'unknown (no price for groq:main)',
-    );
-    // settings win over the catalog
-    const withSettings = (ref: string) =>
-      priceFor(
-        ref,
-        { pricing: { 'groq:main': { inputPerMillion: 1, outputPerMillion: 2 } } },
-        models,
-      );
-    expect(withSettings('groq:main')).toEqual({
-      prompt: 1e-6,
-      completion: 2e-6,
-      source: 'settings',
-    });
-    const est = costOf(
-      {
-        'groq:main': {
-          measured: { promptTokens: 0, completionTokens: 0 },
-          estimated: { promptTokens: 10, completionTokens: 0 },
-        },
-      },
-      withSettings,
-    );
-    expect(formatCost(est)).toBe('≈ $0.0000');
-  });
-
-  it('reads fixed catalog prices and ignores variable (-1) ones', async () => {
-    const server = await startMockServer({
-      models: [
-        { id: 'fixed', pricing: { prompt: '0.000003', completion: '0.000015' } },
-        { id: 'variable', pricing: { prompt: '-1', completion: '-1' } },
-      ],
-    });
-    try {
-      const { OpenAICompatibleProvider, RateLimitLedger, noopLogger } =
-        await import('../src/index.js');
-      const p = new OpenAICompatibleProvider({
-        name: 'openrouter',
-        baseURL: server.url,
-        apiKey: 'k',
-        timeoutMs: 2000,
-        ledger: new RateLimitLedger(() => 0),
-        logger: noopLogger,
-        keyCheck: { path: '/key' },
-      });
-      const list = await p.listModels();
-      expect(list.find((m) => m.id === 'fixed')?.pricing).toEqual({
-        prompt: 0.000003,
-        completion: 0.000015,
-      });
-      expect(list.find((m) => m.id === 'variable')?.pricing).toBeUndefined();
-    } finally {
-      await server.close();
-    }
+    expect(notices.some((n) => /accepts about/.test(n))).toBe(false);
   });
 });
 
@@ -832,50 +704,5 @@ describe('Agent compaction', () => {
     // and the image reached the vision model after compaction
     const last = bodies(c.groq).at(-1);
     expect(JSON.stringify(last?.messages[1])).toContain('data:image/png;base64');
-  });
-});
-
-describe('context breakdown', () => {
-  it('attributes memory and tools, and adds up to the request estimate', async () => {
-    const memoryText = `# Project rules\n${'Always run the linter before committing. '.repeat(40)}`;
-    const c = await start({
-      files: { 'VINAX.md': memoryText },
-      settings: { context: { maxTokens: 40_000 } },
-      groq: { script: { main: [{ text: 'noted' }] } },
-    });
-    const before = c.setup.agent.contextBreakdown('default');
-    const slice = (key: string) => before.slices.find((s) => s.key === key)?.tokens ?? 0;
-
-    // The slices account for the whole estimate, so /context can never disagree with the
-    // percentage in the status line.
-    const summed = before.slices.reduce((n, s) => n + s.tokens, 0) + before.overhead;
-    expect(summed).toBe(before.used);
-    expect(before.used).toBe(c.setup.agent.requestTokens('default'));
-
-    // Memory is carved out of the system prompt rather than double-counted inside it.
-    expect(slice('memory')).toBeGreaterThan(100);
-    expect(slice('system')).toBeGreaterThan(0);
-    expect(slice('tools')).toBeGreaterThan(0);
-    expect(slice('messages')).toBe(0);
-
-    expect(before.limit).toBe(40_000);
-    expect(before.compactAt).toBeCloseTo(40_000 * 0.85, 5);
-
-    // Talking to the model moves tokens into the messages slice, and nowhere else.
-    expect((await run(c, 'hello')).status).toBe('done');
-    const after = c.setup.agent.contextBreakdown('default');
-    expect(after.slices.find((s) => s.key === 'messages')?.tokens).toBeGreaterThan(0);
-    expect(after.slices.find((s) => s.key === 'memory')?.tokens).toBe(slice('memory'));
-    expect(after.used).toBeGreaterThan(before.used);
-  });
-
-  it('reports no budget when auto-compaction is off', async () => {
-    const c = await start({
-      settings: { context: { autoCompact: false } },
-      groq: { script: { main: [{ text: 'ok' }] } },
-    });
-    const b = c.setup.agent.contextBreakdown('default');
-    expect(b.compactAt).toBeUndefined();
-    expect(b.limit).toBe(Number.POSITIVE_INFINITY);
   });
 });

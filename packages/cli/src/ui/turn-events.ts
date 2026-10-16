@@ -6,7 +6,6 @@ import {
   type AgentOutcome,
 } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
-import { formatTokens } from './format.js';
 import { extendTrail, phaseFor, type Phase } from './phases.js';
 import { splitStable, type NewTranscriptItem, type ToolRecord } from './transcript.js';
 
@@ -183,8 +182,8 @@ export function createTurnTracker(sink: TurnSink): {
           level: 'info',
           text:
             ev.kind === 'summary'
-              ? `Compacted the conversation to stay within the context budget (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`
-              : `Trimmed old tool output to save context (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`,
+              ? 'Compacted older conversation history to make room.'
+              : 'Trimmed old tool output to make room.',
         });
         return;
       case 'attempt':
@@ -270,7 +269,6 @@ export function outcomeItem(outcome: AgentOutcome): NewTranscriptItem | undefine
         level: 'info',
         text: 'Stopped: you declined the action. Tell VinaX what to do instead.',
       };
-    case 'budget':
     case 'stuck':
       return { kind: 'notice', level: 'warning', text: outcome.error ?? 'Stopped.' };
     case 'failed':

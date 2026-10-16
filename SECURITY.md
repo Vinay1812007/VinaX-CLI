@@ -18,8 +18,8 @@ within a week. Fixes go into the latest release; older versions are not patched.
   `~/.vinax/credentials.json` with mode 0600. Environment variables override them. Debug logs
   redact keys.
 - **The gateway is opt-in and minimal.** It stores only token hashes and never logs request or
-  response bodies. It sends no CORS headers, and caps request size and per-token rate. VinaX only
-  sends gateway tokens over `https://`, except to `localhost`.
+  response bodies. It sends no CORS headers and caps request size. VinaX only sends
+  gateway tokens over `https://`, except to `localhost`.
 - **Updates are verified.** The install scripts and `vinax update` check every download against
   the release's `SHA256SUMS`. npm packages are published with provenance.
 

@@ -1,6 +1,5 @@
 import type {
   AgentSetup,
-  ModelUsage,
   EditorMode,
   PermissionMode,
   Runtime,
@@ -68,12 +67,9 @@ export interface CommandContext {
   openChanges: () => void;
   /** Hands the terminal to a child process (e.g. $EDITOR). */
   suspend: (fn: () => void | Promise<void>) => Promise<void>;
-  contextPct: () => number | undefined;
   exit: () => void;
   commands: () => readonly SlashCommand[];
   sessionTitle: () => string | undefined;
-  /** Tokens per model in this session: reported by providers and estimated. */
-  sessionUsage: () => Record<string, ModelUsage>;
 }
 
 export interface SlashCommand {

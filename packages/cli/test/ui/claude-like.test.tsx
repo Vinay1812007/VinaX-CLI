@@ -23,45 +23,20 @@ describe('exit summary', () => {
     toolCalls: 7,
     wallMs: 125_000,
     activeMs: 40_000,
-    inputTokens: 45_200,
-    outputTokens: 3100,
     filesChanged: 2,
     linesAdded: 12,
     linesRemoved: 4,
     models: ['nvidia:openai/gpt-oss-20b'],
   };
 
-  it('shows the session, how to resume it, time, tokens, changes and models', () => {
+  it('shows the session, how to resume it, time, changes and models', () => {
     expect(exitSummaryLines(base)).toEqual([
       { label: 'Session', value: '20260929-164512-abc123 · Fix login bug' },
       { label: 'Resume', value: 'vinax --resume 20260929-164512-abc123' },
       { label: 'Time', value: '2m 05s total · 40s working · 3 prompts · 7 tool calls' },
-      { label: 'Tokens', value: '45K in · 3.1K out (reported)' },
       { label: 'Changes', value: '2 files · +12 −4 lines' },
       { label: 'Models', value: 'nvidia:openai/gpt-oss-20b' },
     ]);
-  });
-
-  it('keeps estimated tokens apart from reported ones and shows the cost only as given', () => {
-    const rows = exitSummaryLines({
-      ...base,
-      estimatedTokens: 2400,
-      cost: 'unknown (no price for nvidia:openai/gpt-oss-20b)',
-    });
-    expect(rows.find((r) => r.label === 'Tokens')?.value).toBe(
-      '45K in · 3.1K out (reported) · ~2.4K estimated',
-    );
-    expect(rows.find((r) => r.label === 'Cost')?.value).toBe(
-      'unknown (no price for nvidia:openai/gpt-oss-20b)',
-    );
-    const onlyEstimated = exitSummaryLines({
-      ...base,
-      inputTokens: 0,
-      outputTokens: 0,
-      estimatedTokens: 900,
-    });
-    expect(onlyEstimated.find((r) => r.label === 'Tokens')?.value).toBe('~900 estimated');
-    expect(exitSummaryLines(base).some((r) => r.label === 'Cost')).toBe(false);
   });
 
   it('says nothing to resume for an empty session', () => {

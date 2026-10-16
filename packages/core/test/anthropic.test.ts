@@ -26,7 +26,7 @@ async function provider(
     `http://127.0.0.1:${addr.port}/v1`,
     'test-key',
     timeout,
-    new RateLimitLedger(() => Infinity),
+    new RateLimitLedger(),
     noopLogger,
   );
 }
