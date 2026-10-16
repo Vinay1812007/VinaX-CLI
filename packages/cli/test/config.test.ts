@@ -74,7 +74,7 @@ describe('vinax config', () => {
       nvidia: {
         models: [
           { id: 'openai/gpt-oss-20b' },
-          { id: 'meta/llama-3.1-8b-instruct' },
+          { id: 'google/gemma-4-31b-it' },
           { id: 'nvidia/nv-embedqa-e5-v5' },
         ],
         script: {
@@ -83,7 +83,7 @@ describe('vinax config', () => {
             { status: 404, error: { message: 'Function not found' } },
             { status: 404, error: { message: 'Function not found' } },
           ],
-          'meta/llama-3.1-8b-instruct': [{ text: 'p' }, { text: 'OK' }],
+          'google/gemma-4-31b-it': [{ text: 'p' }, { text: 'OK' }],
         },
       },
     });
@@ -95,14 +95,14 @@ describe('vinax config', () => {
     expect(r.stderr).toContain('Testing 2 free NVIDIA models…');
     expect(r.stdout).toContain('1 of 2 free NVIDIA models answered.');
     expect(r.stderr).toContain(
-      'Your default model nvidia:openai/gpt-oss-20b did not answer. Use one that did: vinax config set model nvidia:meta/llama-3.1-8b-instruct',
+      'Your default model nvidia:openai/gpt-oss-20b did not answer. Use one that did: vinax config set model nvidia:google/gemma-4-31b-it',
     );
     const cached = JSON.parse(
       await fs.readFile(path.join(h.home, 'cache', 'probe-nvidia.json'), 'utf8'),
     ) as { results: { model: string; ok: boolean }[] };
     expect(cached.results.map((x) => [x.model, x.ok])).toEqual([
       ['openai/gpt-oss-20b', false],
-      ['meta/llama-3.1-8b-instruct', true],
+      ['google/gemma-4-31b-it', true],
     ]);
   });
 

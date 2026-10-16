@@ -8,7 +8,6 @@ import {
   type ProviderErrorKind,
 } from '../providers/errors.js';
 import type { RateLimitLedger } from '../providers/ratelimit.js';
-import type { UsageTracker } from '../state/usage.js';
 import {
   formatModelRef,
   parseModelRef,
@@ -23,6 +22,7 @@ import {
 } from '../providers/types.js';
 import { AbortError, backoffDelay, sleep as defaultSleep } from './backoff.js';
 import { chatModels } from '../providers/chat-models.js';
+import { findCatalogModel } from '../providers/nvidia-free.js';
 
 /** Output tokens assumed when the caller sets no `maxTokens`; counts against tokens-per-minute. */
 const DEFAULT_OUTPUT_RESERVE = 1024;
@@ -31,6 +31,11 @@ export type RouterEvent =
   | { type: 'attempt'; ref: ModelRef }
   | { type: 'wait'; ref: ModelRef; ms: number; reason: string }
   | { type: 'retry'; ref: ModelRef; attempt: number; delayMs: number; reason: string }
+  /**
+   * The reply from `ref` broke off mid-stream and is being asked for again (same model, text
+   * tool protocol, or the next model): output since the last `attempt` is void, so discard it.
+   */
+  | { type: 'restart'; ref: ModelRef; reason: string }
   /**
    * `cooldownMs` is set when `from` timed out or was unavailable: later requests skip it for that
    * long, so the session stays on the model that answered.
@@ -73,6 +78,16 @@ const COOLDOWN_KINDS: ReadonlySet<LinkFailure['kind']> = new Set([
   'server',
 ]);
 
+/**
+ * Providers whose rate limits VinaX waits out on the same model instead of falling back: NVIDIA's
+ * free endpoints only limit requests per minute, server-side, so a 429 clears within seconds.
+ * VinaX never caps them locally and keeps retrying until the model answers or the user stops.
+ */
+const WAITS_OUT_RATE_LIMITS: ReadonlySet<ProviderName> = new Set(['nvidia']);
+
+/** Longest wait between rate-limit retries when the provider gives no `Retry-After`. */
+export const RATE_LIMIT_MAX_BACKOFF_MS = 30_000;
+
 export class AllModelsFailedError extends Error {
   constructor(readonly failures: readonly LinkFailure[]) {
     super(
@@ -86,16 +101,33 @@ export class AllModelsFailedError extends Error {
   }
 }
 
-/** The stream broke after output was already shown, so a transparent fallback is impossible. */
+/**
+ * A reply broke off mid-stream and could not be recovered: retrying, the text tool protocol and
+ * every fallback were used up (or the error was not one a retry can fix). `failures` lists every
+ * model that was tried, when there was more than one attempt.
+ */
 export class StreamInterruptedError extends Error {
   constructor(
     readonly ref: ModelRef,
     override readonly cause: ProviderError,
+    readonly failures: readonly LinkFailure[] = [],
   ) {
     super(`${formatModelRef(ref)} stopped mid-response: ${cause.message}`);
     this.name = 'StreamInterruptedError';
   }
 }
+
+/**
+ * Mid-reply failures worth asking again for. NVIDIA's vLLM servers send errors such as "list
+ * index out of range" as an SSE event after part of the answer (kind `server`).
+ */
+const RESTARTABLE_KINDS: ReadonlySet<ProviderErrorKind> = new Set([
+  'server',
+  'network',
+  'timeout',
+  'unavailable',
+  'tool_format',
+]);
 
 /** `<provider>:<model>` for aliases and domains too; invalid refs are left for the chain to reject. */
 function canonicalRef(ref: string): string {
@@ -145,6 +177,17 @@ class FirstTokenWatch {
   }
 }
 
+/** Drops repeats, e.g. two spellings of one NVIDIA model that resolved to the same id. */
+function distinct(refs: readonly ModelRef[]): ModelRef[] {
+  const seen = new Set<string>();
+  return refs.filter((r) => {
+    const key = formatModelRef(r);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Reads the flag through a call so TypeScript does not narrow it across awaits. */
 function isAborted(signal: AbortSignal): boolean {
   return signal.aborted;
@@ -170,10 +213,11 @@ export interface RouteRequest {
   /** Builds the request per model; defaults to `messages` with no tools. */
   prepare?: (ref: ModelRef) => PreparedRequest;
   /**
-   * Called when a model rejects or garbles tool calls. Return true after switching that model to
-   * a different tool mode, and the same model is retried once straight away.
+   * Called when a model rejects or garbles tool calls (`tool_format`), or its replies broke off
+   * mid-stream twice (`interrupted`, often the server's tool-call parser). Return true after
+   * switching that model to a different tool mode, and the same model is retried straight away.
    */
-  onToolFormatError?: (ref: ModelRef) => boolean;
+  onToolFormatError?: (ref: ModelRef, why?: 'tool_format' | 'interrupted') => boolean;
 }
 
 export interface RouterDeps {
@@ -191,8 +235,6 @@ export interface RouterDeps {
   unhealthy?: ReadonlySet<string>;
   /** How long a model that timed out is moved behind the others; default {@link MODEL_COOLDOWN_MS}. */
   cooldownMs?: number;
-  /** Counts requests and tokens for `/usage`. */
-  usage?: UsageTracker;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
   now?: () => number;
@@ -274,19 +316,40 @@ export class Router {
         [...new Set([...preferred, ...free, ...paid])].filter((r) => !this.deps.skip?.has(r)),
         undefined,
       )
-        .map(parseModelRef)
+        .map((r) => this.resolve(parseModelRef(r)))
         .filter(
           (r) =>
             this.deps.providers.has(r.provider) &&
             (!this.deps.models?.has(r.provider) ||
               this.deps.models.get(r.provider)?.some((m) => m.id === r.model)),
         );
-      return candidates;
+      return distinct(candidates);
     }
     const head = override ?? s.model;
     const refs = lead === undefined ? [head, ...fallbacks] : [lead, head, ...fallbacks];
     const unique = [...new Set(refs)].filter((r) => !(this.deps.skip?.has(r) ?? false));
-    return this.arrange(unique, override).map(parseModelRef);
+    return distinct(this.arrange(unique, override).map((r) => this.resolve(parseModelRef(r))));
+  }
+
+  /** The catalog's spelling of `ref` (NVIDIA ids match by slug), so that is what is sent. */
+  private resolve(ref: ModelRef): ModelRef {
+    const list = this.deps.models?.get(ref.provider);
+    const found = list === undefined ? undefined : findCatalogModel(ref.provider, list, ref.model);
+    return found === undefined || found.id === ref.model ? ref : { ...ref, model: found.id };
+  }
+
+  /** Sets a model that failed aside for a while, when the failure says it is not answering. */
+  private linkFailure(ref: ModelRef, err: ProviderError): LinkFailure {
+    const cooldownMs = COOLDOWN_KINDS.has(err.kind)
+      ? (this.deps.cooldownMs ?? MODEL_COOLDOWN_MS)
+      : undefined;
+    if (cooldownMs !== undefined) this.cooling.set(formatModelRef(ref), this.now() + cooldownMs);
+    return {
+      ref,
+      reason: err.message,
+      kind: err.kind,
+      ...(cooldownMs === undefined ? {} : { cooldownMs }),
+    };
   }
 
   private retryDelay(err: ProviderError, attempt: number, isLast: boolean): number | undefined {
@@ -314,6 +377,8 @@ export class Router {
     const prepare = req.prepare ?? ((): PreparedRequest => ({ messages: req.messages }));
     const failures: LinkFailure[] = [];
     let pendingFallback: LinkFailure | undefined;
+    // the last reply that broke off mid-stream; reported if nothing else answers
+    let interrupted: { ref: ModelRef; err: ProviderError } | undefined;
 
     const full = this.chain(req.purpose, req.model, req.fallbacks);
     const chain = req.noFallback === true ? full.slice(0, 1) : full;
@@ -331,7 +396,8 @@ export class Router {
       const est =
         estimateTokens(first.messages, first.tools) + (req.maxTokens ?? DEFAULT_OUTPUT_RESERVE);
       const decision = ledger.check(ref.provider, ref.model, est);
-      if (decision.waitMs > settings.router.maxWaitMs) {
+      const waitsOut = WAITS_OUT_RATE_LIMITS.has(ref.provider);
+      if (decision.waitMs > settings.router.maxWaitMs && !waitsOut) {
         const failure: LinkFailure = {
           ref,
           reason: `${providerLabel(ref.provider)} ${decision.reason ?? 'rate limited'}`,
@@ -353,16 +419,20 @@ export class Router {
         };
       }
       if (decision.waitMs > 0) {
-        yield { type: 'wait', ref, ms: decision.waitMs, reason: decision.reason ?? 'rate limit' };
-        await this.sleep(decision.waitMs, req.signal);
+        // a provider that is waited out is asked again soon: its answer says how long to wait
+        const ms = waitsOut
+          ? Math.min(decision.waitMs, RATE_LIMIT_MAX_BACKOFF_MS)
+          : decision.waitMs;
+        yield { type: 'wait', ref, ms, reason: decision.reason ?? 'rate limit' };
+        await this.sleep(ms, req.signal);
       }
 
       let toolFormatRetried = false;
+      let rateLimitWaits = 0;
+      let breaks = 0;
       for (let attempt = 0; ; attempt++) {
         if (req.signal.aborted) throw new AbortError();
         yield { type: 'attempt', ref };
-        ledger.recordRequest(ref.provider, ref.model);
-        this.deps.usage?.recordRequest(ref);
         let emitted = false;
         let usage: Usage | undefined;
         const watch = new FirstTokenWatch(settings.router.firstTokenTimeoutMs);
@@ -396,7 +466,6 @@ export class Router {
             emitted = true;
             yield d;
           }
-          if (usage) this.deps.usage?.recordTokens(ref, usage);
           this.cooling.delete(formatModelRef(ref));
           yield { type: 'done', ref, usage };
           return;
@@ -409,7 +478,51 @@ export class Router {
               )
             : toProviderError(raw, ref.provider, this.now());
           if (err.kind === 'aborted' || isAborted(req.signal)) throw new AbortError();
-          if (emitted) throw new StreamInterruptedError(ref, err);
+          if (emitted) {
+            // Part of the reply was already streamed. Tool calls only run after a complete reply,
+            // so asking again is safe; consumers discard the partial output on `restart`.
+            if (!RESTARTABLE_KINDS.has(err.kind))
+              throw new StreamInterruptedError(ref, err, failures);
+            breaks++;
+            interrupted = { ref, err };
+            yield { type: 'restart', ref, reason: err.message };
+            if (breaks === 1 && err.kind !== 'tool_format') {
+              const { baseDelayMs, maxDelayMs } = settings.router;
+              const delayMs = backoffDelay(
+                0,
+                { baseMs: baseDelayMs, maxMs: maxDelayMs },
+                this.random,
+              );
+              yield {
+                type: 'retry',
+                ref,
+                attempt: attempt + 1,
+                delayMs,
+                reason: `${err.message} — the reply broke off`,
+              };
+              await this.sleep(delayMs, req.signal);
+              attempt--;
+              continue;
+            }
+            // Twice in a row usually means the server's tool-call parser (vLLM's gpt-oss one):
+            // VinaX's text tool protocol avoids it.
+            if (!toolFormatRetried && req.onToolFormatError?.(ref, 'interrupted') === true) {
+              toolFormatRetried = true;
+              yield {
+                type: 'retry',
+                ref,
+                attempt: attempt + 1,
+                delayMs: 0,
+                reason: `${err.message} — retrying with the text tool protocol`,
+              };
+              attempt--;
+              continue;
+            }
+            const failure = this.linkFailure(ref, err);
+            failures.push(failure);
+            pendingFallback = failure;
+            break;
+          }
           if (
             err.kind === 'tool_format' &&
             !toolFormatRetried &&
@@ -423,6 +536,27 @@ export class Router {
               delayMs: 0,
               reason: `${err.message} — retrying with the text tool protocol`,
             };
+            attempt--;
+            continue;
+          }
+          if (err.kind === 'rate_limit' && waitsOut) {
+            const wait =
+              err.retryAfterMs ??
+              backoffDelay(
+                rateLimitWaits,
+                { baseMs: settings.router.baseDelayMs, maxMs: RATE_LIMIT_MAX_BACKOFF_MS },
+                this.random,
+              );
+            rateLimitWaits++;
+            yield {
+              type: 'retry',
+              ref,
+              attempt: rateLimitWaits,
+              delayMs: wait,
+              reason: `waiting for the ${providerLabel(ref.provider)} rate limit`,
+            };
+            await this.sleep(wait, req.signal);
+            // waiting out a rate limit does not use up the retries kept for real failures
             attempt--;
             continue;
           }
@@ -457,6 +591,7 @@ export class Router {
         }
       }
     }
+    if (interrupted) throw new StreamInterruptedError(interrupted.ref, interrupted.err, failures);
     throw new AllModelsFailedError(failures);
   }
 }

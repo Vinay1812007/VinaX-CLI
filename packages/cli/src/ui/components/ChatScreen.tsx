@@ -10,21 +10,15 @@ import {
   generateTitle,
   modelAlias,
   parseModelRef,
-  COMPACT_AT,
-  COMPACT_WARN_AT,
-  costOf,
-  formatCost,
-  mergeModelUsage,
-  priceFor,
   projectDataDir,
   PromptHistory,
   providerLabel,
   totalTokens,
-  type ModelUsage,
   type AgentOutcome,
   type AgentSetup,
   type EditorMode,
   type ImageAttachment,
+  type VideoFile,
   type PermissionMode,
   type Runtime,
   type SessionWriter,
@@ -64,7 +58,7 @@ import { RewindPicker } from './RewindPicker.js';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { SnakeGame } from './SnakeGame.js';
-import { MODE_CYCLE, MODE_DESCRIPTIONS, StatusLine, type StatusNotice } from './StatusLine.js';
+import { MODE_DESCRIPTIONS, modeCycle, StatusLine, type StatusNotice } from './StatusLine.js';
 import { Suggestions } from './Suggestions.js';
 import { TodoList } from './TodoList.js';
 import { RunningTool } from './ToolEntry.js';
@@ -166,6 +160,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const [mode, setMode, modeRef] = useRefState<PermissionMode>(
     runtime.settings.resolved.permissions.defaultMode,
   );
+  /** Shift+Tab's modes: bypass is in the cycle only when the session started in it. */
+  const cycle = useRef(modeCycle(runtime.settings.resolved.permissions.defaultMode)).current;
   /** How the last turn ended, for the status line (cleared when the next one starts). */
   const [lastOutcome, setLastOutcome] = useState<
     { status: AgentOutcome['status']; durationMs: number } | undefined
@@ -179,7 +175,6 @@ export function ChatScreen(props: ChatScreenProps) {
   const [activeModel, setActiveModel] = useState(
     () => agent.model ?? routedDefault(runtime) ?? runtime.settings.resolved.model,
   );
-  const [contextPct, setContextPct] = useState<number | undefined>(undefined);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [, setTitle, titleRef] = useRefState<string | undefined>(props.title);
 
@@ -200,8 +195,6 @@ export function ChatScreen(props: ChatScreenProps) {
   const exitArmedAt = useRef<number | undefined>(undefined);
   const lastEscAt = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  /** True once the approaching-auto-compaction warning has been shown for the current fill. */
-  const compactWarned = useRef(false);
 
   const history = useMemo(
     () => PromptHistory.forProject(projectDataDir(runtime.cwd, runtime.env)),
@@ -233,12 +226,6 @@ export function ChatScreen(props: ChatScreenProps) {
       toolCalls: t.reduce((n, x) => n + x.tools.length, 0),
       wallMs: now() - mountedAt.current,
       activeMs: t.reduce((n, x) => n + x.durationMs, 0),
-      inputTokens: t.reduce((n, x) => n + (x.inputTokens ?? 0), 0),
-      outputTokens: t.reduce((n, x) => n + (x.outputTokens ?? 0), 0),
-      estimatedTokens: t.reduce((n, x) => n + (x.estimatedTokens ?? 0), 0),
-      ...(t.some((x) => Object.keys(x.usageByModel ?? {}).length > 0)
-        ? { cost: formatCost(sessionCost()) }
-        : {}),
       filesChanged: changes.current.files.size,
       linesAdded: changes.current.added,
       linesRemoved: changes.current.removed,
@@ -249,41 +236,6 @@ export function ChatScreen(props: ChatScreenProps) {
     setTimeout(() => {
       onExit(code, summary);
     }, 30);
-  };
-
-  /** Tokens per model this session, and what they cost where prices are known. */
-  const sessionUsage = (): Record<string, ModelUsage> => {
-    const byModel: Record<string, ModelUsage> = {};
-    for (const t of turnsRef.current) mergeModelUsage(byModel, t.usageByModel ?? {});
-    return byModel;
-  };
-  const sessionCost = () =>
-    costOf(sessionUsage(), (ref) => priceFor(ref, runtime.settings.resolved, runtime.models));
-
-  const refreshContext = (): void => {
-    const limit = setup.contextLimit();
-    if (!Number.isFinite(limit)) {
-      setContextPct(undefined);
-      return;
-    }
-    const used = agent.requestTokens(modeRef.current);
-    setContextPct(Math.min(100, Math.round((used / limit) * 100)));
-    // Say so *before* compaction happens: it rewrites history, and someone who is nearly done
-    // may prefer to finish the thought, /compact with a focus, or /clear on their own terms.
-    const share = used / limit;
-    if (share >= COMPACT_WARN_AT && share < COMPACT_AT) {
-      if (!compactWarned.current) {
-        compactWarned.current = true;
-        push({
-          kind: 'notice',
-          level: 'warning',
-          text: `Context is ${String(Math.round(share * 100))}% full. Older history is summarized automatically at ${String(Math.round(COMPACT_AT * 100))}% — run /context to see what is filling it, or /compact to choose what survives.`,
-        });
-      }
-    } else if (share < COMPACT_WARN_AT) {
-      // Compaction (or /clear) freed room, so the next approach is worth announcing again.
-      compactWarned.current = false;
-    }
   };
 
   const flashHint = (text: string): void => {
@@ -303,15 +255,22 @@ export function ChatScreen(props: ChatScreenProps) {
     if (next !== undefined) void handleSubmitRef.current(next);
   };
 
-  const runTurn = async (q: Queued & { images?: ImageAttachment[] }): Promise<void> => {
+  const runTurn = async (
+    q: Queued & { images?: ImageAttachment[]; videos?: VideoFile[]; skipped?: string[] },
+  ): Promise<void> => {
     push({ kind: 'user', text: q.display });
-    if (q.images !== undefined && q.images.length > 0) {
-      push({
-        kind: 'notice',
-        level: 'info',
-        text: `Attached ${q.images.map((img, i) => `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`).join(', ')}`,
-      });
-    }
+    const chips = [
+      ...(q.images ?? []).map(
+        (img, i) =>
+          `[Image #${String(i + 1)}] ${img.name ?? img.mediaType} (${formatBytes((img.data.length * 3) / 4)})`,
+      ),
+      ...(q.videos ?? []).map(
+        (v, i) => `[Video #${String(i + 1)}] ${v.name} (${formatBytes(v.size)})`,
+      ),
+    ];
+    if (chips.length > 0)
+      push({ kind: 'notice', level: 'info', text: `Attached ${chips.join(', ')}` });
+    for (const text of q.skipped ?? []) push({ kind: 'notice', level: 'warning', text });
     const ac = new AbortController();
     abortRef.current = ac;
     streamRef.current = { tail: '', committed: false };
@@ -338,6 +297,7 @@ export function ChatScreen(props: ChatScreenProps) {
       ...(q.allowRules === undefined ? {} : { allowRules: q.allowRules }),
       ...(q.model === undefined ? {} : { model: q.model }),
       ...(q.images === undefined || q.images.length === 0 ? {} : { images: q.images }),
+      ...(q.videos === undefined || q.videos.length === 0 ? {} : { videos: q.videos }),
     });
     tracker.endThinking();
     abortRef.current = undefined;
@@ -359,14 +319,12 @@ export function ChatScreen(props: ChatScreenProps) {
         inputTokens: outcome.usage.promptTokens || undefined,
         outputTokens: outcome.usage.completionTokens || undefined,
         estimatedTokens: totalTokens(outcome.estimatedUsage) || undefined,
-        usageByModel: outcome.usageByModel,
         durationMs: now() - startedAt,
         fallbacks: tracker.fallbacks,
         tools,
         status: outcome.status,
       },
     ]);
-    refreshContext();
     if (titleRef.current === undefined && outcome.status === 'done') {
       void generateTitle(runtime.router, q.display, AbortSignal.timeout(20_000)).then((t) => {
         if (t === undefined || titleRef.current !== undefined) return;
@@ -400,7 +358,6 @@ export function ChatScreen(props: ChatScreenProps) {
     agent.addContext(
       `I ran a shell command myself:\n<shell-command>${command}</shell-command>\n<shell-output exit-code="${String(r.exitCode ?? '?')}">\n${out}\n</shell-output>`,
     );
-    refreshContext();
     drainQueue();
   };
 
@@ -464,7 +421,6 @@ export function ChatScreen(props: ChatScreenProps) {
       } finally {
         abortRef.current = undefined;
         setStreaming(undefined);
-        refreshContext();
       }
     },
     editSettings,
@@ -485,13 +441,11 @@ export function ChatScreen(props: ChatScreenProps) {
       setOverlay({ kind: 'changes' });
     },
     suspend: (fn) => suspendTerminal(fn),
-    contextPct: () => contextPct,
     exit: () => {
       leave();
     },
     commands: () => commands,
     sessionTitle: () => titleRef.current,
-    sessionUsage,
   });
 
   const handleSubmit = async (s: Queued & { raw?: boolean }): Promise<void> => {
@@ -521,7 +475,6 @@ export function ChatScreen(props: ChatScreenProps) {
             text: `/${cmd.name} failed: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
-        refreshContext();
         if (!isBusy()) drainQueue();
         return;
       }
@@ -544,14 +497,13 @@ export function ChatScreen(props: ChatScreenProps) {
     nextImage.current += found.images.length;
     const images = [...pasted.map(([, img]) => img), ...found.images];
     const display = s.display === s.prompt ? found.text : s.display;
-    const { prompt, attached } = await attachMentions(found.text, {
+    const { prompt, skipped } = await attachMentions(found.text, {
       cwd: runtime.cwd,
       workspace: setup.workspace,
       reads: setup.reads,
     });
-    await runTurn({ ...s, prompt, display, images });
+    await runTurn({ ...s, prompt, display, images, videos: found.videos, skipped });
     nextImage.current = 1;
-    if (attached.length > 0) refreshContext();
   };
   const handleSubmitRef = useRef(handleSubmit);
   handleSubmitRef.current = handleSubmit;
@@ -589,7 +541,6 @@ export function ChatScreen(props: ChatScreenProps) {
   const suggestions = useSuggestions(prompt.editor, commands, files);
 
   useEffect(() => {
-    refreshContext();
     void props
       .announcements?.()
       .then((list) => {
@@ -674,8 +625,7 @@ export function ChatScreen(props: ChatScreenProps) {
   /** Shift+Tab: next permission mode; a pending approval the new mode allows is granted. */
   const cycleMode = (): void => {
     const request = pendingRef.current;
-    const next =
-      MODE_CYCLE[(MODE_CYCLE.indexOf(modeRef.current) + 1) % MODE_CYCLE.length] ?? 'default';
+    const next = cycle[(cycle.indexOf(modeRef.current) + 1) % cycle.length] ?? 'default';
     setMode(next);
     setNotice({ level: 'info', text: MODE_DESCRIPTIONS[next] });
     if (request?.kind === 'permission') {
@@ -704,7 +654,6 @@ export function ChatScreen(props: ChatScreenProps) {
         }
       }
     }
-    refreshContext();
   };
 
   useInput((input, key) => {
@@ -857,19 +806,7 @@ export function ChatScreen(props: ChatScreenProps) {
           more: backlog,
         }
       : streaming !== undefined
-        ? {
-            kind: 'running',
-            since: streaming.startedAt,
-            ...(runtime.settings.resolved.budget.tokens === undefined ||
-            streaming.label !== undefined
-              ? {}
-              : {
-                  tokens: {
-                    used: streaming.tokens ?? 0,
-                    budget: runtime.settings.resolved.budget.tokens,
-                  },
-                }),
-          }
+        ? { kind: 'running', since: streaming.startedAt }
         : lastOutcome !== undefined
           ? { kind: 'ended', ...lastOutcome }
           : { kind: 'idle' };
@@ -986,7 +923,6 @@ export function ChatScreen(props: ChatScreenProps) {
           width={width}
           onClose={() => {
             setOverlay(undefined);
-            refreshContext();
           }}
         />
       ) : null}
@@ -1003,10 +939,7 @@ export function ChatScreen(props: ChatScreenProps) {
           plan={(turn) => checkpoints.planRestore(turn)}
           onDone={(c) => {
             setOverlay(undefined);
-            if (c !== undefined)
-              void performRewind(reviewDeps, c).then(() => {
-                refreshContext();
-              });
+            if (c !== undefined) void performRewind(reviewDeps, c);
           }}
         />
       ) : null}
@@ -1047,7 +980,6 @@ export function ChatScreen(props: ChatScreenProps) {
         mode={mode}
         effort={agent.effort}
         model={activeModel}
-        contextPct={contextPct}
         notice={notice}
         hint={
           hint ?? (pending === undefined ? undefined : 'Waiting for your answer · Ctrl+C to stop')

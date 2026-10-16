@@ -5,7 +5,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMockServer, systemEnv, type MockServer } from '@vinax/testkit';
 import {
   AllModelsFailedError,
+  chatModels,
   createProvider,
+  findCatalogModel,
+  isNvidiaFreeChatModel,
+  knownModel,
+  modelSlug,
+  NVIDIA_FREE_CHAT_MODELS,
+  NVIDIA_FREE_OTHER_MODELS,
+  probeCandidates,
+  restrictToFreeModels,
   createRuntime,
   DEFAULT_SETTINGS,
   explainError,
@@ -102,8 +111,12 @@ describe('NVIDIA settings', () => {
     expect(DEFAULT_SETTINGS.providers.nvidia).toEqual({
       enabled: true,
       baseUrl: 'https://integrate.api.nvidia.com/v1',
-      rpm: Infinity,
     });
+    // NVIDIA's strongest free agentic model leads its entries, gpt-oss-20b closes the chain
+    expect(DEFAULT_SETTINGS.fallbackChain.filter((r) => r.startsWith('nvidia:'))).toEqual([
+      'nvidia:nvidia/nemotron-3-super-120b-a12b',
+      'nvidia:openai/gpt-oss-20b',
+    ]);
     expect(DEFAULT_SETTINGS.fallbackChain.at(-1)).toBe('nvidia:openai/gpt-oss-20b');
   });
 
@@ -112,7 +125,7 @@ describe('NVIDIA settings', () => {
       {
         model: 'NVD_CHAT_OSS_20_B',
         fallbackChain: ['nvidia.com:openai/gpt-oss-20b', 'groq:x'],
-        providers: { nvidia: { baseUrl: 'http://nim.internal:8000/v1', rpm: 5 } },
+        providers: { nvidia: { baseUrl: 'http://nim.internal:8000/v1' } },
       },
       'test',
     );
@@ -123,7 +136,6 @@ describe('NVIDIA settings', () => {
     expect(r.providers.nvidia).toEqual({
       enabled: true,
       baseUrl: 'http://nim.internal:8000/v1',
-      rpm: 5,
     });
   });
 
@@ -151,7 +163,7 @@ describe('NVIDIA credentials', () => {
 describe('NVIDIA provider', () => {
   const deps = (s: ResolvedSettings) => ({
     settings: s,
-    ledger: new RateLimitLedger(() => 40),
+    ledger: new RateLimitLedger(),
     logger: noopLogger,
   });
 
@@ -183,8 +195,9 @@ describe('NVIDIA provider', () => {
     expect(await createProvider('nvidia', 'nvapi-good', deps(s)).validateKey()).toEqual({
       ok: true,
     });
-    const check = server.requests.find((r) => r.path === '/v1/chat/completions');
-    expect(check?.body).toMatchObject({ model: 'openai/gpt-oss-20b', max_tokens: 1 });
+    const checks = server.requests.filter((r) => r.path === '/v1/chat/completions');
+    expect(checks.map((r) => (r.body as { model: string }).model)).toContain('openai/gpt-oss-20b');
+    expect(checks[0]?.body).toMatchObject({ max_tokens: 1 });
     expect(await createProvider('nvidia', 'nvapi-bad', deps(s)).validateKey()).toEqual({
       ok: false,
       rejected: true,
@@ -222,10 +235,8 @@ describe('NVIDIA provider', () => {
     };
     const catalog = new ModelCatalog(await tmp());
     const { models } = await catalog.get(provider);
-    expect(models.map((m) => [m.id, m.contextWindow])).toEqual([
-      ['openai/gpt-oss-20b', 131_072],
-      ['other/model', undefined],
-    ]);
+    // `other/model` is not one of NVIDIA's free endpoints, so it is not listed at all
+    expect(models.map((m) => [m.id, m.contextWindow])).toEqual([['openai/gpt-oss-20b', 131_072]]);
     // the cached copy gets the same treatment
     expect((await catalog.get(provider)).models[0]?.contextWindow).toBe(131_072);
   });
@@ -265,7 +276,7 @@ function router(
   return {
     router: new Router({
       providers: fakes,
-      ledger: new RateLimitLedger(() => 40),
+      ledger: new RateLimitLedger(),
       settings,
       sleep: () => Promise.resolve(),
     }),
@@ -385,6 +396,25 @@ describe('NVIDIA in the fallback chain', () => {
     expect(cut.category).toBe('temporary');
     expect(cut.actions[0]).toBe('ask again to retry');
 
+    // after VinaX's own retries the card says so, and the raw server text is only the detail
+    const ref = { provider: 'nvidia' as const, model: 'openai/gpt-oss-20b' };
+    const reason = 'NVIDIA: list index out of range';
+    const exhausted = explainError(
+      new StreamInterruptedError(ref, new ProviderError('server', reason, 'nvidia'), [
+        { ref, reason, kind: 'server' },
+        {
+          ref: { provider: 'groq', model: 'openai/gpt-oss-120b' },
+          reason: 'Groq 503',
+          kind: 'server',
+        },
+      ]),
+    );
+    expect(exhausted.title).toBe('NVIDIA failed partway through the reply');
+    expect(exhausted.title).not.toContain('list index');
+    expect(exhausted.reason).toContain('already retried and switched models');
+    expect(exhausted.lines[0]).toMatchObject({ model: 'openai/gpt-oss-20b' });
+    expect(exhausted.lines[0]?.reason).toContain('list index out of range');
+
     expect(explainError(new AllModelsFailedError([])).category).toBe('no_key');
     expect(explainError(new Error('boom'))).toMatchObject({ category: 'unknown', reason: 'boom' });
   });
@@ -422,12 +452,17 @@ describe('NVIDIA runtime', () => {
     expect(runtime.models.get('nvidia')?.find((m) => m.id === 'openai/gpt-oss-20b')).toMatchObject({
       contextWindow: 131_072,
     });
+    // llama-3.3-70b has no free endpoint, so VinaX does not list it
+    expect(runtime.models.get('nvidia')?.map((m) => m.id)).toEqual(['openai/gpt-oss-20b']);
     expect(runtime.warnings).toEqual([]);
   });
 
   it('skips a configured NVIDIA model missing from the catalog, with a warning', async () => {
     const home = await tmp();
-    const nvidia = await mock({ apiKeys: ['nvapi-good'], models: [{ id: 'something/else' }] });
+    const nvidia = await mock({
+      apiKeys: ['nvapi-good'],
+      models: [{ id: 'nvidia/nemotron-3-super-120b-a12b' }],
+    });
     await fs.writeFile(
       path.join(home, 'settings.json'),
       JSON.stringify({
@@ -515,5 +550,170 @@ describe('stale empty catalogs', () => {
     await runtime.refreshCatalog('nvidia');
     expect(runtime.models.get('nvidia')?.map((x) => x.id)).toEqual(['openai/gpt-oss-20b']);
     expect(runtime.skipped.has('nvidia:openai/gpt-oss-20b')).toBe(false);
+  });
+});
+
+describe('NVIDIA free endpoints only', () => {
+  const info = (id: string): ModelInfo => ({
+    id,
+    contextWindow: undefined,
+    supportsTools: undefined,
+    free: true,
+  });
+
+  it('normalises ids to slugs', () => {
+    expect(modelSlug('z-ai/GLM-5.3')).toBe('glm-5-3');
+    expect(modelSlug('Step 5 Preview')).toBe('step-5-preview');
+    expect(modelSlug('poolside/laguna_xs..2.1')).toBe('laguna-xs-2-1');
+    expect(isNvidiaFreeChatModel('z-ai/glm-5.3')).toBe(true);
+    expect(isNvidiaFreeChatModel('stepfun-ai/step5-preview')).toBe(true);
+    expect(isNvidiaFreeChatModel('meta/llama-3.3-70b-instruct')).toBe(false);
+    // free, but not chat models
+    expect(isNvidiaFreeChatModel('nvidia/nemotron-3-embed-1b')).toBe(false);
+    expect(isNvidiaFreeChatModel('meta/llama-guard-4-12b')).toBe(false);
+    expect(NVIDIA_FREE_CHAT_MODELS.length + NVIDIA_FREE_OTHER_MODELS.length).toBe(39);
+  });
+
+  it("keeps only free chat models, in preference order, with the catalog's spelling", () => {
+    const catalog = [
+      info('meta/llama-3.3-70b-instruct'),
+      info('z-ai/glm-5.3'),
+      info('openai/gpt-oss-20b'),
+      info('nvidia/nemotron-3-embed-1b'),
+      info('nvidia/nemotron-3-super-120b-a12b'),
+      info('nvidia/llama-3.1-nemotron-safety-guard-8b-v3'),
+    ];
+    expect(restrictToFreeModels('nvidia', catalog).map((m) => m.id)).toEqual([
+      'nvidia/nemotron-3-super-120b-a12b',
+      'openai/gpt-oss-20b',
+      'z-ai/glm-5.3',
+    ]);
+    // other providers are untouched
+    expect(restrictToFreeModels('groq', catalog)).toHaveLength(catalog.length);
+    expect(chatModels(catalog, 'nvidia').map((m) => m.id)).toEqual([
+      'nvidia/nemotron-3-super-120b-a12b',
+      'openai/gpt-oss-20b',
+      'z-ai/glm-5.3',
+    ]);
+    // `glm-5-3` (VinaX's guess) resolves to NVIDIA's `glm-5.3`; exact ids win
+    expect(findCatalogModel('nvidia', catalog, 'z-ai/glm-5-3')?.id).toBe('z-ai/glm-5.3');
+    expect(findCatalogModel('nvidia', catalog, 'z-ai/glm-5-3-flash')).toBeUndefined();
+    expect(findCatalogModel('groq', catalog, 'z-ai/glm-5-3')).toBeUndefined();
+  });
+
+  it('falls back to the known ids when nothing in the catalog matches', () => {
+    const ids = restrictToFreeModels('nvidia', [info('some/unknown')]).map((m) => m.id);
+    expect(ids).toEqual([...NVIDIA_FREE_CHAT_MODELS]);
+    expect(restrictToFreeModels('nvidia', [])).toEqual([]);
+  });
+
+  it('knows vision, video, context and tool support for the free models by slug', () => {
+    expect(knownModel('nvidia', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning')).toMatchObject({
+      vision: true,
+      video: true,
+    });
+    expect(knownModel('nvidia', 'nvidia/cosmos3-nano-reasoner')).toMatchObject({
+      vision: true,
+      video: true,
+    });
+    expect(knownModel('nvidia', 'z-ai/glm-5.3-flash')).toMatchObject({ vision: true });
+    expect(knownModel('nvidia', 'stepfun-ai/step5-preview')?.contextWindow).toBe(1_000_000);
+    expect(knownModel('nvidia', 'nvidia/nemotron-3-ultra-550b-a55b')?.contextWindow).toBe(
+      1_000_000,
+    );
+    expect(knownModel('nvidia', 'meta/llama-3.2-11b-vision-instruct')).toMatchObject({
+      contextWindow: 131_072,
+      tools: false,
+    });
+    // slug matching is NVIDIA-only
+    expect(knownModel('groq', 'z-ai/glm-5.3')).toBeUndefined();
+  });
+
+  it('lists only free models from /models and tests only those', async () => {
+    const nvidia = await mock({
+      models: [
+        { id: 'meta/llama-3.3-70b-instruct' },
+        { id: 'z-ai/glm-5.3' },
+        { id: 'nvidia/nemotron-3-super-120b-a12b' },
+        { id: 'nvidia/nemotron-3-embed-1b' },
+      ],
+    });
+    const provider = createProvider('nvidia', 'nvapi-test', {
+      settings: nvidiaSettings(nvidia.url),
+      ledger: new RateLimitLedger(() => Infinity),
+      logger: noopLogger,
+    });
+    const listed = await provider.listModels();
+    expect(listed.map((m) => m.id)).toEqual(['nvidia/nemotron-3-super-120b-a12b', 'z-ai/glm-5.3']);
+    expect(listed.every((m) => m.free)).toBe(true);
+    const candidates = probeCandidates('nvidia', listed, { freeOnly: true });
+    expect(candidates).toContain('z-ai/glm-5.3');
+    expect(candidates).not.toContain('z-ai/glm-5-3');
+    expect(candidates).not.toContain('meta/llama-3.3-70b-instruct');
+  });
+
+  it('routes a configured id to the catalog spelling of the same model', () => {
+    const router = new Router({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        model: 'nvidia:z-ai/glm-5-3',
+        fallbackChain: ['nvidia:z-ai/glm-5.3', 'nvidia:openai/gpt-oss-20b'],
+      },
+      ledger: new RateLimitLedger(() => Infinity),
+      providers: new Map([['nvidia', {} as Provider]]),
+      models: new Map([['nvidia', [info('z-ai/glm-5.3'), info('openai/gpt-oss-20b')]]]),
+    });
+    expect(router.chain().map((r) => `${r.provider}:${r.model}`)).toEqual([
+      'nvidia:z-ai/glm-5.3',
+      'nvidia:openai/gpt-oss-20b',
+    ]);
+  });
+});
+
+describe('NVIDIA errors partway through a reply', () => {
+  it('asks again after an SSE error mid-stream, and the retry answers', async () => {
+    const nvidia = await mock({
+      script: {
+        'openai/gpt-oss-20b': [
+          { text: ['Half an ans'], streamError: 'list index out of range' },
+          { text: ['The whole answer.'] },
+        ],
+      },
+    });
+    const settings: ResolvedSettings = {
+      ...nvidiaSettings(nvidia.url),
+      model: 'nvidia:openai/gpt-oss-20b',
+      fallbackChain: [],
+    };
+    const ledger = new RateLimitLedger(() => Infinity);
+    const router = new Router({
+      settings,
+      ledger,
+      providers: new Map([
+        [
+          'nvidia',
+          createProvider('nvidia', 'nvapi-test', { settings, ledger, logger: noopLogger }),
+        ],
+      ]),
+      sleep: () => Promise.resolve(),
+    });
+    const events: RouterEvent[] = [];
+    for await (const e of router.stream(request())) events.push(e);
+    expect(events.filter((e) => e.type !== 'reasoning').map((e) => e.type)).toEqual([
+      'attempt',
+      'text',
+      'restart',
+      'retry',
+      'attempt',
+      'text',
+      'done',
+    ]);
+    expect(events.find((e) => e.type === 'restart')).toMatchObject({
+      reason: 'NVIDIA: list index out of range',
+    });
+    expect(events.filter((e) => e.type === 'text').at(-1)).toEqual({
+      type: 'text',
+      text: 'The whole answer.',
+    });
   });
 });

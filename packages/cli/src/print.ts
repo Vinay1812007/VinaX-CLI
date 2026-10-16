@@ -2,8 +2,6 @@ import {
   cooldownNote,
   formatFailureReport,
   attachMentions,
-  costOf,
-  priceFor,
   createRuntime,
   extractImages,
   providerLabel,
@@ -13,7 +11,6 @@ import {
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
-  type CostEstimate,
   type Runtime,
 } from '@vinax/core';
 import { EXIT } from './exit-codes.js';
@@ -53,6 +50,8 @@ const TOOL_OUTPUT_IN_STREAM = 4000;
 /** Renders agent events and the final result in the requested output format. */
 class Output {
   private text = '';
+  /** Where the current attempt's text starts in `text`, dropped if the reply breaks off. */
+  private attemptStart = 0;
   private readonly fallbacks: FallbackRecord[] = [];
   private toolCalls = 0;
   sessionId: string | undefined;
@@ -166,20 +165,32 @@ class Output {
         this.notice(`… ${ev.text}`);
         return;
       case 'attempt':
+        this.attemptStart = this.text.length;
         if (this.verbose) this.notice(`→ ${formatModelRef(ev.ref)}`);
         return;
+      case 'restart': {
+        // The reply broke off and is asked for again. Plain text already written cannot be taken
+        // back, so a marker line separates it from the new reply.
+        const partial = this.text.slice(this.attemptStart);
+        this.text = this.text.slice(0, this.attemptStart);
+        if (this.format === 'text' && partial !== '') this.io.stdout.write('\n[retrying…]\n');
+        if (this.format === 'stream-json')
+          this.line({
+            type: 'notice',
+            kind: 'restart',
+            model: formatModelRef(ev.ref),
+            reason: ev.reason,
+          });
+        this.notice(`↻ ${formatModelRef(ev.ref)} broke off mid-reply: ${ev.reason}`);
+        return;
+      }
       case 'tool_progress':
       case 'done':
         return;
     }
   }
 
-  finish(
-    outcome: AgentOutcome | undefined,
-    durationMs: number,
-    error?: string,
-    cost?: CostEstimate,
-  ): void {
+  finish(outcome: AgentOutcome | undefined, durationMs: number, error?: string): void {
     const failed = error !== undefined;
     if (this.format === 'text') {
       if (this.text !== '' && !this.text.endsWith('\n')) this.io.stdout.write('\n');
@@ -204,15 +215,6 @@ class Output {
               output_tokens: outcome.estimatedUsage.completionTokens,
             }
           : null,
-        // only from explicit prices (settings `pricing` or the provider catalog); null = unknown
-        cost:
-          cost === undefined
-            ? null
-            : {
-                usd: cost.usd ?? null,
-                approximate: cost.approximate,
-                unpriced_models: cost.unpriced,
-              },
         session_id: this.sessionId ?? null,
         num_turns: outcome?.steps ?? 0,
         tool_calls: this.toolCalls,
@@ -336,7 +338,7 @@ export async function runPrint(
   out.sessionId = opened.writer.id;
   out.init(runtime.router.chain('main', opts.model).map(formatModelRef), io.cwd, mode);
   try {
-    // image paths (and @image.png) in the prompt are attached as images
+    // image and recording paths (and @image.png) in the prompt are attached
     const withImages = await extractImages(prompt, io.cwd);
     for (const err of withImages.errors) io.stderr.write(`⚠ ${err}\n`);
     const withFiles = await attachMentions(withImages.text, {
@@ -344,6 +346,7 @@ export async function runPrint(
       workspace: setup.workspace,
       reads: setup.reads,
     });
+    for (const note of withFiles.skipped) io.stderr.write(`⚠ ${note}\n`);
     const outcome = await setup.agent.run(withFiles.prompt, {
       signal: ac.signal,
       host: headlessHost(runtime),
@@ -351,20 +354,18 @@ export async function runPrint(
         out.event(ev);
       },
       ...(withImages.images.length === 0 ? {} : { images: withImages.images }),
+      ...(withImages.videos.length === 0 ? {} : { videos: withImages.videos }),
     });
     const elapsed = Date.now() - started;
-    const cost = costOf(outcome.usageByModel, (ref) =>
-      priceFor(ref, runtime.settings.resolved, runtime.models),
-    );
     switch (outcome.status) {
       case 'done':
-        out.finish(outcome, elapsed, undefined, cost);
+        out.finish(outcome, elapsed);
         return EXIT.ok;
       case 'interrupted':
-        out.finish(outcome, elapsed, 'Interrupted', cost);
+        out.finish(outcome, elapsed, 'Interrupted');
         return EXIT.interrupted;
       default:
-        out.finish(outcome, elapsed, outcome.error ?? `Stopped: ${outcome.status}`, cost);
+        out.finish(outcome, elapsed, outcome.error ?? `Stopped: ${outcome.status}`);
         return EXIT.error;
     }
   } finally {

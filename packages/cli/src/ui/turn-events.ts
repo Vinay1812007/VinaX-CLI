@@ -6,7 +6,6 @@ import {
   type AgentOutcome,
 } from '@vinax/core';
 import type { StatusNotice } from './components/StatusLine.js';
-import { formatTokens } from './format.js';
 import { extendTrail, phaseFor, type Phase } from './phases.js';
 import { splitStable, type NewTranscriptItem, type ToolRecord } from './transcript.js';
 
@@ -183,8 +182,8 @@ export function createTurnTracker(sink: TurnSink): {
           level: 'info',
           text:
             ev.kind === 'summary'
-              ? `Compacted the conversation to stay within the context budget (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`
-              : `Trimmed old tool output to save context (~${formatTokens(ev.before)} → ~${formatTokens(ev.after)} tokens).`,
+              ? 'Compacted older conversation history to make room.'
+              : 'Trimmed old tool output to make room.',
         });
         return;
       case 'attempt':
@@ -199,6 +198,21 @@ export function createTurnTracker(sink: TurnSink): {
       case 'status': {
         const waiting = ev.text === '' ? undefined : ev.text;
         setStreaming((s) => s && { ...s, waiting });
+        return;
+      }
+      case 'restart': {
+        // The reply broke off and is being asked for again. The unfinished tail is dropped; text
+        // already printed cannot be taken back, so say that it no longer counts.
+        const shown = stream.committed;
+        stream.tail = '';
+        stream.committed = false;
+        setStreaming((s) => s && { ...s, tail: '', committed: false, chars: 0 });
+        if (shown)
+          push({
+            kind: 'notice',
+            level: 'warning',
+            text: `${providerLabel(ev.ref.provider)} broke off mid-reply (${ev.reason}); the text above is discarded and the reply is being asked for again.`,
+          });
         return;
       }
       case 'retry':
@@ -270,7 +284,6 @@ export function outcomeItem(outcome: AgentOutcome): NewTranscriptItem | undefine
         level: 'info',
         text: 'Stopped: you declined the action. Tell VinaX what to do instead.',
       };
-    case 'budget':
     case 'stuck':
       return { kind: 'notice', level: 'warning', text: outcome.error ?? 'Stopped.' };
     case 'failed':

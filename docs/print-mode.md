@@ -38,7 +38,6 @@ One result object when the run ends:
   "model": "groq:openai/gpt-oss-120b",
   "usage": { "input_tokens": 5120, "output_tokens": 410 },
   "estimated_usage": { "input_tokens": 0, "output_tokens": 0 },
-  "cost": { "usd": null, "approximate": false, "unpriced_models": ["groq:openai/gpt-oss-120b"] },
   "session_id": "20260923-110440-18d19d",
   "num_turns": 3,
   "tool_calls": 2,
@@ -47,7 +46,7 @@ One result object when the run ends:
 }
 ```
 
-`usage` is what the providers reported; `estimated_usage` is what VinaX counted where they reported nothing. `cost.usd` comes only from explicit prices and is `null` when unknown; `unpriced_models` lists the models without one. See [Usage, budgets and cost](/usage).
+`usage` is what the providers reported; `estimated_usage` is what VinaX counted where they reported nothing.
 
 == stream-json
 One JSON event per line (NDJSON) as the run happens:
@@ -63,11 +62,11 @@ One JSON event per line (NDJSON) as the run happens:
 
 ## Exit codes
 
-| Code  | Meaning                                                                                                                              |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`   | Success                                                                                                                              |
-| `1`   | Failure: no keys, bad settings, every model failed, `--max-turns` or a [budget](/usage#budgets) reached, or the task went in circles |
-| `2`   | Usage error (a bad flag or argument)                                                                                                 |
-| `130` | Interrupted with Ctrl+C                                                                                                              |
+| Code  | Meaning                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------ |
+| `0`   | Success                                                                                                |
+| `1`   | Failure: no keys, bad settings, every model failed, `--max-turns` reached, or the task went in circles |
+| `2`   | Usage error (a bad flag or argument)                                                                   |
+| `130` | Interrupted with Ctrl+C                                                                                |
 
 All flags are in the [CLI reference](/cli-reference).

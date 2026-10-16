@@ -68,7 +68,7 @@ it('auto discovers a configured provider outside the default chain and skips non
   const provider = new FakeProvider('gemini', { 'gemini-test': [{ text: ['ok'] }] });
   const router = new Router({
     settings,
-    ledger: new RateLimitLedger(() => Infinity),
+    ledger: new RateLimitLedger(),
     providers: new Map([['gemini', provider]]),
     models: new Map([
       [
@@ -94,10 +94,7 @@ it('auto discovers a configured provider outside the default chain and skips non
 function setup(groq: Record<string, Step[]>, openrouter: Record<string, Step[]> = {}) {
   const sleeps: number[] = [];
   const clock = { t: 0 };
-  const ledger = new RateLimitLedger(
-    () => 30,
-    () => clock.t,
-  );
+  const ledger = new RateLimitLedger(() => clock.t);
   const providers = new Map<ProviderName, Provider>([
     ['groq', new FakeProvider('groq', groq)],
     ['openrouter', new FakeProvider('openrouter', openrouter)],
@@ -150,6 +147,8 @@ const summarize = (events: RouterEvent[]): string[] =>
         return `status ${e.text}`;
       case 'reasoning':
         return `reasoning ${e.text}`;
+      case 'restart':
+        return `restart ${formatModelRef(e.ref)}`;
     }
   });
 
@@ -191,7 +190,7 @@ describe('Router', () => {
     );
     const withPlan = new Router({
       settings: { ...settings, planModel: 'groq:thinker' },
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map(),
     });
     expect(withPlan.chain('plan').map(formatModelRef)).toEqual([
@@ -214,7 +213,7 @@ describe('Router', () => {
     });
     const router = new Router({
       settings: { ...settings, model: 'groq:main', fallbackChain: [] },
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map([
         ['groq', {} as never],
         ['nvidia', {} as never],
@@ -223,13 +222,22 @@ describe('Router', () => {
       // outrank NVIDIA's free ones purely because its provider comes first.
       models: new Map([
         ['groq', [model('main', false), model('groq-paid', false)]],
-        ['nvidia', [model('nv-free-a', true), model('nv-free-b', true)]],
+        [
+          'nvidia',
+          [
+            model('openai/gpt-oss-20b', true),
+            // not one of NVIDIA's free endpoints, so never a candidate
+            model('meta/llama-3.3-70b-instruct', true),
+            model('nvidia/nemotron-3-super-120b-a12b', true),
+          ],
+        ],
       ]),
     });
+    // NVIDIA's free models in the order of nvidia-free.ts, strongest agentic model first
     expect(router.chain('main', 'auto').map(formatModelRef)).toEqual([
       'groq:main',
-      'nvidia:nv-free-a',
-      'nvidia:nv-free-b',
+      'nvidia:nvidia/nemotron-3-super-120b-a12b',
+      'nvidia:openai/gpt-oss-20b',
       'groq:groq-paid',
     ]);
   });
@@ -327,10 +335,15 @@ describe('Router', () => {
     ]);
   });
 
-  it('never falls back once text was emitted', async () => {
+  it('does not ask again after a mid-reply error a retry cannot fix', async () => {
     const { router } = setup({
       main: [
-        { textThenError: ['partial', new ProviderError('server', 'groq: stream reset', 'groq')] },
+        {
+          textThenError: [
+            'partial',
+            new ProviderError('bad_request', 'groq 400: bad', 'groq', 400),
+          ],
+        },
       ],
       backup: [{ text: ['should not be used'] }],
     });
@@ -425,7 +438,7 @@ describe('Router stickiness after a dead model', () => {
   it('leaves out models that failed their test, unless named, and never empties the chain', () => {
     const router = new Router({
       settings,
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map(),
       unhealthy: new Set(['groq:main', 'openrouter:free-a:free']),
     });
@@ -436,7 +449,7 @@ describe('Router stickiness after a dead model', () => {
     ]);
     const allBad = new Router({
       settings: { ...settings, fallbackChain: [] },
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map(),
       unhealthy: new Set(['groq:main']),
     });
@@ -479,7 +492,7 @@ describe('Router first-token timeout', () => {
     const backup = new FakeProvider('openrouter', { 'free-a:free': [{ text: ['saved'] }] });
     const router = new Router({
       settings: { ...quick, fallbackChain: ['openrouter:free-a:free'] },
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map<ProviderName, Provider>([
         ['groq', new SilentProvider('groq')],
         ['openrouter', backup],
@@ -498,7 +511,7 @@ describe('Router first-token timeout', () => {
     const provider = new SilentProvider('groq', 100);
     const router = new Router({
       settings: { ...quick, fallbackChain: [] },
-      ledger: new RateLimitLedger(() => Infinity),
+      ledger: new RateLimitLedger(),
       providers: new Map<ProviderName, Provider>([['groq', provider]]),
     });
     const events = await collect(router.stream(req()));
@@ -513,4 +526,221 @@ it('says in the fallback notice how long a dead model is skipped', () => {
     ' (nvidia:openai/gpt-oss-20b is skipped for the next 10 min)',
   );
   expect(cooldownNote({ from })).toBe('');
+});
+
+describe('NVIDIA rate limits', () => {
+  function nvidiaSetup(nvidia: Record<string, Step[]>) {
+    const sleeps: number[] = [];
+    const clock = { t: 0 };
+    const ledger = new RateLimitLedger(() => clock.t);
+    const groq = new FakeProvider('groq', { backup: [{ text: ['from groq'] }] });
+    const router = new Router({
+      providers: new Map<ProviderName, Provider>([
+        ['nvidia', new FakeProvider('nvidia', nvidia)],
+        ['groq', groq],
+      ]),
+      ledger,
+      settings: { ...settings, model: 'nvidia:m', fallbackChain: ['groq:backup'] },
+      random: () => 0.5,
+      now: () => clock.t,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        clock.t += ms;
+        return Promise.resolve();
+      },
+    });
+    return { router, ledger, sleeps, groq };
+  }
+
+  it('waits out 429s on the same model instead of falling back, however many there are', async () => {
+    const { router, sleeps, groq } = nvidiaSetup({
+      m: [
+        // longer than maxWaitMs, which would make any other provider fall back
+        { error: rl('nvidia', 60_000) },
+        ...Array.from({ length: 8 }, () => ({ error: rl('nvidia') })),
+        { text: ['finally'] },
+      ],
+    });
+    const events = await collect(router.stream(req()));
+    expect(events).toContainEqual({ type: 'text', text: 'finally' });
+    expect(events.some((e) => e.type === 'fallback')).toBe(false);
+    expect(groq.calls).toEqual([]);
+    const retries = events.filter((e) => e.type === 'retry');
+    expect(retries).toHaveLength(9);
+    expect(retries[0]).toMatchObject({ reason: 'waiting for the NVIDIA rate limit' });
+    // Retry-After is honoured; otherwise the backoff grows but never past 30s
+    expect(sleeps[0]).toBe(60_000);
+    expect(Math.max(...sleeps.slice(1))).toBeLessThanOrEqual(30_000);
+    expect(sleeps.at(-1)).toBeGreaterThan(sleeps[1] ?? 0);
+    expect(router.coolingUntil('nvidia:m')).toBeUndefined();
+  });
+
+  it('still uses its retries for real failures after waiting out rate limits', async () => {
+    const { router, groq } = nvidiaSetup({
+      m: [
+        { error: rl('nvidia') },
+        { error: rl('nvidia') },
+        { error: rl('nvidia') },
+        { error: new ProviderError('server', 'NVIDIA 500: boom', 'nvidia', 500) },
+        { text: ['recovered'] },
+      ],
+    });
+    const events = await collect(router.stream(req()));
+    expect(events).toContainEqual({ type: 'text', text: 'recovered' });
+    expect(groq.calls).toEqual([]);
+  });
+
+  it('waits on a known NVIDIA rate limit before sending instead of skipping the model', async () => {
+    const { router, ledger, sleeps, groq } = nvidiaSetup({ m: [{ text: ['ok'] }] });
+    ledger.observe('nvidia', 'm', new Headers({ 'retry-after': '120' }));
+    const events = await collect(router.stream(req()));
+    expect(events).toContainEqual({ type: 'text', text: 'ok' });
+    expect(events.some((e) => e.type === 'fallback')).toBe(false);
+    expect(groq.calls).toEqual([]);
+    expect(sleeps).toEqual([30_000]);
+  });
+
+  it('stops waiting when the user interrupts', async () => {
+    const ac = new AbortController();
+    const script = { m: Array.from({ length: 50 }, () => ({ error: rl('nvidia') })) };
+    const router = new Router({
+      providers: new Map<ProviderName, Provider>([['nvidia', new FakeProvider('nvidia', script)]]),
+      ledger: new RateLimitLedger(),
+      settings: { ...settings, model: 'nvidia:m', fallbackChain: [] },
+      random: () => 0.5,
+      sleep: (_ms, signal) => {
+        ac.abort();
+        return signal?.aborted === true ? Promise.reject(new AbortError()) : Promise.resolve();
+      },
+    });
+    await expect(collect(router.stream(req({ signal: ac.signal })))).rejects.toBeInstanceOf(
+      AbortError,
+    );
+  });
+
+  it('keeps other providers falling back on a long rate limit', async () => {
+    const { router } = setup({ main: [{ error: rl('groq', 60_000) }], backup: [{ text: ['b'] }] });
+    const events = await collect(router.stream(req()));
+    expect(events.some((e) => e.type === 'fallback')).toBe(true);
+    expect(events).toContainEqual({ type: 'text', text: 'b' });
+  });
+});
+
+describe('Router recovery from a reply that broke off', () => {
+  // what NVIDIA's vLLM servers send mid-stream: an SSE error event, no HTTP status
+  const broke = () => new ProviderError('server', 'NVIDIA: list index out of range', 'groq');
+
+  it('restarts and retries the same model once, with backoff', async () => {
+    const { router, sleeps, providers } = setup({
+      main: [{ textThenError: ['partial', broke()] }, { text: ['whole answer'] }],
+    });
+    const events = await collect(router.stream(req()));
+    expect(summarize(events)).toEqual([
+      'attempt groq:main',
+      'text partial',
+      'restart groq:main',
+      'retry groq:main in 75ms',
+      'attempt groq:main',
+      'text whole answer',
+      'done groq:main',
+    ]);
+    expect(sleeps).toEqual([75]);
+    expect((providers.get('groq') as FakeProvider).calls).toEqual(['main', 'main']);
+  });
+
+  it('switches the model to the text tool protocol after a second break', async () => {
+    const { router } = setup({
+      main: [
+        { textThenError: ['one', broke()] },
+        { textThenError: ['two', broke()] },
+        { text: ['three'] },
+      ],
+    });
+    const switched: string[] = [];
+    const events = await collect(
+      router.stream(
+        req({
+          onToolFormatError: (ref, why) => {
+            switched.push(`${formatModelRef(ref)} ${why ?? ''}`);
+            return true;
+          },
+        }),
+      ),
+    );
+    expect(switched).toEqual(['groq:main interrupted']);
+    expect(summarize(events)).toEqual([
+      'attempt groq:main',
+      'text one',
+      'restart groq:main',
+      'retry groq:main in 75ms',
+      'attempt groq:main',
+      'text two',
+      'restart groq:main',
+      'retry groq:main in 0ms',
+      'attempt groq:main',
+      'text three',
+      'done groq:main',
+    ]);
+  });
+
+  it('falls back to the next model (and sets the broken one aside) after a third break', async () => {
+    const { router } = setup({
+      main: [
+        { textThenError: ['one', broke()] },
+        { textThenError: ['two', broke()] },
+        { textThenError: ['three', broke()] },
+      ],
+      backup: [{ text: ['from backup'] }],
+    });
+    const events = await collect(router.stream(req({ onToolFormatError: () => true })));
+    expect(summarize(events).slice(-5)).toEqual([
+      'restart groq:main',
+      'fallback groq:main → groq:backup',
+      'attempt groq:backup',
+      'text from backup',
+      'done groq:backup',
+    ]);
+    const fallback = events.find((e) => e.type === 'fallback');
+    expect(fallback).toMatchObject({ cooldownMs: MODEL_COOLDOWN_MS });
+    expect(router.chain().map(formatModelRef)[0]).toBe('groq:backup');
+  });
+
+  it('falls back after the second break when the model cannot switch protocols', async () => {
+    const { router } = setup({
+      main: [{ textThenError: ['one', broke()] }, { textThenError: ['two', broke()] }],
+      backup: [{ text: ['ok'] }],
+    });
+    const events = await collect(router.stream(req({ onToolFormatError: () => false })));
+    expect(summarize(events)).toContain('fallback groq:main → groq:backup');
+    expect(summarize(events).at(-1)).toBe('done groq:backup');
+  });
+
+  it('reports a cut-off reply only when every option is used up', async () => {
+    const { router } = setup(
+      {
+        main: [{ textThenError: ['a', broke()] }, { textThenError: ['b', broke()] }],
+        backup: [{ error: new ProviderError('not_found', 'groq 404: gone', 'groq', 404) }],
+      },
+      { 'free-a:free': [{ textThenError: ['c', broke()] }, { textThenError: ['d', broke()] }] },
+    );
+    const err = await collect(router.stream(req())).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StreamInterruptedError);
+    const cut = err as StreamInterruptedError;
+    expect(formatModelRef(cut.ref)).toBe('openrouter:free-a:free');
+    expect(cut.failures.map((f) => formatModelRef(f.ref))).toEqual([
+      'groq:main',
+      'groq:backup',
+      'openrouter:free-a:free',
+    ]);
+  });
+
+  it('stops at once when the user aborts during the retry wait', async () => {
+    const ac = new AbortController();
+    const { router } = setup({ main: [{ textThenError: ['partial', broke()] }] });
+    await expect(async () => {
+      for await (const e of router.stream(req({ signal: ac.signal }))) {
+        if (e.type === 'restart') ac.abort();
+      }
+    }).rejects.toBeInstanceOf(AbortError);
+  });
 });

@@ -177,7 +177,7 @@ describe('provider: images, effort and reasoning', () => {
       const s = resolveSettings({ providers: { [name]: { baseUrl } } });
       return { ...s, router: { ...s.router, requestTimeoutMs: 5000 } };
     })(),
-    ledger: new RateLimitLedger(() => 100),
+    ledger: new RateLimitLedger(),
     logger: noopLogger,
   });
   const drain = async (it: AsyncIterable<StreamDelta>) => {
@@ -258,14 +258,14 @@ describe('provider: images, effort and reasoning', () => {
   });
 });
 
-describe('vision routing', () => {
-  it('sends a prompt with an image to a vision model, then back to the main model without it', async () => {
+describe('media read by another model', () => {
+  it('has a vision model describe the image for a text-only model, which answers the turn', async () => {
     const home = await tmp();
     const cwd = path.join(home, 'project');
     await fs.mkdir(cwd);
     const groq = await mock({
       models: [{ id: 'main', context_window: 131072 }],
-      script: { main: [{ text: 'text answer' }] },
+      script: { main: [{ text: 'text answer' }, { text: 'second answer' }] },
     });
     const openrouter = await mock({
       models: [
@@ -275,7 +275,7 @@ describe('vision routing', () => {
           architecture: { input_modalities: ['text', 'image'] },
         },
       ],
-      script: { 'eyes:free': [{ text: 'I see a pixel' }] },
+      script: { 'eyes:free': [{ text: 'I see a pixel reading Error 42' }] },
     });
     await fs.writeFile(
       path.join(home, 'settings.json'),
@@ -311,28 +311,42 @@ describe('vision routing', () => {
       onEvent: (e) => events.push(e),
       images: [{ mediaType: 'image/png', data: PNG.toString('base64'), name: 'dot.png' }],
     });
-    expect(first.text).toBe('I see a pixel');
+    // the working model answered the turn, with what the vision model saw
+    expect(first.text).toBe('text answer');
     expect(
-      events.some((e) => e.type === 'notice' && e.text.includes('Using openrouter:eyes:free')),
+      events.some(
+        (e) =>
+          e.type === 'notice' &&
+          e.text.includes('Reading [Image #1] with openrouter:eyes:free') &&
+          e.text.includes("groq:main can't see images"),
+      ),
     ).toBe(true);
-    const sent = openrouter.requests.find((r) => r.path === '/v1/chat/completions')?.body as {
-      messages: { role: string; content: unknown }[];
-    };
-    expect(JSON.stringify(sent.messages)).toContain('image_url');
+    const seen = JSON.stringify(
+      openrouter.requests.find((r) => r.path === '/v1/chat/completions')?.body,
+    );
+    expect(seen).toContain('image_url');
+    expect(seen).toContain('what is this?');
+    expect(seen).toContain('You are the eyes of another AI coding agent');
+    const toGroq = () =>
+      JSON.stringify(groq.requests.filter((r) => r.path === '/v1/chat/completions').at(-1)?.body);
+    expect(toGroq()).not.toContain('image_url');
+    expect(toGroq()).toContain('I see a pixel reading Error 42');
+    // the image stays on the message for vision models, next to its description
+    expect(setup.agent.messages[0]).toMatchObject({
+      role: 'user',
+      images: [{ name: 'dot.png' }],
+      mediaNotes: [{ kind: 'image', names: ['dot.png'], by: 'openrouter:eyes:free' }],
+    });
 
     const second = await setup.agent.run('thanks, and in words?', {
       signal: new AbortController().signal,
       host,
       onEvent: () => undefined,
     });
-    expect(second.text).toBe('text answer');
-    const toGroq = JSON.stringify(
-      groq.requests.filter((r) => r.path === '/v1/chat/completions').at(-1)?.body,
-    );
-    expect(toGroq).not.toContain('image_url');
-    expect(toGroq).toContain(
-      '1 image(s) were attached (dot.png), but this model cannot see images',
-    );
+    expect(second.text).toBe('second answer');
+    // later turns keep the description, and the image was described only once
+    expect(toGroq()).toContain('Error 42');
+    expect(openrouter.requests.filter((r) => r.path === '/v1/chat/completions')).toHaveLength(1);
     await setup.close();
   });
 });
@@ -453,7 +467,7 @@ describe('router: timeouts and per-request fallbacks', () => {
   const make = (p: Slow, fallbackChain: string[]) =>
     new Router({
       providers: new Map([[p.name, p]]),
-      ledger: new RateLimitLedger(() => 100),
+      ledger: new RateLimitLedger(),
       settings: {
         ...resolveSettings({}),
         model: `${p.name}:a`,

@@ -6,20 +6,24 @@ VinaX reads instruction files at the start of every session and sends them with 
 
 ## Where memory comes from
 
-| File                                                                                        | Scope                                        |
-| ------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `~/.vinax/VINAX.md`                                                                         | You, in every project                        |
-| `VINAX.md` or `AGENTS.md` in each folder from the repository root down to where you started | The project, shared through git              |
-| `VINAX.md` or `AGENTS.md` in a subfolder                                                    | Loaded when VinaX first works in that folder |
+| File                                                                                                                  | Scope                                        |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `~/.vinax/VINAX.md`                                                                                                   | You, in every project                        |
+| `VINAX.md`, `AGENTS.md`, `CLAUDE.md` or `GEMINI.md` in each folder from the repository root down to where you started | The project, shared through git              |
+| `.github/copilot-instructions.md` at the repository root                                                              | The project (GitHub Copilot's instructions)  |
+| Any of the four names in a subfolder                                                                                  | Loaded when VinaX first works in that folder |
 
-`AGENTS.md` is read too, so a repository set up for other coding agents works as is.
+Within a folder the files are read in the order `VINAX.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`. A repository set up for Codex, Claude Code, Gemini CLI or Copilot works as it is. Files with the same text (a `CLAUDE.md` copied from `AGENTS.md`) or symlinks to a file already read are sent only once.
 
 The welcome panel lists the memory in use, for example `✓ VINAX.md  ✓ AGENTS.md  ✓ VINAX.md (personal)  ✓ 1 imported file`. It shows file names only, never their contents. `/status` lists the files as well.
 
 ## Create and edit memory
 
 - `/init` analyzes the project and writes a starter `VINAX.md`: how to build, test and lint, plus the layout and conventions.
-- `/memory` opens a memory file in your `$EDITOR`.
+- `/memory` (or `/memory edit`) opens a memory file in your `$EDITOR`.
+- `/memory show` shows the instructions exactly as they are sent to the model; `/memory list` lists the files.
+- `/memory add <note>` appends a note to the project's `VINAX.md` (`/memory add --user <note>` to your personal one).
+- `/memory refresh` re-reads every memory file after you changed them outside VinaX.
 - `#note` at the start of a prompt appends the note to project or personal memory. You choose which.
 
 ## Imports

@@ -8,6 +8,7 @@ function chars(m: ChatMessage): number {
   let n = m.content.length;
   if (m.role === 'assistant')
     for (const c of m.toolCalls ?? []) n += c.name.length + c.arguments.length + 16;
+  if (m.role === 'user') for (const note of m.mediaNotes ?? []) n += note.text.length + 80;
   return n;
 }
 
@@ -26,12 +27,4 @@ export function estimateTokens(
   }
   for (const t of tools) total += 8 + Math.ceil(JSON.stringify(t).length / CHARS_PER_TOKEN);
   return total;
-}
-
-/**
- * The same estimate for a bare string, with no per-message overhead. Used to attribute parts of
- * the system prompt (memory, skills) to their own line in `/context`.
- */
-export function estimateTextTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }

@@ -14,16 +14,16 @@ Claude uses the native [Messages streaming API](https://platform.claude.com/docs
 
 VinaX never hardcodes a model list. Defaults live in [settings](/settings). At startup each one is checked against the provider's live `/models` list, which is cached for 24 hours. Models that no longer exist are skipped with a warning.
 
-| Setting         | Default                                                                                                                                          | Used for                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `model`         | `groq:openai/gpt-oss-120b`                                                                                                                       | The agent loop                                     |
-| `smallModel`    | `groq:openai/gpt-oss-20b`                                                                                                                        | Titles, summaries, compaction, WebFetch answers    |
-| `planModel`     | unset (the main model)                                                                                                                           | Plan mode, where reasoning matters more than speed |
-| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:openai/gpt-oss-20b` | When the main model is limited or failing          |
+| Setting         | Default                                                                                                                                                                                       | Used for                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `model`         | `groq:openai/gpt-oss-120b`                                                                                                                                                                    | The agent loop                                     |
+| `smallModel`    | `groq:openai/gpt-oss-20b`                                                                                                                                                                     | Titles, summaries, compaction, WebFetch answers    |
+| `planModel`     | unset (the main model)                                                                                                                                                                        | Plan mode, where reasoning matters more than speed |
+| `fallbackChain` | `groq:qwen/qwen3.8-27b` → `openrouter:qwen/qwen3.8-27b:free` → `openrouter:nvidia/nemotron-3-super-120b-a12b:free` → `nvidia:nvidia/nemotron-3-super-120b-a12b` → `nvidia:openai/gpt-oss-20b` | When the main model is limited or failing          |
 
 Models are written `provider:model-id`, with a provider from the table below. Switch for one session with `/model` or `--model`, or permanently with `vinax config set model groq:openai/gpt-oss-20b`.
 
-A model whose provider has no key is skipped. So the last fallback, `nvidia:openai/gpt-oss-20b`, only comes into play once you add an NVIDIA key.
+A model whose provider has no key is skipped. So the last fallbacks, NVIDIA's free `nvidia/nemotron-3-super-120b-a12b` and `openai/gpt-oss-20b`, only come into play once you add an NVIDIA key.
 
 ## Providers
 
@@ -78,17 +78,46 @@ vinax --model NVD_CHAT_OSS_20_B          # the same model, by its alias
 ```
 
 - **Keys** are stored like every other provider key: the `NVIDIA_API_KEY` environment variable, the OS keychain, or `~/.vinax/credentials.json` (mode 0600). They never go in settings files; an `apiKey` there is ignored with a warning.
-- **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with one-token completions sent to a few models at once (`openai/gpt-oss-20b`, `meta/llama-3.2-11b-vision-instruct` and some catalog models); any answer proves the key, so one hung model no longer fails the check. The check gives up after 15 seconds instead of waiting the full request timeout.
+- **Key check.** NVIDIA's `/models` list is public, so VinaX checks a key with one-token completions sent to a few models at once (`nvidia/nemotron-3-super-120b-a12b`, `openai/gpt-oss-20b`, `meta/llama-3.2-11b-vision-instruct` and some free catalog models); any answer proves the key, so one hung model no longer fails the check. The check gives up after 15 seconds instead of waiting the full request timeout.
 - **Context window.** NVIDIA's catalog lists model ids only. VinaX knows the context window of the models it has aliases for (128K, 131,072 tokens, for `openai/gpt-oss-20b`).
-- **Picker.** NVIDIA's catalog also contains embedding, retired and unresponsive models, so the picker lists only the ones that answered a [model test](#model-tests). Any other catalog model still works with `/model nvidia:<model-id>` or `--model`.
-- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. NVIDIA has no local VinaX RPM ceiling by default; its API headers and 429 responses are still honored. Set `providers.nvidia.rpm` when a self-hosted NIM needs a local requests-per-minute limit, and use `providers.nvidia.enabled: false` to turn the provider off.
+- **Free endpoints only.** See [below](#nvidia-free-endpoints): nothing else from NVIDIA's catalog is listed, tested, routed to or used as a fallback.
+- **Picker.** Of the free models, the picker lists only the ones that answered a [model test](#model-tests). Another model still works when you name it with `/model nvidia:<model-id>` or `--model`.
+- **Base URL.** Point VinaX at a self-hosted NVIDIA NIM (or any OpenAI-compatible endpoint) with `providers.nvidia.baseUrl`. VinaX never caps NVIDIA usage locally; see [NVIDIA rate limits](#nvidia-rate-limits). Use `providers.nvidia.enabled: false` to turn the provider off.
 
 ```json
 {
   "model": "NVD_CHAT_OSS_20_B",
-  "providers": { "nvidia": { "baseUrl": "http://nim.internal:8000/v1", "rpm": 40 } }
+  "providers": { "nvidia": { "baseUrl": "http://nim.internal:8000/v1" } }
 }
 ```
+
+### NVIDIA free endpoints
+
+VinaX uses only the NVIDIA models that have a free hosted endpoint — the ones [build.nvidia.com](https://build.nvidia.com/models?filters=nimType%3Anim_type_preview) lists under "Free Endpoint". Everything else in NVIDIA's `/v1/models` catalog is left out of `/model`, `/models`, auto mode, fallbacks and model tests. The chat models, best first (the order auto mode prefers them in):
+
+| Model (as VinaX expects it)                     | Notes                                                  |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| `nvidia/nemotron-3-super-120b-a12b`             | agentic, coding, tool calling, 1M context              |
+| `openai/gpt-oss-20b` (`NVD_CHAT_OSS_20_B`)      | text, 131,072 context                                  |
+| `nvidia/nemotron-3-ultra-550b-a55b`             | agentic, coding, tool calling, 1M context              |
+| `nvidia/nemotron-3.5-super-vl-120b-a12b`        | vision, agentic, tool calling                          |
+| `meta/muse-glimmer-30b`                         | vision, native tool calling                            |
+| `z-ai/glm-5-3-flash`                            | vision, tool calling                                   |
+| `poolside/laguna-xs-2.1`                        | agentic coding                                         |
+| `nvidia/nemotron-3.5-lightning-30b-a3b`         | agentic                                                |
+| `stepfun-ai/step-5-preview`                     | vision, 1M context                                     |
+| `deepseek-ai/deepseek-v4.1-flash`               | vision                                                 |
+| `google/gemma-4-31b-it`                         | text, reasoning                                        |
+| `google/diffusiongemma-26b-a4b-it`              | text                                                   |
+| `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | vision, video and audio understanding                  |
+| `nvidia/cosmos3-nano-reasoner`                  | vision and video understanding                         |
+| `meta/llama-3.2-90b-vision-instruct`            | vision, 131,072 context, text tool protocol            |
+| `meta/llama-3.2-11b-vision-instruct`            | vision, 131,072 context, text tool protocol            |
+| `z-ai/glm-5-3`                                  | text, reasoning, tool calling; being retired by NVIDIA |
+
+The rest of the free list is not chat models (speech, embeddings, safety guards, pose, driving, video generation, translation, tabular) and is never offered as a model.
+
+NVIDIA's exact ids vary in spelling (`glm-5.3` or `glm-5-3`), so VinaX matches them by a normalised slug: lowercase, without the `publisher/` prefix, with `.`, `_` and spaces as `-`. The id NVIDIA's catalog uses is the one sent. If the catalog matches none of them, VinaX falls back to the ids above. The list lives in `packages/core/src/providers/nvidia-free.ts`.
 
 ## Aliases
 
@@ -123,18 +152,20 @@ VinaX sends the effort only when you set one: as `reasoning_effort` to Groq and 
 
 ## Vision models
 
-gpt-oss and most other defaults are text-only. When a prompt carries [images](/interactive-mode#images) and the current model can't see them, that turn goes to a vision model instead, and a notice says which one. VinaX builds a list of vision models, best first:
+gpt-oss and most other defaults are text-only. When a prompt carries [images or recordings](/interactive-mode#images) the current model can't see, a vision model reads them and its description goes to your model, which keeps answering the turn; a notice says which model looked. VinaX builds a list of vision models, best first:
 
 1. the `visionModel` setting, if set (a model ref or alias)
 2. vision models already in your `model`/`fallbackChain`
 3. vision models VinaX knows on a provider you use: NVIDIA's `meta/llama-3.2-11b-vision-instruct`, then `meta/llama-3.2-90b-vision-instruct`
 4. models a provider's catalog marks as taking images (OpenRouter's `input_modalities`), free ones first
 
-Providers you reach with your own key come before ones behind a [gateway](/gateway), because image requests are large. If the first model fails, the turn falls back through the other vision models, not your text-only chain. A model that does not answer in time is skipped at once when another model is next, instead of being retried.
+Catalogs that don't say (OpenAI's, for one) are filled in from well-known multimodal families: `gpt-4o`, `gpt-4.1`, `gpt-5`, `o1`/`o3`/`o4-mini`, Claude, Gemini, Llama 4, Gemma 3, Pixtral, Qwen VL and model ids containing `vision` or `vl`. Audio, embedding and search variants never count.
+
+Providers you reach with your own key come before ones behind a [gateway](/gateway), because image requests are large. If the first model fails, the description falls back through the other vision models, not your text-only chain. A model that does not answer in time is skipped at once when another model is next, instead of being retried.
 
 NVIDIA's Llama 3.2 Vision models reject requests that carry both images and tool definitions, so VinaX talks to them with its text tool protocol; any other model that fails the same way is switched automatically.
 
-Text-only models later in the conversation get a short note that an image was attached, not the image itself.
+Text-only models later in the conversation get the saved description, not the image itself. Recordings go whole to models marked as taking video (NVIDIA's `nemotron-*-nano-omni` and Cosmos reasoning models), otherwise as sampled frames to a vision model.
 
 ```json
 { "visionModel": "nvidia:meta/llama-3.2-11b-vision-instruct" }
@@ -165,15 +196,17 @@ To make a choice the default, run `vinax config set model <ref or alias>`.
 
 ## How a request is routed
 
-Before each request, VinaX checks what the model has left. That means its local requests-per-minute window, plus the token and request budgets from the provider's rate-limit headers. Then it does one of these:
+Before each request, VinaX checks what the provider's rate-limit headers say the model has left. VinaX sets no limits of its own. Then it does one of these:
 
-- **Sends** the request, if the budget allows it.
+- **Sends** the request, if the provider's limits allow it.
 - **Waits** briefly, up to `router.maxWaitMs` (20 s by default), with a dim notice.
 - **Falls back** to the next model in the chain, with a one-line notice:
 
 <pre class="vx-terminal"><span class="dim">↪ Groq 429: Rate limit reached … — switched to openrouter:qwen/qwen3.8-27b:free</span></pre>
 
-Transient errors (5xx, timeouts, network) are retried with exponential backoff and jitter before falling back. VinaX never switches models once an answer has started streaming.
+Transient errors (5xx, timeouts, network) are retried with exponential backoff and jitter before falling back.
+
+A provider can also fail partway through a reply — NVIDIA's servers sometimes send an error such as `list index out of range` after part of the answer has streamed. VinaX discards the partial reply (in `-p` text mode, where it is already printed, a `[retrying…]` line marks the break) and asks again: first the same model after a short backoff; if it breaks again, the same model with VinaX's text tool protocol, which avoids the server's tool-call parser; then the next model in the chain, which is set aside for 10 minutes. Tool calls only run once a reply has finished, so nothing runs twice. Only when every option fails does the turn end, with a card saying the provider failed mid-reply and that VinaX already retried.
 
 A model that sends nothing at all — no text, reasoning or tool call — for `router.firstTokenTimeoutMs` (45 s by default) counts as timed out, so a hung endpoint falls back long before the full `requestTimeoutMs`. Time spent waking a [gateway](/gateway) does not count.
 
@@ -185,15 +218,23 @@ Choosing the model again with `/model` tries it straight away.
 
 When every model fails, VinaX explains why in an error card: each model it tried, with its provider, the kind of failure (authentication failed, no API key, rate limited, temporary provider error, network error, model not available, request too large, tool-call error, request rejected) and the provider's message, plus what to try next (retry, switch with `/model`, add a key with `/login`, run `/health`, `/compact`).
 
+### NVIDIA rate limits
+
+VinaX never caps, skips or budgets NVIDIA locally. NVIDIA's free endpoints limit requests per minute on their side (about 40). When NVIDIA answers 429, VinaX waits on the same model, as long as `Retry-After` says or otherwise with exponential backoff up to 30 s, and retries until it answers. It does not fall back to another model or set NVIDIA aside, and the waits do not use up `router.maxRetries`. The status line shows the wait:
+
+<pre class="vx-terminal"><span class="dim">↻ waiting for the NVIDIA rate limit — retrying in 4.0s</span></pre>
+
+Press `Esc` to stop waiting.
+
 ## Free-tier limits
 
 | Provider                  | Limits (free tier)                                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Groq                      | About 30 requests/min, plus a per-model tokens-per-minute budget (about 8K on the larger coding models) |
 | OpenRouter `:free` models | 20 requests/min and **50 requests/day** per account; 1,000/day after a one-time $10 credit purchase     |
-| NVIDIA                    | Set by your NVIDIA account; VinaX honors provider rate-limit headers and 429 responses                  |
+| NVIDIA                    | Set by NVIDIA (about 40 requests/min); VinaX waits out 429s on the same model                           |
 
-Each agent step is one request, and a long conversation can use most of a minute's tokens. So expect some turns to be served by the fallback chain. `/status` shows the remaining limits and your OpenRouter quota, and `/usage` shows today's totals.
+Each agent step is one request, and a long conversation can use most of a minute's tokens. So expect some turns to be served by the fallback chain. `/status` shows the remaining limits the providers report.
 
 ## Tool calling on free models
 
@@ -218,8 +259,8 @@ Every argument is validated, and validation errors go back to the model so it ca
     "firstTokenTimeoutMs": 45000
   },
   "providers": {
-    "groq": { "rpm": 30 },
-    "openrouter": { "enabled": true, "rpm": 20 },
+    "groq": { "enabled": true },
+    "openrouter": { "enabled": true },
     "nvidia": { "enabled": true }
   }
 }

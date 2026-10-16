@@ -12,18 +12,23 @@ import { loadMcpConfig, type McpServerEntry } from '../mcp/config.js';
 import { McpManager } from '../mcp/manager.js';
 import { ProjectMemory } from '../memory/memory.js';
 import { PermissionEngine } from '../permissions/engine.js';
+import { MediaReader } from '../files/media.js';
 import { KNOWN_MODELS, knownModel } from '../providers/known-models.js';
+import { inferVideo, inferVision } from '../providers/media-capability.js';
+import { findCatalogModel } from '../providers/nvidia-free.js';
 import { parseModelRef, type ModelRef } from '../providers/types.js';
 import type { Runtime } from '../runtime.js';
 import type { SessionRecorder } from '../session/store.js';
 import { AppStateStore } from '../state/app-state.js';
-import { displayPath, resolvePath } from '../tools/paths.js';
+import { displayPath, isInside, resolvePath } from '../tools/paths.js';
 import { ReadTracker } from '../tools/read-tracker.js';
 import { createToolset } from '../tools/registry.js';
+import { createSandbox } from '../tools/sandbox.js';
 import { detectShell, ShellSession } from '../tools/shell.js';
 import { TodoStore } from '../tools/todo.js';
 import type { AnyTool } from '../tools/types.js';
 import { createWebFetchTool } from '../tools/webfetch.js';
+import { createWebSearchTool } from '../tools/websearch.js';
 import {
   createSkillTool,
   loadSkills,
@@ -66,6 +71,11 @@ export interface AgentSetup {
   /** Live list: MCP tools are added when a server is approved during the session. */
   tools: readonly AnyTool[];
   workspace: readonly string[];
+  /**
+   * Adds a folder tools may read and write without asking (`/directory add`); returns its
+   * absolute path, or `undefined` when it was already part of the workspace.
+   */
+  addDirectory: (dir: string) => string | undefined;
   memory: ProjectMemory;
   /** Git state when the session started, or `undefined` outside a repository. */
   git: GitInfo | undefined;
@@ -115,18 +125,26 @@ export function pickVisionModels(
     const r = parseModelRef(ref);
     if (!runtime.providers.has(r.provider) || runtime.skipped.has(ref)) return false;
     const list = runtime.models.get(r.provider);
-    return list === undefined || list.some((m) => m.id === r.model);
+    return list === undefined || findCatalogModel(r.provider, list, r.model) !== undefined;
+  };
+  // the catalog's spelling of a known NVIDIA id, so one model is not listed twice
+  const listed = (ref: string): string => {
+    const r = parseModelRef(ref);
+    const list = runtime.models.get(r.provider);
+    const found = list === undefined ? undefined : findCatalogModel(r.provider, list, r.model);
+    return found === undefined ? ref : `${r.provider}:${found.id}`;
   };
   const candidates: string[] = [
     ...(settings.visionModel === undefined ? [] : [settings.visionModel]),
     ...[settings.model, ...settings.fallbackChain].filter((ref) =>
       supportsVision(parseModelRef(ref)),
     ),
-    ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => `${k.provider}:${k.model}`),
+    ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => listed(`${k.provider}:${k.model}`)),
   ];
   for (const [provider, list] of runtime.models) {
-    const free = list.filter((m) => m.vision === true && m.free);
-    const paid = list.filter((m) => m.vision === true && !m.free);
+    const sees = (m: { id: string }) => supportsVision({ provider, model: m.id });
+    const free = list.filter((m) => sees(m) && m.free);
+    const paid = list.filter((m) => sees(m) && !m.free);
     candidates.push(...[...free, ...paid].map((m) => `${provider}:${m.id}`));
   }
   const ok = [...new Set(candidates)].filter((ref) => ref === settings.visionModel || usable(ref));
@@ -138,6 +156,37 @@ export function pickVisionModels(
   return settings.visionModel === undefined
     ? ordered
     : [settings.visionModel, ...ordered.filter((r) => r !== settings.visionModel)];
+}
+
+/**
+ * Models that take video input (`video: true` in the catalog or {@link KNOWN_MODELS}, or a known
+ * video family), best first: ones in your model settings, then free, then paid.
+ */
+export function pickVideoModels(
+  runtime: Runtime,
+  supportsVideo: (ref: ModelRef) => boolean,
+): string[] {
+  const settings = runtime.settings.resolved;
+  const candidates: string[] = [
+    ...[settings.model, ...settings.fallbackChain].filter((ref) =>
+      supportsVideo(parseModelRef(ref)),
+    ),
+    ...KNOWN_MODELS.filter((k) => k.video === true).map((k) => `${k.provider}:${k.model}`),
+  ];
+  for (const [provider, list] of runtime.models) {
+    const takes = list.filter((m) => supportsVideo({ provider, model: m.id }));
+    candidates.push(
+      ...[...takes.filter((m) => m.free), ...takes.filter((m) => !m.free)].map(
+        (m) => `${provider}:${m.id}`,
+      ),
+    );
+  }
+  return [...new Set(candidates)].filter((ref) => {
+    const r = parseModelRef(ref);
+    if (!runtime.providers.has(r.provider) || runtime.skipped.has(ref)) return false;
+    const list = runtime.models.get(r.provider);
+    return list === undefined || list.some((m) => m.id === r.model);
+  });
 }
 
 /** Wires tools, permissions, hooks, MCP, sub-agents, checkpoints and the system prompt. */
@@ -153,6 +202,7 @@ export async function createAgentSetup(
   ].map((d) => path.resolve(d));
   const shellInfo = detectShell(env);
   const shell = new ShellSession(shellInfo, cwd, env);
+  shell.sandbox = createSandbox(settings.sandbox, { workspace: () => workspace, env });
   const todos = new TodoStore();
   const permissions = new PermissionEngine({
     rules: settings.permissions,
@@ -169,6 +219,10 @@ export async function createAgentSetup(
   const git = await readGitInfo(cwd);
   const date = (opts.now ?? new Date()).toISOString().slice(0, 10);
   const warnings: string[] = [];
+  if ('unavailable' in shell.sandbox)
+    warnings.push(
+      `The ${shell.sandbox.mode} sandbox is on but ${shell.sandbox.unavailable} The Bash tool will refuse to run commands.`,
+    );
   let currentMode: PermissionMode = settings.permissions.defaultMode;
 
   // Plugin hooks are added to the ones in settings, never instead of them: installing a plugin
@@ -209,6 +263,7 @@ export async function createAgentSetup(
   const tools: AnyTool[] = [
     ...createToolset({ shell: shellInfo, todos }),
     createWebFetchTool(runtime.router),
+    createWebSearchTool({ env }),
     ...(skills.length === 0 ? [] : [createSkillTool(skills)]),
   ];
   const context = { cwd, workspace, shell, reads };
@@ -228,18 +283,23 @@ export async function createAgentSetup(
       toolInstructions,
     );
   };
-  const promptParts = (): { memory: string; skills: string } => ({
-    memory: memory.text(),
-    skills: skillsSection ?? '',
-  });
   const supportsTools = (ref: ModelRef): boolean | undefined =>
     runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.supportsTools ??
     (knownModel(ref.provider, ref.model)?.tools === false ? false : undefined);
   const supportsVision = (ref: ModelRef): boolean =>
     runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.vision ??
     knownModel(ref.provider, ref.model)?.vision ??
-    false;
+    inferVision(ref.model);
   const visionModels = (): string[] => pickVisionModels(runtime, supportsVision);
+  const supportsVideo = (ref: ModelRef): boolean =>
+    runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.video ??
+    knownModel(ref.provider, ref.model)?.video ??
+    inferVideo(ref.model);
+  const media = new MediaReader({
+    router: runtime.router,
+    visionModels,
+    videoModels: () => pickVideoModels(runtime, supportsVideo),
+  });
   const onPathTouched = (file: string): string | undefined => {
     const found = memory.discover(file);
     if (found.length === 0) return undefined;
@@ -273,6 +333,9 @@ export async function createAgentSetup(
       systemPrompt: (mode, instr) =>
         `${basePrompt(mode, instr)}\n\n# Your role: ${def.name} sub-agent\n${def.prompt}\nYou were given one task by the main VinaX agent. Work on your own, then reply with a concise report of what you found or changed (with file paths). The report goes back to the main agent, not straight to the user.`,
       supportsTools,
+      supportsVision,
+      visionModels,
+      media,
       maxTurns: SUBAGENT_MAX_TURNS,
       nested: true,
       onPathTouched,
@@ -338,14 +401,11 @@ export async function createAgentSetup(
     checkpoints,
     context,
     systemPrompt: basePrompt,
-    promptParts,
     supportsTools,
     supportsVision,
     visionModels,
+    media,
     defaultModel: () => settings.model,
-    budget: () => runtime.settings.resolved.budget,
-    contextWindow: (ref) =>
-      runtime.models.get(ref.provider)?.find((m) => m.id === ref.model)?.contextWindow,
     activeTasks: () => {
       const open = todos.todos.filter((t) => t.status !== 'completed');
       return open.length === 0
@@ -373,6 +433,12 @@ export async function createAgentSetup(
     checkpoints,
     tools,
     workspace,
+    addDirectory(dir) {
+      const abs = path.resolve(resolvePath(dir, cwd));
+      if (workspace.some((w) => isInside(abs, w))) return undefined;
+      workspace.push(abs);
+      return abs;
+    },
     memory,
     git,
     reads,

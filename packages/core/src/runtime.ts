@@ -3,6 +3,7 @@ import { cacheDir, logDir, type Env } from './config/paths.js';
 import type { Settings } from './config/schema.js';
 import { openSecretStore, type SecretStore } from './config/secrets.js';
 import { createFileLogger, noopLogger, type Logger } from './log/logger.js';
+import { BYPASS_WARNING, bypassRefusal } from './permissions/bypass.js';
 import { ModelCatalog } from './providers/catalog.js';
 import {
   PROBE_CONCURRENCY,
@@ -15,6 +16,7 @@ import {
   type ProbeResult,
 } from './providers/probe.js';
 import { providerLabel } from './providers/errors.js';
+import { findCatalogModel } from './providers/nvidia-free.js';
 import { RateLimitLedger } from './providers/ratelimit.js';
 import { GATEWAY_WAKING, type GatewayClient } from './providers/gateway.js';
 import {
@@ -31,7 +33,6 @@ import {
   type ProviderName,
 } from './providers/types.js';
 import { Router } from './router/router.js';
-import { UsageTracker } from './state/usage.js';
 import type { SecretName } from './config/secrets.js';
 
 /** One model test of a provider, with the results that are current afterwards. */
@@ -89,7 +90,6 @@ export interface Runtime {
   ): Promise<ProbeRun | undefined>;
   /** Drops a provider's test results, e.g. because its key changed. */
   forgetProbes(name: ProviderName): Promise<void>;
-  usage: UsageTracker;
   /** Uses a new key for a provider right away (after /login). */
   setProviderKey(name: ProviderName, key: string): void;
   /**
@@ -156,7 +156,7 @@ async function findUnavailableModels(
   );
   for (const { ref, provider: name, model } of refs) {
     const list = models.get(name);
-    if (list === undefined || list.some((m) => m.id === model)) continue;
+    if (list === undefined || findCatalogModel(name, list, model) !== undefined) continue;
     skip.add(ref);
     if (list.length === 0 && viaGateway.has(name)) continue;
     warnings.push(`${ref} is not in ${providerLabel(name)}'s model list; skipping it.`);
@@ -174,7 +174,7 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   const logger = opts.verbose === true ? createFileLogger(logDir(env)) : noopLogger;
   const secrets = await openSecretStore(env);
   const resolved = settings.resolved;
-  const ledger = new RateLimitLedger((p) => resolved.providers[p].rpm);
+  const ledger = new RateLimitLedger();
   const { providers, missingKeys, gateway, viaGateway } = await createProviders({
     settings: resolved,
     secrets,
@@ -186,6 +186,14 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   // wake in the background; its models are simply tried until the catalog can be fetched.
   const unreachable = new Set<ProviderName>();
   const startupNotes: string[] = [];
+  if (resolved.permissions.defaultMode === 'bypass') {
+    const refused = bypassRefusal(env);
+    if (refused === undefined) startupNotes.push(BYPASS_WARNING);
+    else {
+      resolved.permissions.defaultMode = 'default';
+      startupNotes.push(`${refused} Starting in manual mode.`);
+    }
+  }
   if (gateway && viaGateway.size > 0) {
     const probe = await gateway.client.probe(2500);
     if (!probe.ok) {
@@ -248,7 +256,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
     settingsWarnings: settings.warnings,
   });
 
-  const usage = new UsageTracker(env);
   let gatewayLink = gateway;
   const useGatewayFor = (name: ProviderName): boolean => {
     if (!gatewayLink || !resolved.providers[name].enabled || !GATEWAY_PROVIDER_NAMES.includes(name))
@@ -260,7 +267,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
   return {
     cwd: opts.cwd,
     env,
-    usage,
     probes,
     unhealthy,
     probeCandidates: candidatesFor,
@@ -363,7 +369,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         if (r.provider !== name) continue;
         // an empty list through a gateway means the gateway does not serve this provider
         const missing =
-          list.length > 0 ? !list.some((m) => m.id === r.model) : viaGateway.has(name);
+          list.length > 0
+            ? findCatalogModel(name, list, r.model) === undefined
+            : viaGateway.has(name);
         if (missing) skip.add(r.ref);
         else skip.delete(r.ref);
       }
@@ -407,7 +415,6 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
       logger,
       skip,
       unhealthy,
-      usage,
       models,
     }),
     skipped: skip,

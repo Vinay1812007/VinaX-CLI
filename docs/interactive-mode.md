@@ -39,24 +39,23 @@ After you upgrade, the first session shows a **What's new** panel with the relea
 - **The turn summary.** A turn that used tools ends with a line like `▸ Done └ Updated 2 files · 5 tool calls · 12.3s`.
 - **Error cards.** When a turn fails, a card shows each model that was tried, its provider, the kind of failure and the provider's message, and what to try next: retry, `/model`, `/login`, `/health` or `/compact`.
 - **Your prompts** appear in the transcript as `> your prompt`.
-- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows what VinaX is doing (see [Task state](#task-state)), the model that answered, the effort (`◔ low`, `◑ medium`, `● high`) when set, and how much of the context budget is used. Fallback and rate-limit notices appear under it.
+- **The footer** shows the [permission mode](#modes) on the left, then `(shift+tab to cycle) · ? for shortcuts` when there is room. On the right it shows what VinaX is doing (see [Task state](#task-state)), the model that answered, and the effort (`◔ low`, `◑ medium`, `● high`) when set. Fallback and rate-limit notices appear under it.
 - **The task list** appears above the prompt whenever VinaX tracks steps with `TodoWrite`.
 
 ### Task state
 
 The footer says at a glance whether VinaX is working, needs you, or stopped, and why:
 
-| Footer                         | Meaning                                                                                 |
-| ------------------------------ | --------------------------------------------------------------------------------------- |
-| `● working 0:12`               | A turn, command or `!` shell command is running (with tokens against a budget)          |
-| `◆ needs your approval · 0:05` | Waiting for you: an approval, a plan (`plan needs your review`) or a question           |
-| `2 queued`                     | Messages you typed while VinaX was busy, sent in order when it finishes                 |
-| `✓ done · 0:08`                | The last turn finished                                                                  |
-| `⏹ interrupted`                | You stopped it; what was done so far is kept                                            |
-| `✖ failed`                     | The models could not answer; an error card above says what to try                       |
-| `⏹ stopped at the budget`      | A [token or time budget](/usage#budgets) ran out                                        |
-| `⟲ stopped: going in circles`  | The task kept repeating a failing call; see [Usage](/usage#when-a-task-goes-in-circles) |
-| `⊘ stopped: you declined`      | You declined an action                                                                  |
+| Footer                         | Meaning                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `● working 0:12`               | A turn, command or `!` shell command is running                                                                 |
+| `◆ needs your approval · 0:05` | Waiting for you: an approval, a plan (`plan needs your review`) or a question                                   |
+| `2 queued`                     | Messages you typed while VinaX was busy, sent in order when it finishes                                         |
+| `✓ done · 0:08`                | The last turn finished                                                                                          |
+| `⏹ interrupted`                | You stopped it; what was done so far is kept                                                                    |
+| `✖ failed`                     | The models could not answer; an error card above says what to try                                               |
+| `⟲ stopped: going in circles`  | The task kept repeating a failing call; see [Troubleshooting](/troubleshooting#a-task-stopped-going-in-circles) |
+| `⊘ stopped: you declined`      | You declined an action                                                                                          |
 
 On a narrow terminal the state shortens to its symbol and clock (`◆ 0:05`).
 
@@ -72,12 +71,14 @@ The prompt box looks like Claude Code's: a grey rounded box with a `>` prompt an
 
 The footer always shows the permission mode, and **Shift+Tab** cycles through them:
 
-| Footer               | Mode          | What VinaX does without asking                                                                                                                  |
-| -------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `⏸ manual mode on`   | `default`     | Only reads inside the project; asks before edits, commands and web access                                                                       |
-| `⏵⏵ accept edits on` | `acceptEdits` | Also applies edits inside the project                                                                                                           |
-| `⏸ plan mode on`     | `plan`        | Read-only; researches and proposes a plan first                                                                                                 |
-| `⏵⏵ auto mode on`    | `auto`        | Edits, commands and web access inside the project; dangerous commands, deny and ask rules, anything outside the project and MCP tools still ask |
+| Footer                    | Mode          | What VinaX does without asking                                                                                                                  |
+| ------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `⏸ manual mode on`        | `default`     | Only reads inside the project; asks before edits, commands and web access                                                                       |
+| `⏵⏵ accept edits on`      | `acceptEdits` | Also applies edits inside the project                                                                                                           |
+| `⏸ plan mode on`          | `plan`        | Read-only; researches and proposes a plan first                                                                                                 |
+| `⏵⏵ auto mode on`         | `auto`        | Edits, commands and web access inside the project; dangerous commands, deny and ask rules, anything outside the project and MCP tools still ask |
+| `⊘ read-only mode on`     | `readOnly`    | Reads, searches and read-only commands; every edit and other command is refused without asking                                                  |
+| `⚠ bypass permissions on` | `bypass`      | Everything except deny rules. Only in the cycle when the session started with `--yolo` or `--permission-mode bypass`                            |
 
 See [Permissions](/permissions#modes) for the details.
 
@@ -93,7 +94,7 @@ See [Permissions](/permissions#modes) for the details.
 | `\` then `Enter`, `Shift+Enter`, `Option/Alt+Enter` | New line. `Shift+Enter` works in terminals that report it                           |
 | `↑` / `↓`                                           | Move between lines, then walk this project's prompt history                         |
 | `Ctrl+R`                                            | Search prompt history; press again for older matches                                |
-| `Shift+Tab`                                         | Cycle modes: ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto                          |
+| `Shift+Tab`                                         | Cycle modes: ⏸ manual → ⏵⏵ accept edits → ⏸ plan → ⏵⏵ auto → ⊘ read-only            |
 | `Esc`                                               | Stop the current reply. What was written so far is kept                             |
 | `Esc Esc`                                           | Clear the prompt. On an empty prompt, open the [rewind](/permissions#rewind) picker |
 | `Ctrl+V`                                            | Paste an image from the clipboard (see [Images](#images))                           |
@@ -121,24 +122,25 @@ See [Permissions](/permissions#modes) for the details.
 - **Pastes.** A paste of 8+ lines or 800+ characters collapses to `[Pasted text #1 +42 lines]`. The full text is still sent.
 - **Vim mode.** `/vim` turns on vim key bindings for the prompt: `hjkl w b e 0 ^ $ x X D C S dd cc dw cw` and `i a I A o O u`. The choice is saved.
 
-## Images
+## Images and screen recordings {#images}
 
-VinaX can send screenshots and other images to models that can see them:
+VinaX can work from screenshots, other images and screen recordings:
 
 - **Drag a file** into the terminal (the path is pasted with escaped spaces), or paste or type its path, quoted or absolute.
-- **`@shot.png`** attaches an image in the project.
+- **`@shot.png`** or **`@bug.mov`** attaches an image or recording in the project.
 - **`Ctrl+V`** pastes an image from the clipboard. On macOS, `Ctrl+Shift+Cmd+4` copies a screenshot to the clipboard. `Cmd+V` still pastes text. This uses `osascript` on macOS, `wl-paste` or `xclip` on Linux and PowerShell on Windows.
 
-Each image becomes an `[Image #1]` chip in the prompt, and a note such as `Attached [Image #1] shot.png (84 KB)` appears. PNG, JPEG, GIF and WebP up to about 3.75 MB work; on macOS larger images are shrunk with `sips` first.
+Each image becomes an `[Image #1]` chip in the prompt and each recording a `[Video #1]` chip, and a note such as `Attached [Image #1] shot.png (84 KB)` appears. PNG, JPEG, GIF and WebP images up to about 3.75 MB work; on macOS larger images are shrunk with `sips` first. Recordings can be MP4, MOV, M4V, WebM, MKV or AVI.
 
-gpt-oss models are text-only, which is why they used to answer that they can't see images. Now a prompt with images goes to a model that can see them, and a notice says which:
+**Your model stays in charge.** If the model you are working with can see images, it gets them directly. If it can't (gpt-oss and most other defaults are text-only), a [vision model](/models#vision-models) reads them for it: VinaX sends the image together with your request and a short recap of the conversation, the vision model transcribes all visible text (code, errors, terminal output, UI labels) and describes the layout and what matters for the task, and your model gets that description and carries on with its own tools. A notice says who is looking, for example `Reading [Image #1] with nvidia:meta/llama-3.2-90b-vision-instruct (nvidia:openai/gpt-oss-20b can't see images).`
 
-1. the `visionModel` [setting](/settings), if set
-2. otherwise a vision model already in your fallback chain
-3. otherwise a vision model VinaX knows on a provider you use (NVIDIA's `meta/llama-3.2-90b-vision-instruct` or `meta/llama-3.2-11b-vision-instruct`)
-4. otherwise a vision model from a provider's catalog (OpenRouter marks them; free ones first)
+The description is saved with the message, so later turns, `/resume` and compaction keep it, and the same image is never described twice in a session. A vision model you switch to later still gets the image itself.
 
-Later turns go back to your normal model, which gets a short note that an image was attached instead of the image itself. If no vision model is available, a warning says so and the model only sees the file name.
+**Screen recordings** are always read this way. A model marked as taking video (NVIDIA's Nemotron omni and Cosmos reasoning models) gets recordings up to 50 MB whole. Otherwise VinaX samples up to 12 frames (about one every 2 seconds, at most 1280 px) with [ffmpeg](https://ffmpeg.org) and a vision model describes them in order, with timestamps. Without ffmpeg, a warning says how to install it (`brew install ffmpeg` on macOS).
+
+The model can also look at images and recordings itself: the Read tool on `shot.png` or `rec.mov` returns a description written for the task at hand. Files mentioned with `@` that can't be attached, such as binaries or text over 2 MB, are named in a warning instead of being dropped silently.
+
+If no vision model is available, a warning says so and the model only sees the file name.
 
 macOS keeps some folders private, such as the `TemporaryItems` folder where new screenshots first land. If VinaX can't read a file there, it says so and suggests copying the screenshot to the clipboard and pressing `Ctrl+V`.
 
@@ -156,12 +158,10 @@ Clicking to move the cursor inside the prompt would mean capturing the mouse, wh
   <span class="dim">Session</span>  20260929-164512-abc123 · Fix login bug
   <span class="dim">Resume</span>   <span class="accent">vinax --resume 20260929-164512-abc123</span>
   <span class="dim">Time</span>     12m 04s total · 3m 10s working · 8 prompts · 23 tool calls
-  <span class="dim">Tokens</span>   45K in · 3.1K out (reported) · ~2.4K estimated
-  <span class="dim">Cost</span>     unknown (no price for nvidia:openai/gpt-oss-20b)
   <span class="dim">Changes</span>  4 files · +120 −34 lines
   <span class="dim">Models</span>   nvidia:openai/gpt-oss-20b</pre>
 
-A session with no prompts just prints `✻ Bye!`. Reported and estimated tokens and the cost are explained in [Usage, budgets and cost](/usage).
+A session with no prompts just prints `✻ Bye!`.
 
 ## Themes
 

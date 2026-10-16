@@ -22,14 +22,10 @@ export {
 export {
   Agent,
   COMPACT_AT,
-  COMPACT_WARN_AT,
   INTERRUPTED_MARKER,
   type AgentEvent,
   type AgentHost,
   type AgentOutcome,
-  type ContextBreakdown,
-  type ContextSlice,
-  type TaskBudget,
   type PermissionAnswer,
   type PermissionRequest,
   type ToolMode,
@@ -71,6 +67,24 @@ export {
 } from './mcp/config.js';
 export { McpManager, mcpToolName, type McpServerState, type McpStatus } from './mcp/manager.js';
 export { createWebFetchTool, htmlToMarkdown } from './tools/webfetch.js';
+export {
+  createWebSearchTool,
+  parseDuckDuckGoHtml,
+  pickSearchProvider,
+  SEARCH_PROVIDER_LABELS,
+  unwrapDuckDuckGoUrl,
+  webSearch,
+  type SearchProvider,
+  type SearchResult,
+} from './tools/websearch.js';
+export {
+  bwrapArgs,
+  createSandbox,
+  sandboxRefusal,
+  seatbeltProfile,
+  writableRoots,
+  type Sandbox,
+} from './tools/sandbox.js';
 export {
   applySummary,
   elideToolOutputs,
@@ -135,15 +149,8 @@ export {
   type OutputStyle,
 } from './agent/output-styles.js';
 export {
-  usageTotals,
-  UsageTracker,
-  type DayUsage,
-  type ProviderUsage,
-  type UsageCounts,
-  type UsageRollup,
-} from './state/usage.js';
-export {
   createAgentSetup,
+  pickVideoModels,
   pickVisionModel,
   pickVisionModels,
   type AgentSetup,
@@ -159,6 +166,22 @@ export {
   sniffImageType,
 } from './files/images.js';
 export {
+  describeMedia,
+  DESCRIBER_PROMPT,
+  ffmpegInstallHint,
+  looksLikeVideoPath,
+  MAX_FRAMES,
+  MAX_VIDEO_BYTES,
+  MediaReader,
+  renderMediaNotes,
+  type DescribeRequest,
+  type DescribeResult,
+  type MediaReaderDeps,
+  type MediaTask,
+  type VideoFile,
+} from './files/media.js';
+export { inferVideo, inferVision } from './providers/media-capability.js';
+export {
   buildSystemPrompt,
   gitSection,
   parseGitStatus,
@@ -166,8 +189,9 @@ export {
   type GitInfo,
 } from './agent/system-prompt.js';
 export { TextCallParser, textProtocolInstructions, toTextProtocol } from './agent/text-protocol.js';
-export { effectiveContextWindow } from './context/budget.js';
 export { detectDanger } from './permissions/danger.js';
+export { isReadOnlyCommand } from './permissions/read-only-commands.js';
+export { ALLOW_ROOT_BYPASS_ENV, BYPASS_WARNING, bypassRefusal } from './permissions/bypass.js';
 export { PermissionEngine, suggestBashRule, type Decision } from './permissions/engine.js';
 export {
   matchBashSpecifier,
@@ -203,6 +227,7 @@ export {
   modelRefSchema,
   PERMISSION_MODES,
   resolveSettings,
+  SANDBOX_MODES,
   settingsSchema,
   THEME_NAMES,
   type EditorMode,
@@ -210,6 +235,7 @@ export {
   type HookMatcher,
   type PermissionMode,
   type ResolvedSettings,
+  type SandboxMode,
   type Settings,
   type ThemeName,
 } from './config/schema.js';
@@ -232,7 +258,11 @@ export {
   toProviderError,
   type ProviderErrorKind,
 } from './providers/errors.js';
-export { OpenAICompatibleProvider } from './providers/openai-compatible.js';
+export {
+  OpenAICompatibleProvider,
+  toWireMessages,
+  wireArguments,
+} from './providers/openai-compatible.js';
 export {
   parseDuration,
   parseRateLimitHeaders,
@@ -268,6 +298,7 @@ export {
   type ImageAttachment,
   type ImageMediaType,
   type KeyCheck,
+  type MediaNote,
   type ModelInfo,
   type ModelRef,
   type Provider,
@@ -277,6 +308,8 @@ export {
   type ToolCall,
   type ToolSpec,
   type Usage,
+  type VideoAttachment,
+  type VideoMediaType,
 } from './providers/types.js';
 export { AbortError, backoffDelay, sleep } from './router/backoff.js';
 export {
@@ -311,18 +344,7 @@ export {
 export { createRuntime, type ProbeRun, type Runtime, type RuntimeOptions } from './runtime.js';
 export { diffDisplay, diffSummary } from './tools/diff.js';
 export { displayPath, resolvePath } from './tools/paths.js';
-export {
-  addUsage,
-  costOf,
-  emptyUsage,
-  formatCost,
-  mergeModelUsage,
-  priceFor,
-  totalTokens,
-  type CostEstimate,
-  type ModelUsage,
-  type Price,
-} from './state/cost.js';
+export { addUsage, emptyUsage, totalTokens, type ModelUsage } from './state/cost.js';
 export { LoopGuard, STUCK_ADVICE, type LoopVerdict } from './agent/loop-guard.js';
 export {
   defaultWorktreeName,
@@ -337,6 +359,14 @@ export {
   type WorktreeInfo,
 } from './git/worktree.js';
 export { chatModels, freeToTry, PAID_ONLY_PROVIDERS } from './providers/chat-models.js';
+export {
+  findCatalogModel,
+  isNvidiaFreeChatModel,
+  modelSlug,
+  NVIDIA_FREE_CHAT_MODELS,
+  NVIDIA_FREE_OTHER_MODELS,
+  restrictToFreeModels,
+} from './providers/nvidia-free.js';
 export {
   PROBE_CONCURRENCY,
   PROBE_MAX_TOKENS,

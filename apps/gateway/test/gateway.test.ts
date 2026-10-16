@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMockServer, type MockServer } from '@vinax/testkit';
 import { createApp } from '../src/app.js';
 import { ConfigError, loadConfig, type GatewayConfig } from '../src/config.js';
-import { RateLimiter } from '../src/limits.js';
 import { generateToken, hashToken, parseTokenHashes } from '../src/tokens.js';
 
 const TOKEN = 'vxg_test-token-alice';
@@ -23,8 +22,6 @@ function config(over: Partial<GatewayConfig> = {}): GatewayConfig {
     port: 0,
     upstreams: {},
     tokens: new Map([[hashToken(TOKEN), 'alice']]),
-    rpm: 100,
-    rpd: 1000,
     maxBodyBytes: 100_000,
     defaultModels: [],
     upstreamTimeoutMs: 5000,
@@ -65,10 +62,8 @@ describe('config', () => {
     const c = loadConfig({
       GROQ_API_KEY: 'k',
       VINAX_TOKEN_HASHES: `a:${hashToken('t')}`,
-      RATE_LIMIT_RPM: '5',
     });
     expect(Object.keys(c.upstreams)).toEqual(['groq']);
-    expect(c.rpm).toBe(5);
     expect(() =>
       loadConfig({ GROQ_API_KEY: 'k', VINAX_TOKEN_HASHES: `a:${hashToken('t')}`, PORT: 'x' }),
     ).toThrow(/PORT/);
@@ -116,26 +111,6 @@ describe('NVIDIA upstream', () => {
     const sent = nvidia.requests.find((r) => r.path.endsWith('/chat/completions'));
     expect((sent?.body as { model: string }).model).toBe('openai/gpt-oss-20b');
     expect(sent?.headers.authorization).toBe('Bearer nvapi-server');
-  });
-});
-
-describe('rate limiter', () => {
-  it('enforces per-minute and per-day limits per token', () => {
-    let t = Date.UTC(2026, 0, 1, 12);
-    const rl = new RateLimiter(2, 3, () => t);
-    expect(rl.take('a').ok).toBe(true);
-    expect(rl.take('a').ok).toBe(true);
-    const third = rl.take('a');
-    expect(third.ok).toBe(false);
-    expect(third.ok ? 0 : third.retryAfterSec).toBe(60);
-    expect(rl.take('b').ok).toBe(true);
-    t += 61_000;
-    expect(rl.take('a').ok).toBe(true);
-    t += 61_000;
-    const daily = rl.take('a');
-    expect(daily.ok ? '' : daily.reason).toMatch(/daily/);
-    t = Date.UTC(2026, 0, 2, 0, 0, 1);
-    expect(rl.take('a').ok).toBe(true);
   });
 });
 
@@ -277,17 +252,14 @@ describe('gateway app', () => {
     expect((await app.request(chat({ messages }))).status).toBe(400);
   });
 
-  it('enforces the per-token rate limit', async () => {
+  it('never limits requests per token', async () => {
     const groq = await mock({ script: { '*': [{ text: 'a' }, { text: 'b' }] } });
     const app = createApp(
-      config({ rpm: 1, upstreams: { groq: { name: 'groq', baseUrl: groq.url, apiKey: 'a' } } }),
+      config({ upstreams: { groq: { name: 'groq', baseUrl: groq.url, apiKey: 'a' } } }),
       { log: () => undefined },
     );
     expect((await app.request(chat({ model: 'groq:m', messages }))).status).toBe(200);
-    const limited = await app.request(chat({ model: 'groq:m', messages }));
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
-    expect(await limited.text()).toContain('VinaX gateway');
+    expect((await app.request(chat({ model: 'groq:m', messages }))).status).toBe(200);
   });
 
   it('caps the request size', async () => {

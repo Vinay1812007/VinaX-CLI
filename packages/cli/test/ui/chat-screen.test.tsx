@@ -165,7 +165,6 @@ describe('ChatScreen', () => {
     expect(out).toContain('Some bold text.');
     expect(out).toContain('• one');
     expect(out).toContain('groq:main-model');
-    expect(out).toMatch(/\d+% context/);
   });
 
   it('supports multi-line input and collapses large pastes', async () => {
@@ -255,6 +254,8 @@ describe('ChatScreen', () => {
     expect(frame()).toContain('plan mode on');
     await type(KEYS.shiftTab);
     expect(frame()).toContain('⏵⏵ auto mode on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('read-only mode on');
     await type(KEYS.shiftTab);
     expect(frame()).toContain('manual mode on');
     await type('?');
@@ -634,8 +635,8 @@ describe('ChatScreen review workflow', () => {
     await waitFor(() => frame().includes('Command palette'), 'palette');
     expect(frame()).toContain('Review changes');
     expect(frame()).toContain('Ctrl+G');
-    await type('usage');
-    await waitFor(() => frame().includes('/usage'), 'filtered');
+    await type('status');
+    await waitFor(() => frame().includes('/status'), 'filtered');
     expect(frame()).not.toContain('Review changes');
     await type(KEYS.enter);
     await waitFor(() => !frame().includes('Command palette'), 'ran');
@@ -883,50 +884,16 @@ describe('ChatScreen workflow (M4)', () => {
     );
   });
 
-  it('shows /status, /usage and /doctor panels', async () => {
+  it('shows /status and /doctor panels', async () => {
     const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
     await type('hi', KEYS.enter);
     await waitFor(() => frame().includes('◆ ok'), 'answer');
     await type('/status', KEYS.enter);
     await waitFor(() => frame().includes('Status'), 'status');
     expect(frame()).toContain('model: groq:main-model');
-    await type('/usage', KEYS.enter);
-    await waitFor(() => /Groq — \d+ requests? ·/.test(frame()), 'usage');
-    // rolled up beyond this session, so a day's spend is visible after it ends
-    const usagePanel = flat(frame());
-    expect(usagePanel).toMatch(/Today: \d+ requests · \d+ in/);
-    expect(usagePanel).toContain('Last 7 days (1 day)');
-    expect(usagePanel).toContain('All time (1 day)');
+    expect(frame()).not.toContain('% context');
     await type('/doctor', KEYS.enter);
     await waitFor(() => frame().includes('✔ Node.js'), 'doctor');
-  });
-
-  it('breaks the context window down in /context', async () => {
-    const { frame, type } = await mount({ groq: { script: { 'main-model': [{ text: 'ok' }] } } });
-    await type('hi', KEYS.enter);
-    await waitFor(() => frame().includes('◆ ok'), 'answer');
-    await type('/context', KEYS.enter);
-    await waitFor(() => frame().includes('Context'), 'context panel');
-    expect(frame()).toContain('System prompt');
-    expect(frame()).toContain('Tool definitions');
-    expect(frame()).toContain('Messages');
-    expect(frame()).toContain('Free');
-    // The bars are drawn, and the auto-compaction point is stated before it is reached.
-    expect(frame()).toMatch(/[█░]/);
-    expect(frame()).toContain('Auto-compaction starts at');
-  });
-
-  it('warns that auto-compaction is approaching before it happens', async () => {
-    // The system prompt and tools alone (~3.3k tokens) have to land between the 75% warning and
-    // the 85% compaction point: 4100 puts them at ~80%, leaving room on both sides for the
-    // prompt to drift. If this starts failing, re-check that share before widening anything.
-    const { frame, type } = await mount({
-      settings: { context: { maxTokens: 4100 } },
-      groq: { script: { 'main-model': [{ text: 'ok' }] } },
-    });
-    await type('hi', KEYS.enter);
-    await waitFor(() => frame().includes('Older history is summarized automatically'), 'warning');
-    expect(frame()).toContain('/compact');
   });
 
   it('records the session for resuming and asks the app to clear', async () => {
@@ -1065,7 +1032,8 @@ describe('ChatScreen extensibility (M5)', () => {
     await type('/models', KEYS.esc, KEYS.enter);
     await waitFor(() => frame().includes('Fallback order'), 'models panel');
     expect(frame()).toContain('Current nvidia:openai/gpt-oss-20b · alias NVD_CHAT_OSS_20_B');
-    expect(frame()).toContain('NVIDIA nvidia.com — key configured · 2 models in catalog');
+    // embed-qa has no free chat endpoint, so the catalog VinaX keeps has one model
+    expect(frame()).toContain('NVIDIA nvidia.com — key configured · 1 model in catalog');
     expect(frame()).toContain('1 of 1 answered the last test');
     // results are fresh, so /models does not test again
     expect(harness.nvidia.requests.filter((r) => r.path === '/v1/chat/completions')).toHaveLength(
@@ -1081,10 +1049,10 @@ describe('ChatScreen extensibility (M5)', () => {
     const { frame, type, harness } = await mount({
       settings: { model: 'nvidia:openai/gpt-oss-20b' },
       nvidia: {
-        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'meta/llama-3.1-8b-instruct' }],
+        models: [{ id: 'openai/gpt-oss-20b' }, { id: 'google/gemma-4-31b-it' }],
         script: {
           'openai/gpt-oss-20b': [notFound, notFound, notFound],
-          'meta/llama-3.1-8b-instruct': [{ text: 'p' }, { text: 'OK' }, { text: 'OK' }],
+          'google/gemma-4-31b-it': [{ text: 'p' }, { text: 'OK' }, { text: 'OK' }],
         },
       },
     });
@@ -1099,10 +1067,10 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(words()).toContain('Saved the NVIDIA key to the credentials file.');
     expect(words()).not.toContain('could not verify');
     expect(words()).toContain(
-      'nvidia:openai/gpt-oss-20b did not answer the test (HTTP 404), so this session switches to nvidia:meta/llama-3.1-8b-instruct.',
+      'nvidia:openai/gpt-oss-20b did not answer the test (HTTP 404), so this session switches to nvidia:google/gemma-4-31b-it.',
     );
     await waitFor(
-      () => words().includes('Using nvidia:meta/llama-3.1-8b-instruct for this session'),
+      () => words().includes('Using nvidia:google/gemma-4-31b-it for this session'),
       'switched',
     );
     const tests = () =>
@@ -1121,7 +1089,7 @@ describe('ChatScreen extensibility (M5)', () => {
     expect(words()).toContain('nvidia:openai/gpt-oss-20b');
     await waitFor(() => frame().includes('Switch model?'), 'switch picker');
     // only the model that answered is offered
-    expect(frame()).toContain('meta/llama-3.1-8b-instruct');
+    expect(frame()).toContain('google/gemma-4-31b-it');
     expect(frame()).not.toMatch(/^\s*›?\s*openai\/gpt-oss-20b/m);
     await type(KEYS.esc);
   });
@@ -1346,5 +1314,74 @@ describe('ChatScreen extensibility (M5)', () => {
     const body = JSON.stringify(agentRequests(harness).at(-1)?.body);
     expect(body).toContain('this model cannot see images');
     expect(body).not.toContain('image_url');
+  });
+});
+
+describe('ChatScreen parity commands and modes', () => {
+  it('adds to, shows and reloads memory with /memory subcommands', async () => {
+    const { frame, type, read } = await mount();
+    await type('/memory add Always use pnpm', KEYS.enter);
+    await waitFor(() => frame().includes('Noted in'), 'note saved');
+    expect(await read('VINAX.md')).toContain('- Always use pnpm');
+    await type('/memory show', KEYS.enter);
+
+    await waitFor(() => flat(frame()).includes('Always use pnpm'), 'memory panel');
+    await type('/memory refresh', KEYS.enter);
+    await waitFor(() => frame().includes('Reloaded 1 memory file'), 'reloaded');
+  });
+
+  it('lists tools and adds a workspace folder', async () => {
+    const { frame, type, setup: s, harness } = await mount();
+    await type('/tools', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('WebSearch'), 'tools panel');
+    expect(frame()).toContain('WebFetch');
+    const extra = await fs.mkdtemp(path.join(path.dirname(harness.cwd), 'extra-'));
+    try {
+      await type(`/directory add ${extra}`, KEYS.enter);
+      await waitFor(() => flat(frame()).includes('Tools may now read and change files'), 'added');
+      expect(s.workspace).toContain(path.resolve(extra));
+    } finally {
+      await fs.rm(extra, { recursive: true, force: true });
+    }
+  });
+
+  it('shows the task list and background commands', async () => {
+    const { frame, type, setup: s } = await mount();
+    await type('/todos', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('No tasks yet'), 'empty todos');
+    s.todos.set([
+      { content: 'Write the parser', status: 'completed' },
+      { content: 'Test it', status: 'in_progress' },
+    ]);
+    await type('/todos', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('◐ Test it'), 'todos');
+    expect(frame()).toContain('☑ Write the parser');
+    const id = s.shell.startBackground('sleep 5');
+    await type('/bashes', KEYS.esc, KEYS.enter);
+    await waitFor(() => flat(frame()).includes(`${id} running`), 'jobs');
+    await type(`/bashes kill ${id}`, KEYS.enter);
+    await waitFor(() => frame().includes(`Stopped ${id}.`), 'killed');
+  });
+
+  it('sends a review prompt with /review', async () => {
+    const { frame, type, harness } = await mount({
+      groq: { script: { 'main-model': [{ text: 'Looks fine.' }] } },
+    });
+    await type('/review', KEYS.esc, KEYS.enter);
+    await waitFor(() => frame().includes('Looks fine.'), 'answer');
+    expect(lastChatBody(harness)?.messages.at(-1)?.content).toContain(
+      'Review my uncommitted changes',
+    );
+  });
+
+  it('keeps bypass in the Shift+Tab cycle only when the session started in it', async () => {
+    const { frame, type } = await mount({ settings: { permissions: { defaultMode: 'bypass' } } });
+    expect(frame()).toContain('bypass permissions on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('manual mode on');
+    await type(KEYS.shiftTab, KEYS.shiftTab, KEYS.shiftTab, KEYS.shiftTab);
+    expect(frame()).toContain('read-only mode on');
+    await type(KEYS.shiftTab);
+    expect(frame()).toContain('bypass permissions on');
   });
 });

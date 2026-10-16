@@ -27,7 +27,8 @@ packages/cli ─────────► packages/core ───────�
    then asks the small model for a structured summary.
 3. **Model call.** The router picks the first model in the chain whose rate-limit ledger allows the
    request. It waits briefly or skips the model, retries transient errors with jittered backoff,
-   and falls back down the chain. It never switches once output has started. Tool calls arrive
+   and falls back down the chain. A reply that breaks off mid-stream is discarded and asked for
+   again (same model, then the text tool protocol, then the next model). Tool calls arrive
    natively, or as `<vx:call>` blocks in the text protocol for models that can't call tools.
 4. **Tools.** Each call is validated with zod; errors go back to the model. `PreToolUse` hooks run
    next. Then the permission engine decides, in this order: deny rules, then the dangerous-command

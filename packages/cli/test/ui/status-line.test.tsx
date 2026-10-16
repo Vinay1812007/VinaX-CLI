@@ -7,7 +7,6 @@ const line = (width: number, extra: Partial<Parameters<typeof StatusLine>[0]> = 
     <StatusLine
       mode="default"
       model="groq:openai/gpt-oss-120b"
-      contextPct={5}
       notice={undefined}
       hint={undefined}
       width={width}
@@ -16,11 +15,12 @@ const line = (width: number, extra: Partial<Parameters<typeof StatusLine>[0]> = 
   ).lastFrame() ?? '';
 
 describe('StatusLine', () => {
-  it('shows mode, cycle hint, model and context on a wide terminal', () => {
+  it('shows mode, cycle hint and model on a wide terminal', () => {
     const out = line(100);
     expect(out.split('\n')).toHaveLength(1);
     expect(out).toContain('⏸ manual mode on (shift+tab to cycle) · ? for shortcuts');
-    expect(out).toContain('groq:openai/gpt-oss-120b · 5% context');
+    expect(out).toContain('groq:openai/gpt-oss-120b');
+    expect(out).not.toContain('context');
   });
 
   it('labels every mode like Claude Code and shows the effort', () => {
@@ -29,14 +29,14 @@ describe('StatusLine', () => {
     expect(line(100, { mode: 'auto' })).toContain('⏵⏵ auto mode on');
     const withEffort = line(100, { effort: 'high' });
     expect(withEffort.split('\n')).toHaveLength(1);
-    expect(withEffort).toContain('groq:openai/gpt-oss-120b · ● high · 5% context');
+    expect(withEffort).toContain('groq:openai/gpt-oss-120b · ● high');
   });
 
   it('stays on one line when narrow by dropping the hint, then shortening the model', () => {
-    const at70 = line(70);
-    expect(at70.split('\n')).toHaveLength(1);
-    expect(at70).not.toContain('shift+tab');
-    expect(at70).toContain('groq:openai/gpt-oss-120b');
+    const at60 = line(60);
+    expect(at60.split('\n')).toHaveLength(1);
+    expect(at60).not.toContain('shift+tab');
+    expect(at60).toContain('groq:openai/gpt-oss-120b');
     const at40 = line(40);
     expect(at40.split('\n')).toHaveLength(1);
     expect(at40).toContain('…');

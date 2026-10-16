@@ -1,6 +1,5 @@
 import type {
   AgentSetup,
-  ModelUsage,
   EditorMode,
   PermissionMode,
   Runtime,
@@ -68,12 +67,9 @@ export interface CommandContext {
   openChanges: () => void;
   /** Hands the terminal to a child process (e.g. $EDITOR). */
   suspend: (fn: () => void | Promise<void>) => Promise<void>;
-  contextPct: () => number | undefined;
   exit: () => void;
   commands: () => readonly SlashCommand[];
   sessionTitle: () => string | undefined;
-  /** Tokens per model in this session: reported by providers and estimated. */
-  sessionUsage: () => Record<string, ModelUsage>;
 }
 
 export interface SlashCommand {
@@ -81,6 +77,11 @@ export interface SlashCommand {
   aliases?: readonly string[];
   description: string;
   argumentHint?: string | undefined;
+  /**
+   * A custom command with the same name replaces this built-in (for built-ins added after users
+   * may already have written their own, such as /review).
+   */
+  overridable?: boolean;
   source: 'builtin' | 'project' | 'user' | 'plugin';
   run: (ctx: CommandContext) => void | Promise<void>;
 }

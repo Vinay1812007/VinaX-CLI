@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { looksLikeImagePath, looksLikeVideoPath } from '../files/images.js';
 import { diffDisplay, diffSummary } from './diff.js';
 import { applyEdit, applyEdits, type EditSpec } from './edit-core.js';
 import { displayPath, resolvePath } from './paths.js';
@@ -50,7 +51,7 @@ function fail(message: string): ToolOutput {
 export const readTool = defineTool({
   name: 'Read',
   description:
-    'Read a text file. Returns numbered lines ("   12\\tcode"). Reads up to 2000 lines; use offset and limit for longer files. Always Read a file before editing or overwriting it.',
+    'Read a text file. Returns numbered lines ("   12\\tcode"). Reads up to 2000 lines; use offset and limit for longer files. Always Read a file before editing or overwriting it. Images (PNG, JPEG, GIF, WebP) and screen recordings (MP4, MOV, WebM, …) are supported too: a model that can see them returns a detailed description, with all visible text transcribed, written for your current task.',
   input: z.object({
     file_path: filePath,
     offset: z.number().int().min(1).optional().describe('1-based line number to start from'),
@@ -62,6 +63,15 @@ export const readTool = defineTool({
   target: (i, ctx) => ({ path: resolvePath(i.file_path, ctx.cwd) }),
   async run(i, ctx) {
     const file = resolvePath(i.file_path, ctx.cwd);
+    if (ctx.readMedia && (looksLikeImagePath(file) || looksLikeVideoPath(file))) {
+      const stat = await fs.stat(file).catch(() => undefined);
+      if (!stat) throw new ToolError(`File not found: ${file}`);
+      if (stat.isDirectory()) throw new ToolError(`${file} is a directory. Use LS to list it.`);
+      const kind = looksLikeVideoPath(file) ? 'recording' : 'image';
+      const r = await ctx.readMedia(file, ctx.signal);
+      if (!r.ok) return fail(r.error);
+      return { ok: true, content: r.text, summary: `Described the ${kind}` };
+    }
     const text = await readText(file);
     ctx.reads.record(file, text);
     if (text === '')

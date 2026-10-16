@@ -22,10 +22,16 @@ const PER_PROVIDER: Record<
   // NVIDIA's /models is public too and it has no key-info endpoint, so a one-token completion
   // is the cheapest request that needs a valid key. Hosted models come and go (gpt-oss-20b has
   // hung for minutes at a time), so several are asked at once — plus a few from the catalog — and
-  // any answer proves the key. Its catalog carries no pricing because every hosted NIM endpoint is
-  // free to call, so mark the whole catalog free rather than "price unknown".
+  // any answer proves the key. Its catalog carries no pricing, and VinaX only lists the models
+  // with a free endpoint (nvidia-free.ts), so the whole (filtered) catalog is marked free.
   nvidia: {
-    keyCheck: { completionModels: ['openai/gpt-oss-20b', 'meta/llama-3.2-11b-vision-instruct'] },
+    keyCheck: {
+      completionModels: [
+        'nvidia/nemotron-3-super-120b-a12b',
+        'openai/gpt-oss-20b',
+        'meta/llama-3.2-11b-vision-instruct',
+      ],
+    },
     freeCatalog: true,
   },
   gemini: { keyCheck: { path: '/models' } },

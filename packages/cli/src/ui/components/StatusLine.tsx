@@ -12,6 +12,8 @@ export const MODE_LABELS: Record<PermissionMode, string> = {
   acceptEdits: '⏵⏵ accept edits on',
   plan: '⏸ plan mode on',
   auto: '⏵⏵ auto mode on',
+  readOnly: '⊘ read-only mode on',
+  bypass: '⚠ bypass permissions on',
 };
 
 /** What each mode means, for /permissions and the shortcuts help. */
@@ -20,10 +22,25 @@ export const MODE_DESCRIPTIONS: Record<PermissionMode, string> = {
   acceptEdits: 'edits inside the project are applied without asking',
   plan: 'read-only: VinaX researches and proposes a plan first',
   auto: 'edits, commands and web access inside the project run without asking; dangerous commands and outside-project access still ask; deny rules still block',
+  readOnly:
+    'read-only: VinaX may read, search and run read-only commands; every edit and other command is refused without asking',
+  bypass:
+    'DANGER: every edit, command and web request runs without asking, dangerous ones included; only deny rules still block',
 };
 
-/** Shift+Tab cycles through these. */
-export const MODE_CYCLE: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
+/** Shift+Tab cycles through these. Bypass joins only when the session started in it. */
+export const MODE_CYCLE: readonly PermissionMode[] = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'readOnly',
+];
+
+/** The Shift+Tab cycle for a session that started in `initial`. */
+export function modeCycle(initial: PermissionMode): readonly PermissionMode[] {
+  return initial === 'bypass' ? [...MODE_CYCLE, 'bypass'] : MODE_CYCLE;
+}
 
 export interface StatusNotice {
   level: 'info' | 'warning' | 'error';
@@ -33,7 +50,6 @@ export interface StatusNotice {
 interface Props {
   mode: PermissionMode;
   model: string;
-  contextPct: number | undefined;
   notice: StatusNotice | undefined;
   /** Transient hint that replaces the mode label, e.g. "Press Ctrl+C again to exit". */
   hint: string | undefined;
@@ -76,6 +92,10 @@ export function modeColor(mode: PermissionMode, theme: Theme): string | undefine
       return theme.accent;
     case 'auto':
       return theme.warning;
+    case 'readOnly':
+      return theme.accent;
+    case 'bypass':
+      return theme.error;
     case 'default':
       return theme.muted;
   }
@@ -88,7 +108,6 @@ const EFFORT_GLYPH: Record<string, string> = { low: '◔', medium: '◑', high: 
 export function StatusLine({
   mode,
   model,
-  contextPct,
   notice,
   hint,
   effort,
@@ -107,24 +126,16 @@ export function StatusLine({
       : notice?.level === 'warning'
         ? theme.warning
         : theme.muted;
-  const ctxColor =
-    contextPct === undefined || contextPct < 70
-      ? theme.muted
-      : contextPct < 85
-        ? theme.warning
-        : theme.error;
-  let ctx = contextPct === undefined ? '' : ` · ${String(contextPct)}% context`;
   let eff = effort === undefined ? '' : ` · ${EFFORT_GLYPH[effort] ?? '◑'} ${effort}`;
   const left = hint ?? MODE_LABELS[mode];
   // Fit on one line: drop the shortcuts hint, then the cycle hint, then shorten the model.
   // Widths are terminal columns (⏸ and ⏵ take two), not string lengths.
   const inner = Math.max(1, width - 2);
   let chipText = chip === undefined ? '' : `${chip.text} · `;
-  if (chip !== undefined && stringWidth(left + chipText + ctx + eff) + 10 > inner)
+  if (chip !== undefined && stringWidth(left + chipText + eff) + 10 > inner)
     chipText = `${chip.short} · `;
-  if (stringWidth(left + chipText + ctx + eff) + 10 > inner) eff = '';
-  if (stringWidth(left + chipText + ctx) + 10 > inner) ctx = '';
-  const fixed = stringWidth(left) + stringWidth(chipText) + stringWidth(ctx) + stringWidth(eff) + 2;
+  if (stringWidth(left + chipText + eff) + 10 > inner) eff = '';
+  const fixed = stringWidth(left) + stringWidth(chipText) + stringWidth(eff) + 2;
   const room = (extra: number): number => inner - fixed - extra;
   const want = Math.min(stringWidth(model), 24);
   const showCycle = hint === undefined && room(CYCLE_HINT.length) >= want;
@@ -151,7 +162,6 @@ export function StatusLine({
           {chipText === '' ? '' : ' · '}
           {modelShown}
           {eff === '' ? '' : <Text color={theme.accent}>{eff}</Text>}
-          {ctx === '' ? '' : <Text color={ctxColor}>{ctx}</Text>}
         </Text>
       </Box>
       {notice === undefined ? null : (

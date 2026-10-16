@@ -50,7 +50,6 @@ export default defineConfig({
           { text: 'Memory', link: '/memory' },
           { text: 'Sessions and context', link: '/sessions' },
           { text: 'Print mode and scripts', link: '/print-mode' },
-          { text: 'Usage, budgets and cost', link: '/usage' },
           { text: 'Isolated worktrees', link: '/worktrees' },
         ],
       },
@@ -76,6 +75,7 @@ export default defineConfig({
         items: [
           { text: 'CLI reference', link: '/cli-reference' },
           { text: 'Tools', link: '/tools' },
+          { text: 'Compared with other agents', link: '/parity' },
           { text: 'Architecture', link: '/architecture' },
           { text: 'Releasing', link: '/releasing' },
           { text: 'Security policy', link: `${REPO}/blob/main/SECURITY.md` },

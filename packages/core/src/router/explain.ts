@@ -150,10 +150,21 @@ export function explainError(err: unknown): FailureReport {
   }
   if (err instanceof StreamInterruptedError) {
     const category = categoryOf(err.cause.kind);
+    const label = providerLabel(err.ref.provider);
+    // the raw server message ("list index out of range") stays on the detail line only
+    const lines =
+      err.failures.length > 0
+        ? err.failures.map((f) => line(f.ref, categoryOf(f.kind), f.reason))
+        : [line(err.ref, category, err.cause.message)];
+    const others = new Set(err.failures.map((f) => `${f.ref.provider}:${f.ref.model}`)).size;
     return {
-      title: 'The response was cut off',
+      title: `${label} failed partway through the reply`,
       category,
-      lines: [line(err.ref, category, err.cause.message)],
+      lines,
+      reason:
+        err.failures.length === 0
+          ? `${label} stopped mid-reply with an error VinaX does not retry by itself.`
+          : `VinaX discarded the partial reply and already retried${others > 1 ? ` and switched models (${String(others)} tried)` : ''}, but no attempt finished. Nothing from the broken reply was run.`,
       actions: unique(['ask again to retry', ...actionsFor(category, err.ref.provider)], 3),
     };
   }

@@ -5,21 +5,29 @@ import {
   parseModelRef,
   type ChatMessage,
   type ImageAttachment,
+  type MediaNote,
   type ModelRef,
   type ReasoningEffort,
   type ToolCall,
   type Usage,
 } from '../providers/types.js';
-import { estimateTextTokens, estimateTokens } from '../context/tokens.js';
+import { estimateTokens } from '../context/tokens.js';
+import {
+  MEDIA_NOTES_HEADER,
+  NO_VISION_MODEL,
+  renderMediaNotes,
+  type MediaReader,
+  type MediaTask,
+  type VideoFile,
+} from '../files/media.js';
 import { AbortError } from '../router/backoff.js';
 import { explainError, type FailureReport } from '../router/explain.js';
 import type { Router, RouterEvent } from '../router/router.js';
 import type { PlanDecision } from '../tools/plan-tool.js';
 import type { UserAnswer, UserQuestion } from '../tools/question-tool.js';
-import { addUsage, emptyUsage, totalTokens, type ModelUsage } from '../state/cost.js';
+import { addUsage, emptyUsage, type ModelUsage } from '../state/cost.js';
 import { describeInvalidArgs, toolSpec } from '../tools/registry.js';
 import {
-  TIME_BUDGET_ABORT,
   type AnyTool,
   type ToolContext,
   type ToolDisplay,
@@ -104,11 +112,10 @@ export type AgentEvent =
 
 export interface AgentOutcome {
   /**
-   * `budget`: the task reached its token or time budget. `stuck`: it was going in circles
-   * (the same call failing or repeating); `error` explains and says what to do next.
+   * `stuck`: the task was going in circles (the same call failing or repeating);
+   * `error` explains and says what to do next.
    */
-  status:
-    'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked' | 'budget' | 'stuck';
+  status: 'done' | 'interrupted' | 'failed' | 'max_turns' | 'declined' | 'blocked' | 'stuck';
   /** The final assistant text of the turn. */
   text: string;
   error?: string;
@@ -119,34 +126,9 @@ export interface AgentOutcome {
   usage: Usage;
   /** Tokens VinaX estimated for responses without a usage report (or cut off mid-stream). */
   estimatedUsage: Usage;
-  /** Both, per model ref, for pricing. */
+  /** Both, per model ref. */
   usageByModel: Record<string, ModelUsage>;
   models: string[];
-}
-
-/** Per-task limits; either may be unset. */
-export interface TaskBudget {
-  tokens?: number | undefined;
-  seconds?: number | undefined;
-}
-
-/** One line of `/context`: a part of the next request, and what it costs. */
-export interface ContextSlice {
-  key: 'system' | 'memory' | 'skills' | 'tools' | 'messages';
-  label: string;
-  tokens: number;
-}
-
-export interface ContextBreakdown {
-  slices: ContextSlice[];
-  /** Fixed per-request overhead that belongs to no slice. */
-  overhead: number;
-  /** Total of the slices plus overhead; equals `requestTokens(mode)`. */
-  used: number;
-  /** `Infinity` when no context budget applies. */
-  limit: number;
-  /** Where auto-compaction kicks in, or undefined when it is switched off. */
-  compactAt: number | undefined;
 }
 
 export interface AgentDeps {
@@ -156,17 +138,17 @@ export interface AgentDeps {
   context: Omit<ToolContext, 'signal' | 'onProgress'>;
   checkpoints: CheckpointStore;
   systemPrompt: (mode: PermissionMode, toolInstructions?: string) => string;
-  /**
-   * The parts of the system prompt worth reporting separately in `/context`. They are already
-   * inside `systemPrompt`; this only says how much of it they account for.
-   */
-  promptParts?: () => { memory: string; skills: string };
   /** From the model catalog: `false` means the model has no native tool calling. */
   supportsTools?: (ref: ModelRef) => boolean | undefined;
   /** Whether a model accepts images; images are replaced by a note for models that do not. */
   supportsVision?: (ref: ModelRef) => boolean;
   /** Vision-capable models, best first, to answer turns that carry images. */
   visionModels?: () => string[];
+  /**
+   * Reads images and recordings for a working model that cannot see them: a capable model
+   * describes them with this agent's task in mind, and the description is passed on.
+   */
+  media?: MediaReader;
   /** The settings' main model, used when no model was chosen for the session. */
   defaultModel?: () => string;
   /** Model calls allowed per user turn. */
@@ -186,18 +168,12 @@ export interface AgentDeps {
   nested?: boolean;
   /** Open items of the task list, carried verbatim through compaction. */
   activeTasks?: () => string | undefined;
-  /** Token and time limits for each task (read when a task starts). */
-  budget?: () => TaskBudget;
-  /** A model's context window, when its catalog says (for warnings before a request). */
-  contextWindow?: (ref: ModelRef) => number | undefined;
 }
 
 /** What one task has used and how it is going, shared by its steps. */
 class TaskState {
   readonly byModel: Record<string, ModelUsage> = {};
   readonly guard = new LoopGuard();
-  /** Set when a budget ran out: why, for the user. */
-  budgetHit: string | undefined;
   /** Set when the task is going in circles: why, for the user. */
   stuck: string | undefined;
 
@@ -222,22 +198,6 @@ class TaskState {
     }
     return { measured, estimated };
   }
-
-  total(): number {
-    const t = this.totals();
-    return totalTokens(t.measured) + totalTokens(t.estimated);
-  }
-
-  /** Why work is being stopped, for "Not run: …" notes. */
-  why(): string {
-    return this.budgetHit === undefined
-      ? 'the user interrupted'
-      : 'the task reached its time budget';
-  }
-}
-
-function kTokens(n: number): string {
-  return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
 }
 
 /** How many times a Stop hook may send the model back to work in one turn. */
@@ -245,12 +205,6 @@ const MAX_STOP_HOOK_RETRIES = 3;
 
 /** Auto-compaction starts when the request reaches this share of the context budget. */
 export const COMPACT_AT = 0.85;
-
-/**
- * Where the UI warns that auto-compaction is coming. Far enough below {@link COMPACT_AT} to leave
- * room to act, close enough that it is not crying wolf.
- */
-export const COMPACT_WARN_AT = 0.75;
 
 interface Prepared {
   call: ToolCall;
@@ -272,6 +226,8 @@ interface RunOptions {
   fallbacks?: readonly string[];
   /** Images attached to the prompt (pasted, dragged in or `@image.png`). */
   images?: readonly ImageAttachment[];
+  /** Screen recordings and other videos named in the prompt (always described, never sent). */
+  videos?: readonly VideoFile[];
 }
 
 type StepOptions = RunOptions & { task: TaskState };
@@ -362,42 +318,6 @@ export class Agent {
       [{ role: 'system', content: this.deps.systemPrompt(mode) }, ...this.messages],
       specs,
     );
-  }
-
-  /**
-   * Where the next request's tokens go, for `/context`. The slices add up to
-   * {@link requestTokens}, so the panel and the status-line percentage never disagree.
-   */
-  contextBreakdown(mode: PermissionMode): ContextBreakdown {
-    const active = this.deps.tools.filter((t) =>
-      mode === 'plan' ? t.readOnly : t.name !== 'ExitPlanMode',
-    );
-    const specs = active.map(toolSpec);
-    const prompt = this.deps.systemPrompt(mode);
-    const parts = this.deps.promptParts?.() ?? { memory: '', skills: '' };
-    // estimateTokens seeds every total with the same 3-token request overhead, so subtracting it
-    // leaves just the contribution of the messages or tools that were passed in.
-    const BASE = estimateTokens([]);
-    const systemAll = estimateTokens([{ role: 'system', content: prompt }]) - BASE;
-    const memory = estimateTextTokens(parts.memory);
-    const skills = estimateTextTokens(parts.skills);
-    const tools = estimateTokens([], specs) - BASE;
-    const messages = estimateTokens(this.messages) - BASE;
-    const limit = this.deps.contextLimit?.() ?? Number.POSITIVE_INFINITY;
-    return {
-      slices: [
-        // Memory and skills are carved out of the prompt, so the remainder is the fixed scaffold.
-        { key: 'system', label: 'System prompt', tokens: Math.max(0, systemAll - memory - skills) },
-        { key: 'memory', label: 'Project memory', tokens: memory },
-        { key: 'skills', label: 'Skills', tokens: skills },
-        { key: 'tools', label: `Tool definitions (${String(specs.length)})`, tokens: tools },
-        { key: 'messages', label: `Messages (${String(this.messages.length)})`, tokens: messages },
-      ],
-      overhead: BASE,
-      used: this.requestTokens(mode),
-      limit,
-      compactAt: this.deps.contextLimit === undefined ? undefined : limit * COMPACT_AT,
-    };
   }
 
   /**
@@ -551,22 +471,14 @@ export class Agent {
       if (r.context.length > 0)
         content = `${prompt}\n\n<hook-context>\n${r.context.join('\n')}\n</hook-context>`;
     }
-    // The task runs on its own signal: the user's interrupt and the time budget both stop it.
-    const budget = this.deps.budget?.() ?? {};
+    // The task runs on its own signal, which the user's interrupt stops.
     const inner = new AbortController();
     const relay = (): void => {
       inner.abort();
     };
     if (runOpts.signal.aborted) inner.abort();
     else runOpts.signal.addEventListener('abort', relay, { once: true });
-    const timer =
-      budget.seconds === undefined
-        ? undefined
-        : setTimeout(() => {
-            task.budgetHit = `Stopped at the time budget: this task ran for ${String(budget.seconds)}s. What VinaX did so far is kept. Send a message to continue, or raise the limit with --time-budget or "budget.seconds" in settings.`;
-            inner.abort(TIME_BUDGET_ABORT);
-          }, budget.seconds * 1000);
-    let opts: StepOptions = { ...runOpts, signal: inner.signal, task };
+    const opts: StepOptions = { ...runOpts, signal: inner.signal, task };
 
     const turn = ++this.turnCounter;
     this.taskStart = this.messages.length;
@@ -576,30 +488,15 @@ export class Agent {
       this.deps.recorder?.record({ type: 'turn', ...mark });
       this.deps.checkpoints.beginTurn(turn);
     }
-    this.push(
-      opts.images && opts.images.length > 0
-        ? { role: 'user', content, images: [...opts.images] }
-        : { role: 'user', content },
-    );
-    const visionModel = this.visionModelFor(opts);
-    if (visionModel !== undefined)
-      opts = { ...opts, model: visionModel.ref, fallbacks: visionModel.fallbacks };
-    if (visionModel?.notice !== undefined)
-      opts.onEvent({ type: 'notice', level: 'info', text: visionModel.notice });
+    this.currentPrompt = prompt;
+    const mediaNotes = await this.readAttachments(opts);
+    this.push({
+      role: 'user',
+      content,
+      ...(opts.images && opts.images.length > 0 ? { images: [...opts.images] } : {}),
+      ...(mediaNotes.length > 0 ? { mediaNotes } : {}),
+    });
     let stopRetries = 0;
-    const overBudget = (next: number): string | undefined => {
-      if (budget.tokens === undefined) return undefined;
-      const used = task.total();
-      if (used + next <= budget.tokens) return undefined;
-      const { measured, estimated } = task.totals();
-      const split = `${kTokens(totalTokens(measured))} measured, ${kTokens(totalTokens(estimated))} estimated`;
-      const what =
-        used >= budget.tokens
-          ? `this task used ~${kTokens(used)} tokens (${split}) of its ${kTokens(budget.tokens)} budget`
-          : `the next request (~${kTokens(next)} tokens) would take this task (~${kTokens(used)} so far: ${split}) past its ${kTokens(budget.tokens)} budget`;
-      return `Stopped at the token budget: ${what}. What VinaX did so far is kept. Send a message to continue (each task gets a fresh budget), or raise it with --token-budget or "budget.tokens" in settings.`;
-    };
-
     const removeRules = this.deps.permissions.addTemporaryRules(opts.allowRules ?? []);
     try {
       for (;;) {
@@ -615,10 +512,7 @@ export class Agent {
               onEvent: opts.onEvent,
             });
           } catch (err) {
-            if (opts.signal.aborted)
-              return task.budgetHit === undefined
-                ? outcome('interrupted')
-                : outcome('budget', task.budgetHit);
+            if (opts.signal.aborted) return outcome('interrupted');
             opts.onEvent({
               type: 'notice',
               level: 'warning',
@@ -626,12 +520,9 @@ export class Agent {
             });
           }
         }
-        const tooMuch = overBudget(this.requestTokens(opts.host.mode()));
-        if (tooMuch !== undefined) return outcome('budget', tooMuch);
         steps++;
         const step = await this.step(turn, steps, opts, models);
         lastText = step.text;
-        if (task.budgetHit !== undefined) return outcome('budget', task.budgetHit);
         if (step.status === 'stuck') return outcome('stuck', step.error);
         if (
           step.status === 'done' &&
@@ -660,55 +551,147 @@ export class Agent {
           }
         }
         if (step.status !== 'continue') return outcome(step.status, step.error, step.report);
-        const used = overBudget(0);
-        if (used !== undefined) return outcome('budget', used);
       }
     } finally {
       removeRules();
-      if (timer !== undefined) clearTimeout(timer);
       runOpts.signal.removeEventListener('abort', relay);
     }
   }
 
-  /** The conversation as `ref` can take it: images become a short note for text-only models. */
+  /**
+   * The conversation as `ref` can take it. Vision models get the images themselves; text-only
+   * models get what a vision model described (or, failing that, a short note). Descriptions of
+   * recordings go to every model.
+   */
   private forModel(ref: ModelRef): ChatMessage[] {
     const sees = this.deps.supportsVision?.(ref) ?? false;
-    if (sees) return this.messages;
     return this.messages.map((m) => {
-      if (m.role !== 'user' || m.images === undefined || m.images.length === 0) return m;
-      const names = m.images.map((i, n) => i.name ?? `image ${String(n + 1)}`).join(', ');
+      if (m.role !== 'user') return m;
+      const images = m.images ?? [];
+      const notes = m.mediaNotes ?? [];
+      if (notes.length === 0 && (sees || images.length === 0)) return m;
+      const shown = sees ? notes.filter((n) => n.kind !== 'image') : notes;
+      const parts = [m.content];
+      if (!sees && images.length > 0 && !notes.some((n) => n.kind === 'image')) {
+        const names = images.map((i, n) => i.name ?? `image ${String(n + 1)}`).join(', ');
+        parts.push(
+          `[${String(images.length)} image(s) were attached (${names}), but this model cannot see images.]`,
+        );
+      }
+      if (shown.length > 0) parts.push(`${MEDIA_NOTES_HEADER}\n\n${renderMediaNotes(shown)}`);
       return {
         role: 'user',
-        content: `${m.content}\n\n[${String(m.images.length)} image(s) were attached (${names}), but this model cannot see images.]`,
+        content: parts.join('\n\n'),
+        ...(sees && images.length > 0 ? { images } : {}),
       };
     });
   }
 
-  /**
-   * When the prompt carries images and the model in use cannot see them, the turn goes to a
-   * vision-capable model instead (and says so).
-   */
-  private visionModelFor(
-    opts: RunOptions,
-  ): { ref: string; fallbacks: string[]; notice?: string } | undefined {
-    if (opts.images === undefined || opts.images.length === 0) return undefined;
-    const current = opts.model ?? this.model ?? this.deps.defaultModel?.();
-    if (current !== undefined && (this.deps.supportsVision?.(parseModelRef(current)) ?? false))
-      return undefined;
-    const [vision, ...others] = this.deps.visionModels?.() ?? [];
-    if (vision === undefined) {
-      opts.onEvent({
-        type: 'notice',
-        level: 'warning',
-        text: 'No vision-capable model is available, so the model only sees the image file names. Set `visionModel` in settings, or add a key for a provider with vision models.',
-      });
-      return undefined;
+  /** The prompt of the task in progress, for models that read media on the agent's behalf. */
+  private currentPrompt = '';
+
+  /** The last few turns, briefly, so a model reading media knows what the agent is doing. */
+  private recap(): string {
+    const lines: string[] = [];
+    for (const m of this.messages.slice(-8)) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const text = m.content
+        .replace(
+          /<conversation-summary>[\s\S]*?<\/conversation-summary>/g,
+          '[earlier conversation]',
+        )
+        .replace(/\s+/g, ' ')
+        .trim();
+      const calls =
+        m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0
+          ? ` (used ${m.toolCalls.map((c) => c.name).join(', ')})`
+          : '';
+      if (text === '' && calls === '') continue;
+      const short = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+      lines.push(`${m.role === 'user' ? 'User' : 'Agent'}: ${short}${calls}`);
     }
+    return lines.join('\n');
+  }
+
+  private mediaTask(goal?: string): MediaTask {
     return {
-      ref: vision,
-      fallbacks: others,
-      notice: `Using ${vision} to look at the image${opts.images.length === 1 ? '' : 's'}${current === undefined ? '' : ` (${current} cannot see images)`}.`,
+      prompt: this.currentPrompt,
+      recap: this.recap(),
+      ...(goal === undefined ? {} : { goal }),
     };
+  }
+
+  /**
+   * Has a capable model read what the prompt carries that the working model cannot: images
+   * when it cannot see, recordings always. The working model stays in charge of the turn.
+   */
+  private async readAttachments(opts: StepOptions): Promise<MediaNote[]> {
+    const images = opts.images ?? [];
+    const videos = opts.videos ?? [];
+    if (images.length === 0 && videos.length === 0) return [];
+    const notice = (level: 'info' | 'warning', text: string): void => {
+      opts.onEvent({ type: 'notice', level, text });
+    };
+    const selected = opts.model ?? this.model ?? this.deps.defaultModel?.();
+    let current: string | undefined;
+    try {
+      current = selected === undefined ? undefined : formatModelRef(parseModelRef(selected));
+    } catch {
+      current = undefined;
+    }
+    const sees =
+      current !== undefined && (this.deps.supportsVision?.(parseModelRef(current)) ?? false);
+    const media = this.deps.media;
+    const notes: MediaNote[] = [];
+    if (images.length > 0 && !sees) {
+      if (media === undefined) notice('warning', NO_VISION_MODEL);
+      else {
+        const r = await media.describeImages(images, {
+          task: this.mediaTask(),
+          signal: opts.signal,
+          label: images.map((_, i) => `[Image #${String(i + 1)}]`).join(', '),
+          reason: current === undefined ? '' : ` (${current} can't see images)`,
+          onNotice: notice,
+        });
+        if (r.ok) notes.push(r.note);
+        else notice('warning', r.error);
+      }
+    }
+    for (const [i, video] of videos.entries()) {
+      if (isAborted(opts.signal)) break;
+      const label = `[Video #${String(i + 1)}] ${video.name}`;
+      if (media === undefined) {
+        notice('warning', `Can't read ${label}: no model here can watch recordings.`);
+        continue;
+      }
+      const r = await media.describeVideo(video, {
+        task: this.mediaTask(),
+        signal: opts.signal,
+        label,
+        onNotice: notice,
+      });
+      if (r.ok) notes.push(r.note);
+      else notice('warning', r.error);
+    }
+    return notes;
+  }
+
+  /** For the Read tool: a description of an image or recording, with the task in mind. */
+  private async readMediaFile(
+    file: string,
+    signal: AbortSignal,
+    onEvent: RunOptions['onEvent'],
+  ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const media = this.deps.media;
+    if (media === undefined) return { ok: false, error: 'No model here can read images.' };
+    const r = await media.describeFile(file, {
+      task: this.mediaTask(`it opened ${file} with Read; describe it with the task in mind.`),
+      signal,
+      onNotice: (level, text) => {
+        onEvent({ type: 'notice', level, text });
+      },
+    });
+    return r.ok ? { ok: true, text: renderMediaNotes([r.note]) } : { ok: false, error: r.error };
   }
 
   private async step(
@@ -780,8 +763,14 @@ export class Agent {
         ...(mode === 'plan' ? { purpose: 'plan' as const } : {}),
         ...(this.effort === undefined ? {} : { reasoningEffort: this.effort }),
         prepare,
-        onToolFormatError: (ref) =>
-          this.useTextProtocol(ref, onEvent, 'sent a tool call the provider rejected'),
+        onToolFormatError: (ref, why) =>
+          this.useTextProtocol(
+            ref,
+            onEvent,
+            why === 'interrupted'
+              ? 'broke off mid-reply twice'
+              : 'sent a tool call the provider rejected',
+          ),
         ...((opts.model ?? this.modelSelection) === undefined
           ? {}
           : { model: opts.model ?? this.modelSelection }),
@@ -799,10 +788,17 @@ export class Agent {
             outputChars = 0;
             models.add(attempt);
             onEvent(ev);
-            this.noteCapabilities(ev.ref, promptEstimate, onEvent);
+            this.noteCapabilities(ev.ref, onEvent);
             break;
           case 'reasoning':
             outputChars += ev.text.length;
+            onEvent(ev);
+            break;
+          case 'restart':
+            // the reply broke off and is asked for again: what it said so far does not count
+            // (the next `attempt` resets the parser and tool calls; nothing has run yet)
+            estimateAttempt();
+            text = '';
             onEvent(ev);
             break;
           case 'text':
@@ -843,10 +839,7 @@ export class Agent {
       // a reply cut off mid-stream still cost tokens
       estimateAttempt();
       if (err instanceof AbortError) {
-        const marker =
-          task.budgetHit === undefined
-            ? INTERRUPTED_MARKER
-            : '[stopped: the task reached its time budget]';
+        const marker = INTERRUPTED_MARKER;
         this.push({
           role: 'assistant',
           content: text === '' ? marker : `${text}\n\n${marker}`,
@@ -914,8 +907,8 @@ export class Agent {
 
   private readonly noted = new Set<string>();
 
-  /** Says once per model when what it can do limits this session (tools, context size). */
-  private noteCapabilities(ref: ModelRef, requestTokens: number, onEvent: RunOptions['onEvent']) {
+  /** Says once per model when what it can do limits this session (tools). */
+  private noteCapabilities(ref: ModelRef, onEvent: RunOptions['onEvent']) {
     const key = formatModelRef(ref);
     if (
       this.deps.supportsTools?.(ref) === false &&
@@ -927,15 +920,6 @@ export class Agent {
         type: 'notice',
         level: 'info',
         text: `${key} has no native tool calling, so VinaX drives its tools through a text protocol (it works, but expect more formatting slips).`,
-      });
-    }
-    const window = this.deps.contextWindow?.(ref);
-    if (window !== undefined && requestTokens > window && !this.noted.has(`${key}:ctx`)) {
-      this.noted.add(`${key}:ctx`);
-      onEvent({
-        type: 'notice',
-        level: 'warning',
-        text: `${key} accepts about ${kTokens(window)} tokens, but this request is ~${kTokens(requestTokens)}, so it may be rejected. Run /compact, or choose a model with a larger context with /model.`,
       });
     }
   }
@@ -1057,7 +1041,12 @@ export class Agent {
         });
         if (interrupted || signal.aborted) {
           interrupted = true;
-          finish(p.call.id, p.call.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+          finish(
+            p.call.id,
+            p.call.name,
+            fail('Not run: the user interrupted.', 'Interrupted'),
+            false,
+          );
           continue;
         }
         if (declined !== undefined) {
@@ -1148,7 +1137,12 @@ export class Agent {
           }
           if (isAborted(signal)) {
             interrupted = true;
-            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+            finish(
+              p.call.id,
+              tool.name,
+              fail('Not run: the user interrupted.', 'Interrupted'),
+              false,
+            );
             continue;
           }
           if (answer.kind === 'unavailable') {
@@ -1193,10 +1187,11 @@ export class Agent {
           signal,
           host,
           ...(host.approvePlan ? { approvePlan: host.approvePlan } : {}),
+          readMedia: (file, sig) => this.readMediaFile(file, sig, onEvent),
           onProgress: (chunk) => {
             onEvent({ type: 'tool_progress', id: p.call.id, chunk });
           },
-          // a sub-agent's tokens count towards this task (and its budget)
+          // a sub-agent's tokens count towards this task
           addUsage: (byModel) => {
             for (const [ref, u] of Object.entries(byModel)) {
               task.measured(ref, u.measured);
@@ -1209,7 +1204,12 @@ export class Agent {
           await this.deps.checkpoints.capture(affected);
           // Input can change the mode or cancel the turn while approval/checkpointing waits.
           if (signal.aborted) {
-            finish(p.call.id, tool.name, fail(`Not run: ${task.why()}.`, 'Interrupted'), false);
+            finish(
+              p.call.id,
+              tool.name,
+              fail('Not run: the user interrupted.', 'Interrupted'),
+              false,
+            );
             return;
           }
           if (host.mode() === 'plan' && !tool.readOnly && tool.kind !== 'meta') {

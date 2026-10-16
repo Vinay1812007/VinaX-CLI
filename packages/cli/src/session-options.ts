@@ -1,4 +1,4 @@
-import type { PermissionMode, Settings } from '@vinax/core';
+import type { PermissionMode, SandboxMode, Settings } from '@vinax/core';
 
 /** Command-line options shared by interactive and print mode. */
 export interface SessionOptions {
@@ -6,13 +6,12 @@ export interface SessionOptions {
   model: string | undefined;
   verbose: boolean;
   permissionMode: PermissionMode | undefined;
+  /** `--sandbox`: how Bash commands are confined. */
+  sandbox?: SandboxMode | undefined;
   allowedTools: string[];
   disallowedTools: string[];
   addDirs: string[];
   maxTurns: number | undefined;
-  /** Per-task limits (`--token-budget`, `--time-budget` seconds). */
-  tokenBudget?: number | undefined;
-  timeBudget?: number | undefined;
   /** `-c`: continue the most recent session in this folder. */
   continueLast: boolean;
   /** `-r`: `true` shows a picker; a string resumes that session id. */
@@ -31,14 +30,10 @@ export function cliSettings(o: SessionOptions): Settings | undefined {
     ...(o.addDirs.length === 0 ? {} : { additionalDirectories: o.addDirs }),
     ...(o.permissionMode === undefined ? {} : { defaultMode: o.permissionMode }),
   };
-  const budget = {
-    ...(o.tokenBudget === undefined ? {} : { tokens: o.tokenBudget }),
-    ...(o.timeBudget === undefined ? {} : { seconds: o.timeBudget }),
-  };
   const settings: Settings = {
     ...(o.model === undefined ? {} : { model: o.model }),
+    ...(o.sandbox === undefined ? {} : { sandbox: o.sandbox }),
     ...(Object.keys(permissions).length === 0 ? {} : { permissions }),
-    ...(Object.keys(budget).length === 0 ? {} : { budget }),
   };
   return Object.keys(settings).length === 0 ? undefined : settings;
 }

@@ -35,6 +35,20 @@ export function looksLikeImagePath(p: string): boolean {
   return IMAGE_EXT.test(p);
 }
 
+/** Screen recordings and other videos: described by a capable model, never sent as-is. */
+export const VIDEO_EXT = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
+
+/** A screen recording or other video named in a prompt. */
+export interface VideoFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export function looksLikeVideoPath(p: string): boolean {
+  return VIDEO_EXT.test(p);
+}
+
 /** Shrinks a large image with macOS `sips`; returns the new file, or `undefined`. */
 async function shrinkWithSips(file: string): Promise<string | undefined> {
   if (process.platform !== 'darwin') return undefined;
@@ -77,14 +91,19 @@ export async function loadImage(file: string): Promise<ImageAttachment> {
  * into the terminal (which escapes spaces as `\ `). Returns each match with its span.
  */
 export function findImagePaths(text: string): { start: number; end: number; path: string }[] {
+  return findMediaPaths(text).filter((f) => !looksLikeVideoPath(f.path));
+}
+
+/** Image and video (screen recording) paths in a prompt, found like {@link findImagePaths}. */
+export function findMediaPaths(text: string): { start: number; end: number; path: string }[] {
   const found: { start: number; end: number; path: string }[] = [];
   const patterns = [
     // "quoted path.png" or 'quoted path.png'
-    /(["'])((?:[~/.]|[A-Za-z]:\\)[^"'\n]*?\.(?:png|jpe?g|gif|webp))\1/gi,
+    /(["'])((?:[~/.]|[A-Za-z]:\\)[^"'\n]*?\.(?:png|jpe?g|gif|webp|mp4|mov|m4v|webm|mkv|avi))\1/gi,
     // @path, ~/path, /abs/path or ./rel/path with optional backslash-escaped spaces
-    /(^|\s)@?((?:~\/|\/|\.{1,2}\/|[A-Za-z]:\\)(?:\\ |[^\s"'])+?\.(?:png|jpe?g|gif|webp))(?=$|[\s,.;:!?)])/gi,
+    /(^|\s)@?((?:~\/|\/|\.{1,2}\/|[A-Za-z]:\\)(?:\\ |[^\s"'])+?\.(?:png|jpe?g|gif|webp|mp4|mov|m4v|webm|mkv|avi))(?=$|[\s,.;:!?)])/gi,
     // @relative/name.png
-    /(^|\s)@((?:\\ |[^\s"'@])+?\.(?:png|jpe?g|gif|webp))(?=$|[\s,.;:!?)])/gi,
+    /(^|\s)@((?:\\ |[^\s"'@])+?\.(?:png|jpe?g|gif|webp|mp4|mov|m4v|webm|mkv|avi))(?=$|[\s,.;:!?)])/gi,
   ];
   for (const re of patterns) {
     for (const m of text.matchAll(re)) {
@@ -105,19 +124,21 @@ export function resolveImagePath(p: string, cwd: string): string {
 }
 
 /**
- * Replaces image paths in `text` with `[Image #n]` and loads them. Paths that do not exist or
- * are not images are left alone; unreadable images are reported in `errors`.
+ * Replaces image paths in `text` with `[Image #n]` and loads them, and screen recordings (and
+ * other videos) with `[Video #n]`. Paths that do not exist or are not images are left alone;
+ * unreadable images are reported in `errors`.
  */
 export async function extractImages(
   text: string,
   cwd: string,
   first = 1,
-): Promise<{ text: string; images: ImageAttachment[]; errors: string[] }> {
+): Promise<{ text: string; images: ImageAttachment[]; videos: VideoFile[]; errors: string[] }> {
   const images: ImageAttachment[] = [];
+  const videos: VideoFile[] = [];
   const errors: string[] = [];
   let out = '';
   let pos = 0;
-  for (const hit of findImagePaths(text)) {
+  for (const hit of findMediaPaths(text)) {
     const file = resolveImagePath(hit.path, cwd);
     try {
       await fs.access(file);
@@ -126,26 +147,37 @@ export async function extractImages(
       if (code === 'EPERM' || code === 'EACCES') {
         errors.push(
           `Can't read ${path.basename(file)}: the system blocks access to that folder. ${
-            process.platform === 'darwin'
-              ? 'Copy the screenshot to the clipboard (Ctrl+Shift+Cmd+4) and press Ctrl+V, or save it to your Desktop first.'
-              : 'Save it somewhere readable, or copy it and press Ctrl+V.'
+            looksLikeVideoPath(file)
+              ? 'Move the recording somewhere readable, such as your Desktop or the project folder.'
+              : process.platform === 'darwin'
+                ? 'Copy the screenshot to the clipboard (Ctrl+Shift+Cmd+4) and press Ctrl+V, or save it to your Desktop first.'
+                : 'Save it somewhere readable, or copy it and press Ctrl+V.'
           }`,
         );
       }
       continue;
     }
-    try {
-      images.push(await loadImage(file));
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-      continue;
+    let chip: string;
+    if (looksLikeVideoPath(file)) {
+      const stat = await fs.stat(file).catch(() => undefined);
+      if (!stat?.isFile()) continue;
+      videos.push({ path: file, name: path.basename(file), size: stat.size });
+      chip = `[Video #${String(videos.length)}]`;
+    } else {
+      try {
+        images.push(await loadImage(file));
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : String(err));
+        continue;
+      }
+      chip = `[Image #${String(first + images.length - 1)}]`;
     }
     const lead = /^\s/.test(text.slice(hit.start, hit.start + 1)) ? text[hit.start] : '';
-    out += `${text.slice(pos, hit.start)}${lead ?? ''}[Image #${String(first + images.length - 1)}]`;
+    out += `${text.slice(pos, hit.start)}${lead ?? ''}${chip}`;
     pos = hit.end;
   }
   out += text.slice(pos);
-  return { text: out, images, errors };
+  return { text: out, images, videos, errors };
 }
 
 /**

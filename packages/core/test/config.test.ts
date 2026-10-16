@@ -39,10 +39,10 @@ const write = (file: string, data: unknown): Promise<void> =>
 describe('parseSettings', () => {
   it('turns unknown keys into warnings and keeps the rest', () => {
     const { settings, warnings } = parseSettings(
-      { model: 'groq:a', providers: { groq: { rpm: 5, colour: 'red' } }, bogus: 1 },
+      { model: 'groq:a', providers: { groq: { enabled: true, colour: 'red' } }, bogus: 1 },
       'test.json',
     );
-    expect(settings).toEqual({ model: 'groq:a', providers: { groq: { rpm: 5 } } });
+    expect(settings).toEqual({ model: 'groq:a', providers: { groq: { enabled: true } } });
     expect(warnings).toEqual([
       'Unknown setting "bogus" in test.json (ignored)',
       'Unknown setting "providers.groq.colour" in test.json (ignored)',
@@ -67,13 +67,16 @@ describe('mergeSettings', () => {
     const merged = mergeSettings([
       { model: 'groq:a', permissions: { allow: ['Read'], deny: ['Bash(rm *)'] } },
       { model: 'groq:b', permissions: { allow: ['Read', 'Edit(src/**)'] } },
-      { fallbackChain: ['openrouter:c'], providers: { groq: { rpm: 10 } } },
+      {
+        fallbackChain: ['openrouter:c'],
+        providers: { groq: { baseUrl: 'https://groq.example/v1' } },
+      },
       { providers: { groq: { enabled: false } } },
     ]);
     expect(merged).toEqual({
       model: 'groq:b',
       fallbackChain: ['openrouter:c'],
-      providers: { groq: { rpm: 10, enabled: false } },
+      providers: { groq: { baseUrl: 'https://groq.example/v1', enabled: false } },
       permissions: { allow: ['Read', 'Edit(src/**)'], deny: ['Bash(rm *)'] },
     });
   });

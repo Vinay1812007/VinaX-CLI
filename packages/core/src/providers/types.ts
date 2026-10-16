@@ -20,9 +20,39 @@ export interface ImageAttachment {
   name?: string;
 }
 
+export type VideoMediaType = 'video/mp4' | 'video/quicktime' | 'video/webm';
+
+/**
+ * A video sent inline (base64, no data: prefix). Only ever put on a one-off request to a model
+ * marked `video: true`; never kept in the conversation.
+ */
+export interface VideoAttachment {
+  mediaType: VideoMediaType;
+  data: string;
+  name?: string;
+}
+
+/**
+ * What a model that can see described about attached media, for models that cannot see it.
+ * `by` is the `provider:model` that wrote it.
+ */
+export interface MediaNote {
+  kind: 'image' | 'video';
+  names: string[];
+  by?: string;
+  text: string;
+}
+
 export type ChatMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string; images?: ImageAttachment[] }
+  | {
+      role: 'user';
+      content: string;
+      images?: ImageAttachment[];
+      /** Descriptions of the attached images and recordings, for models that cannot see them. */
+      mediaNotes?: MediaNote[];
+      videos?: VideoAttachment[];
+    }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | { role: 'tool'; toolCallId: string; name: string; content: string };
 
@@ -65,6 +95,8 @@ export interface ModelInfo {
   free: boolean;
   /** Accepts images, when the catalog says so (OpenRouter's `input_modalities`). */
   vision?: boolean;
+  /** Understands video (screen recordings); sent inline as `video_url`. */
+  video?: boolean;
   /** US dollars per token, only when the provider's catalog publishes a fixed price. */
   pricing?: { prompt: number; completion: number };
 }
