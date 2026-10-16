@@ -8,6 +8,7 @@ import type { Logger } from '../log/logger.js';
 import { chatModels } from './chat-models.js';
 import { ProviderError, providerLabel, toProviderError } from './errors.js';
 import { GATEWAY_WAKING, GatewayUnavailableError, type GatewayClient } from './gateway.js';
+import { findCatalogModel, restrictToFreeModels } from './nvidia-free.js';
 import type { RateLimitLedger } from './ratelimit.js';
 import {
   KEY_CHECK_TIMEOUT_MS,
@@ -81,22 +82,60 @@ const catalogEntrySchema = z.looseObject({
 });
 const catalogSchema = z.looseObject({ data: z.array(z.unknown()) });
 
+/**
+ * Tool-call arguments as a JSON object text: an empty or broken one becomes `{}`. vLLM-based
+ * servers (NVIDIA NIM) re-parse the history's arguments, and malformed history is a suspected
+ * trigger of gpt-oss's mid-reply "list index out of range".
+ */
+export function wireArguments(args: string): string {
+  if (args.trim() === '') return '{}';
+  try {
+    const parsed: unknown = JSON.parse(args);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? args : '{}';
+  } catch {
+    return '{}';
+  }
+}
+
+/**
+ * The conversation as sent: an assistant message with neither text nor tool calls (a reply that
+ * only reasoned) is left out, since strict chat templates break on empty turns.
+ */
+export function toWireMessages(messages: readonly ChatMessage[]): ChatCompletionMessageParam[] {
+  return messages
+    .filter(
+      (m) =>
+        m.role !== 'assistant' ||
+        m.content.trim() !== '' ||
+        (m.toolCalls !== undefined && m.toolCalls.length > 0),
+    )
+    .map(toWire);
+}
+
 function toWire(m: ChatMessage): ChatCompletionMessageParam {
   switch (m.role) {
     case 'assistant':
       return m.toolCalls && m.toolCalls.length > 0
         ? {
             role: 'assistant',
-            content: m.content === '' ? null : m.content,
+            // null is what the OpenAI spec and vLLM's gpt-oss (harmony) path expect alongside
+            // tool calls; text, when there is some, is kept
+            content: m.content.trim() === '' ? null : m.content,
             tool_calls: m.toolCalls.map((c) => ({
               id: c.id,
               type: 'function' as const,
-              function: { name: c.name, arguments: c.arguments },
+              function: { name: c.name, arguments: wireArguments(c.arguments) },
             })),
           }
         : { role: 'assistant', content: m.content };
     case 'tool':
-      return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+      // `name` is not in the OpenAI types, but vLLM's gpt-oss path reads it to address the result
+      return {
+        role: 'tool',
+        tool_call_id: m.toolCallId,
+        content: m.content,
+        name: m.name,
+      } as ChatCompletionMessageParam;
     case 'user':
       return (m.images && m.images.length > 0) || (m.videos && m.videos.length > 0)
         ? {
@@ -229,11 +268,14 @@ export class OpenAICompatibleProvider implements Provider {
     const models = parsed.data
       .map((m) => toModelInfo(m, free))
       .filter((m): m is ModelInfo => m !== undefined);
-    if (!this.opts.gateway) return models;
+    if (!this.opts.gateway) return restrictToFreeModels(this.name, models);
     const prefix = `${this.name}:`;
-    return models
-      .filter((m) => m.id.startsWith(prefix))
-      .map((m) => ({ ...m, id: m.id.slice(prefix.length) }));
+    return restrictToFreeModels(
+      this.name,
+      models
+        .filter((m) => m.id.startsWith(prefix))
+        .map((m) => ({ ...m, id: m.id.slice(prefix.length) })),
+    );
   }
 
   async accountInfo(signal?: AbortSignal): Promise<Record<string, string> | undefined> {
@@ -289,15 +331,14 @@ export class OpenAICompatibleProvider implements Provider {
     configured: readonly string[],
     signal: AbortSignal,
   ): Promise<KeyCheck> {
-    const sample = await this.listModels(signal)
-      .then((list) =>
-        chatModels(list, this.name)
-          .map((m) => m.id)
-          .filter((id) => /instruct|chat/i.test(id))
-          .slice(0, KEY_CHECK_CATALOG_SAMPLE),
-      )
-      .catch(() => []);
-    const models = [...new Set([...configured, ...sample])];
+    const list = await this.listModels(signal).catch((): ModelInfo[] => []);
+    const sample = chatModels(list, this.name)
+      .map((m) => m.id)
+      .filter((id) => /instruct|chat/i.test(id))
+      .slice(0, KEY_CHECK_CATALOG_SAMPLE);
+    // the catalog's spelling of each configured model, where it lists one
+    const named = configured.map((id) => findCatalogModel(this.name, list, id)?.id ?? id);
+    const models = [...new Set([...named, ...sample])];
     const done = new AbortController();
     const shared = AbortSignal.any([signal, done.signal]);
     const statuses: number[] = [];
@@ -357,7 +398,7 @@ export class OpenAICompatibleProvider implements Provider {
             {
               ...extra,
               model: this.wireModel(req.model),
-              messages: req.messages.map(toWire),
+              messages: toWireMessages(req.messages),
               ...(req.tools && req.tools.length > 0
                 ? {
                     tools: req.tools.map((t) => ({

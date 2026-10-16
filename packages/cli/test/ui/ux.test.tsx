@@ -264,7 +264,7 @@ describe('model picker items', () => {
   it('marks skipped models and keeps a custom current model', () => {
     const runtime = fakeRuntime({
       providers: ['nvidia'],
-      models: { nvidia: [info('other/model', 8192)] },
+      models: { nvidia: [info('z-ai/glm-5-3', 8192)] },
       skipped: ['nvidia:openai/gpt-oss-20b'],
       viaGateway: ['nvidia'],
     });
@@ -272,11 +272,11 @@ describe('model picker items', () => {
     expect(rows.slice(0, 3).map((r) => [r.ref, r.status])).toEqual([
       ['nvidia:custom/one', 'unlisted'],
       ['nvidia:openai/gpt-oss-20b', 'unlisted'],
-      ['nvidia:other/model', 'ready'],
+      ['nvidia:z-ai/glm-5-3', 'ready'],
     ]);
     // Claude bills every request, so it is left out while freeModelsOnly is on.
     expect(rows.some((r) => r.ref === 'claude:claude-sonnet-4-5')).toBe(false);
-    expect(modelSelectItems(runtime, 'nvidia:other/model')[0]?.group).toBe(
+    expect(modelSelectItems(runtime, 'nvidia:z-ai/glm-5-3')[0]?.group).toBe(
       'NVIDIA · nvidia.com · via VinaX gateway',
     );
   });
@@ -284,14 +284,14 @@ describe('model picker items', () => {
   it('hides paid models by default and lists them again when asked', () => {
     const opts = {
       providers: ['nvidia' as ProviderName],
-      models: { nvidia: [info('other/model', 8192)] },
+      models: { nvidia: [info('z-ai/glm-5-3', 8192)] },
     };
     const paidRef = 'claude:claude-sonnet-4-5';
-    const free = modelRows(fakeRuntime(opts), 'nvidia:other/model');
+    const free = modelRows(fakeRuntime(opts), 'nvidia:z-ai/glm-5-3');
     expect(free.some((r) => r.ref === paidRef)).toBe(false);
     expect(free.every((r) => r.free || r.current)).toBe(true);
 
-    const all = modelRows(fakeRuntime({ ...opts, freeModelsOnly: false }), 'nvidia:other/model');
+    const all = modelRows(fakeRuntime({ ...opts, freeModelsOnly: false }), 'nvidia:z-ai/glm-5-3');
     expect(all.some((r) => r.ref === paidRef)).toBe(true);
   });
 
@@ -299,7 +299,7 @@ describe('model picker items', () => {
     const rows = modelRows(
       fakeRuntime({
         providers: ['nvidia'],
-        models: { nvidia: [info('other/model', 8192)] },
+        models: { nvidia: [info('z-ai/glm-5-3', 8192)] },
       }),
       'claude:claude-sonnet-4-5',
     );
@@ -328,9 +328,9 @@ const failed = (model: string, reason = 'no answer within 20s'): ProbeResult => 
 describe('model lists after a model test', () => {
   const nvidiaModels = [
     info('openai/gpt-oss-20b', 131_072),
-    info('meta/llama-3.1-8b-instruct', 131_072),
-    info('retired/dead-model', 32_000),
-    info('busy/model', 32_000),
+    info('google/gemma-4-31b-it', 131_072),
+    info('poolside/laguna-xs-2.1', 32_000),
+    info('meta/muse-glimmer-30b', 32_000),
   ];
 
   it('lists only the models that answered, and keeps the current one marked when it did not', () => {
@@ -340,10 +340,10 @@ describe('model lists after a model test', () => {
       probes: {
         nvidia: [
           failed('openai/gpt-oss-20b'),
-          passed('meta/llama-3.1-8b-instruct'),
-          failed('retired/dead-model', 'HTTP 404'),
+          passed('google/gemma-4-31b-it'),
+          failed('poolside/laguna-xs-2.1', 'HTTP 404'),
           {
-            model: 'busy/model',
+            model: 'meta/muse-glimmer-30b',
             ok: false,
             at: Date.now(),
             kind: 'rate_limit',
@@ -358,8 +358,8 @@ describe('model lists after a model test', () => {
     // known models first, then the catalog's order; the 404 is gone
     expect(items.map((i) => i.value)).toEqual([
       'nvidia:openai/gpt-oss-20b',
-      'nvidia:busy/model',
-      'nvidia:meta/llama-3.1-8b-instruct',
+      'nvidia:meta/muse-glimmer-30b',
+      'nvidia:google/gemma-4-31b-it',
     ]);
     expect(items[0]).toMatchObject({
       current: true,
@@ -373,13 +373,13 @@ describe('model lists after a model test', () => {
     const tested = fakeRuntime({
       providers: ['nvidia'],
       models: { nvidia: nvidiaModels },
-      probes: { nvidia: [failed('openai/gpt-oss-20b'), passed('meta/llama-3.1-8b-instruct')] },
+      probes: { nvidia: [failed('openai/gpt-oss-20b'), passed('google/gemma-4-31b-it')] },
     });
     expect(
       modelRows(tested, 'groq:x')
         .filter((r) => r.provider === 'nvidia')
         .map((r) => r.model),
-    ).toEqual(['meta/llama-3.1-8b-instruct']);
+    ).toEqual(['google/gemma-4-31b-it']);
     const untested = fakeRuntime({ providers: ['nvidia'], models: { nvidia: nvidiaModels } });
     expect(modelRows(untested, 'groq:x').filter((r) => r.provider === 'nvidia')).toHaveLength(4);
   });
@@ -417,8 +417,8 @@ describe('model lists after a model test', () => {
   it('summarizes a test and suggests a model that answered', () => {
     const run: ProbeRun = {
       provider: 'nvidia',
-      candidates: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct', 'x/y'],
-      results: [failed('openai/gpt-oss-20b'), passed('meta/llama-3.1-8b-instruct'), failed('x/y')],
+      candidates: ['openai/gpt-oss-20b', 'google/gemma-4-31b-it', 'x/y'],
+      results: [failed('openai/gpt-oss-20b'), passed('google/gemma-4-31b-it'), failed('x/y')],
       tested: 3,
       ok: 1,
       keyRejected: false,
@@ -428,8 +428,8 @@ describe('model lists after a model test', () => {
       level: 'info',
       text: '1 of 3 free NVIDIA models answered.',
     });
-    expect(replacementFor(run, 'NVD_CHAT_OSS_20_B')).toBe('nvidia:meta/llama-3.1-8b-instruct');
-    expect(replacementFor(run, 'nvidia:meta/llama-3.1-8b-instruct')).toBeUndefined();
+    expect(replacementFor(run, 'NVD_CHAT_OSS_20_B')).toBe('nvidia:google/gemma-4-31b-it');
+    expect(replacementFor(run, 'nvidia:google/gemma-4-31b-it')).toBeUndefined();
     expect(replacementFor(run, 'groq:other')).toBeUndefined();
     expect(testSummaryNotice({ ...run, keyRejected: true }, true)?.level).toBe('error');
     expect(testSummaryNotice({ ...run, unreachable: true }, true)?.text).toContain(

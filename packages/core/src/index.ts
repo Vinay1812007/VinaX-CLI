@@ -236,7 +236,11 @@ export {
   toProviderError,
   type ProviderErrorKind,
 } from './providers/errors.js';
-export { OpenAICompatibleProvider } from './providers/openai-compatible.js';
+export {
+  OpenAICompatibleProvider,
+  toWireMessages,
+  wireArguments,
+} from './providers/openai-compatible.js';
 export {
   parseDuration,
   parseRateLimitHeaders,
@@ -333,6 +337,14 @@ export {
   type WorktreeInfo,
 } from './git/worktree.js';
 export { chatModels, freeToTry, PAID_ONLY_PROVIDERS } from './providers/chat-models.js';
+export {
+  findCatalogModel,
+  isNvidiaFreeChatModel,
+  modelSlug,
+  NVIDIA_FREE_CHAT_MODELS,
+  NVIDIA_FREE_OTHER_MODELS,
+  restrictToFreeModels,
+} from './providers/nvidia-free.js';
 export {
   PROBE_CONCURRENCY,
   PROBE_MAX_TOKENS,

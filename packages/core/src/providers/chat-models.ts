@@ -1,3 +1,4 @@
+import { isNvidiaFreeChatModel, nvidiaFreeRank } from './nvidia-free.js';
 import type { ModelInfo, ProviderName } from './types.js';
 
 /** Keep unknown context sizes, but exclude endpoints that cannot take a chat conversation. */
@@ -13,9 +14,16 @@ export function chatModels(models: readonly ModelInfo[], provider: ProviderName)
         return false;
       if (provider === 'openai' && !/^(gpt-|chatgpt-|o\d)/.test(m.id)) return false;
       if (provider === 'openai' && /codex|deep-research|(^|-)pro($|-)/.test(m.id)) return false;
+      // only NVIDIA's free endpoints, and those in the order of nvidia-free.ts (best first)
+      if (provider === 'nvidia' && !isNvidiaFreeChatModel(m.id)) return false;
       return true;
     })
-    .sort((a, b) => Number(b.free) - Number(a.free) || a.id.localeCompare(b.id));
+    .sort(
+      (a, b) =>
+        Number(b.free) - Number(a.free) ||
+        (provider === 'nvidia' ? (nvidiaFreeRank(a.id) ?? 0) - (nvidiaFreeRank(b.id) ?? 0) : 0) ||
+        a.id.localeCompare(b.id),
+    );
 }
 
 /** APIs that bill every request, so nothing they list can be tried for free. */

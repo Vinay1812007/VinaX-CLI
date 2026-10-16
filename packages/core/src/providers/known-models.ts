@@ -1,4 +1,5 @@
 import type { ProviderName } from '../config/schema.js';
+import { sameModel } from './nvidia-free.js';
 
 /**
  * Models VinaX knows about ahead of the provider catalog: short aliases and metadata the
@@ -15,7 +16,7 @@ export interface KnownModel {
   contextWindow: number | undefined;
   /** Accepts images. */
   vision?: boolean;
-  /** Accepts video input (`video_url`). */
+  /** Understands video (screen recordings), sent inline as `video_url`; such models accept images too. */
   video?: boolean;
   /**
    * `false` when the model cannot take native tool definitions (VinaX then uses its text tool
@@ -96,7 +97,42 @@ export const KNOWN_MODELS: readonly KnownModel[] = [
     vision: true,
     tools: false,
   },
+  // NVIDIA's other free-endpoint chat models (see nvidia-free.ts). The ids are best guesses at
+  // NVIDIA's spelling; `knownModel` matches them to the catalog's ids by slug.
+  nvidia('nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B', 1_000_000),
+  nvidia('nvidia/nemotron-3-ultra-550b-a55b', 'Nemotron 3 Ultra 550B', 1_000_000),
+  nvidia('nvidia/nemotron-3.5-super-vl-120b-a12b', 'Nemotron 3.5 Super VL 120B', undefined, {
+    vision: true,
+  }),
+  nvidia('nvidia/nemotron-3.5-lightning-30b-a3b', 'Nemotron 3.5 Lightning 30B', undefined),
+  nvidia(
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    'Nemotron 3 Nano Omni 30B Reasoning',
+    undefined,
+    { vision: true, video: true },
+  ),
+  nvidia('nvidia/cosmos3-nano-reasoner', 'Cosmos 3 Nano Reasoner', undefined, {
+    vision: true,
+    video: true,
+  }),
+  nvidia('stepfun-ai/step-5-preview', 'Step 5 Preview', 1_000_000, { vision: true }),
+  nvidia('deepseek-ai/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', undefined, { vision: true }),
+  nvidia('z-ai/glm-5-3', 'GLM 5.3', undefined),
+  nvidia('z-ai/glm-5-3-flash', 'GLM 5.3 Flash', undefined, { vision: true }),
+  nvidia('meta/muse-glimmer-30b', 'Muse Glimmer 30B', undefined, { vision: true }),
+  nvidia('poolside/laguna-xs-2.1', 'Laguna XS 2.1', undefined),
+  nvidia('google/diffusiongemma-26b-a4b-it', 'DiffusionGemma 26B', undefined),
+  nvidia('google/gemma-4-31b-it', 'Gemma 4 31B', undefined),
 ];
+
+function nvidia(
+  model: string,
+  label: string,
+  contextWindow: number | undefined,
+  extra: Pick<KnownModel, 'vision' | 'video'> = {},
+): KnownModel {
+  return { provider: 'nvidia', model, alias: undefined, label, contextWindow, ...extra };
+}
 
 /** Alternative spellings of provider names, e.g. the provider's domain. */
 const PROVIDER_SYNONYMS: Readonly<Record<string, ProviderName>> = {
@@ -169,7 +205,10 @@ function isProviderName(value: string): value is ProviderName {
 }
 
 export function knownModel(provider: ProviderName, model: string): KnownModel | undefined {
-  return KNOWN_MODELS.find((m) => m.provider === provider && m.model === model);
+  const exact = KNOWN_MODELS.find((m) => m.provider === provider && m.model === model);
+  if (exact !== undefined || provider !== 'nvidia') return exact;
+  // NVIDIA's spelling may differ from VinaX's guess (`glm-5.3` vs `glm-5-3`)
+  return KNOWN_MODELS.find((m) => m.provider === provider && sameModel(m.model, model));
 }
 
 /** Alias for `<provider>:<model>`, if it has one. */
@@ -200,6 +239,7 @@ export function withKnownMetadata<
     id: string;
     contextWindow: number | undefined;
     vision?: boolean;
+    video?: boolean;
     supportsTools?: boolean | undefined;
   },
 >(provider: ProviderName, models: readonly T[]): T[] {
@@ -212,6 +252,7 @@ export function withKnownMetadata<
         ? { contextWindow: known.contextWindow }
         : {}),
       ...(known.vision === true && m.vision === undefined ? { vision: true } : {}),
+      ...(known.video === true && m.video === undefined ? { video: true } : {}),
       ...(known.tools === false ? { supportsTools: false } : {}),
     };
   });

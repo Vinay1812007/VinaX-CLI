@@ -15,6 +15,7 @@ import { PermissionEngine } from '../permissions/engine.js';
 import { MediaReader } from '../files/media.js';
 import { KNOWN_MODELS, knownModel } from '../providers/known-models.js';
 import { inferVideo, inferVision } from '../providers/media-capability.js';
+import { findCatalogModel } from '../providers/nvidia-free.js';
 import { parseModelRef, type ModelRef } from '../providers/types.js';
 import type { Runtime } from '../runtime.js';
 import type { SessionRecorder } from '../session/store.js';
@@ -117,14 +118,21 @@ export function pickVisionModels(
     const r = parseModelRef(ref);
     if (!runtime.providers.has(r.provider) || runtime.skipped.has(ref)) return false;
     const list = runtime.models.get(r.provider);
-    return list === undefined || list.some((m) => m.id === r.model);
+    return list === undefined || findCatalogModel(r.provider, list, r.model) !== undefined;
+  };
+  // the catalog's spelling of a known NVIDIA id, so one model is not listed twice
+  const listed = (ref: string): string => {
+    const r = parseModelRef(ref);
+    const list = runtime.models.get(r.provider);
+    const found = list === undefined ? undefined : findCatalogModel(r.provider, list, r.model);
+    return found === undefined ? ref : `${r.provider}:${found.id}`;
   };
   const candidates: string[] = [
     ...(settings.visionModel === undefined ? [] : [settings.visionModel]),
     ...[settings.model, ...settings.fallbackChain].filter((ref) =>
       supportsVision(parseModelRef(ref)),
     ),
-    ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => `${k.provider}:${k.model}`),
+    ...KNOWN_MODELS.filter((k) => k.vision === true).map((k) => listed(`${k.provider}:${k.model}`)),
   ];
   for (const [provider, list] of runtime.models) {
     const sees = (m: { id: string }) => supportsVision({ provider, model: m.id });

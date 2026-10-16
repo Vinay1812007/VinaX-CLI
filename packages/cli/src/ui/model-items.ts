@@ -1,5 +1,6 @@
 import {
   chatModels,
+  findCatalogModel,
   formatModelRef,
   freeToTry,
   KNOWN_MODELS,
@@ -196,7 +197,9 @@ export function modelRows(runtime: Runtime, current: string): ModelRow[] {
     const unavailable = (ref: string): boolean => runtime.skipped.has(ref);
     const noGateway = gatewayLacks(runtime, provider);
     for (const k of KNOWN_MODELS.filter((m) => m.provider === provider)) {
-      const inCatalog = catalog?.find((m) => m.id === k.model);
+      // NVIDIA's spelling of a known id may differ (`glm-5.3` vs `glm-5-3`)
+      const inCatalog =
+        catalog === undefined ? undefined : findCatalogModel(provider, catalog, k.model);
       // a known model the provider no longer lists is only worth showing if it has an alias
       if (configured && catalog !== undefined && inCatalog === undefined && k.alias === undefined)
         continue;

@@ -15,6 +15,7 @@ import {
   type ProbeResult,
 } from './providers/probe.js';
 import { providerLabel } from './providers/errors.js';
+import { findCatalogModel } from './providers/nvidia-free.js';
 import { RateLimitLedger } from './providers/ratelimit.js';
 import { GATEWAY_WAKING, type GatewayClient } from './providers/gateway.js';
 import {
@@ -154,7 +155,7 @@ async function findUnavailableModels(
   );
   for (const { ref, provider: name, model } of refs) {
     const list = models.get(name);
-    if (list === undefined || list.some((m) => m.id === model)) continue;
+    if (list === undefined || findCatalogModel(name, list, model) !== undefined) continue;
     skip.add(ref);
     if (list.length === 0 && viaGateway.has(name)) continue;
     warnings.push(`${ref} is not in ${providerLabel(name)}'s model list; skipping it.`);
@@ -359,7 +360,9 @@ export async function createRuntime(opts: RuntimeOptions): Promise<Runtime> {
         if (r.provider !== name) continue;
         // an empty list through a gateway means the gateway does not serve this provider
         const missing =
-          list.length > 0 ? !list.some((m) => m.id === r.model) : viaGateway.has(name);
+          list.length > 0
+            ? findCatalogModel(name, list, r.model) === undefined
+            : viaGateway.has(name);
         if (missing) skip.add(r.ref);
         else skip.delete(r.ref);
       }

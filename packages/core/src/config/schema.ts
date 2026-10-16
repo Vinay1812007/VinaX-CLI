@@ -224,6 +224,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
     'groq:qwen/qwen3.8-27b',
     'openrouter:qwen/qwen3.8-27b:free',
     'openrouter:nvidia/nemotron-3-super-120b-a12b:free',
+    // NVIDIA's free endpoints only (nvidia-free.ts), strongest agentic model first
+    'nvidia:nvidia/nemotron-3-super-120b-a12b',
     'nvidia:openai/gpt-oss-20b',
   ],
   visionModel: undefined,

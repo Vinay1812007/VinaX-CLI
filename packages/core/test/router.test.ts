@@ -147,6 +147,8 @@ const summarize = (events: RouterEvent[]): string[] =>
         return `status ${e.text}`;
       case 'reasoning':
         return `reasoning ${e.text}`;
+      case 'restart':
+        return `restart ${formatModelRef(e.ref)}`;
     }
   });
 
@@ -220,13 +222,22 @@ describe('Router', () => {
       // outrank NVIDIA's free ones purely because its provider comes first.
       models: new Map([
         ['groq', [model('main', false), model('groq-paid', false)]],
-        ['nvidia', [model('nv-free-a', true), model('nv-free-b', true)]],
+        [
+          'nvidia',
+          [
+            model('openai/gpt-oss-20b', true),
+            // not one of NVIDIA's free endpoints, so never a candidate
+            model('meta/llama-3.3-70b-instruct', true),
+            model('nvidia/nemotron-3-super-120b-a12b', true),
+          ],
+        ],
       ]),
     });
+    // NVIDIA's free models in the order of nvidia-free.ts, strongest agentic model first
     expect(router.chain('main', 'auto').map(formatModelRef)).toEqual([
       'groq:main',
-      'nvidia:nv-free-a',
-      'nvidia:nv-free-b',
+      'nvidia:nvidia/nemotron-3-super-120b-a12b',
+      'nvidia:openai/gpt-oss-20b',
       'groq:groq-paid',
     ]);
   });
@@ -324,10 +335,15 @@ describe('Router', () => {
     ]);
   });
 
-  it('never falls back once text was emitted', async () => {
+  it('does not ask again after a mid-reply error a retry cannot fix', async () => {
     const { router } = setup({
       main: [
-        { textThenError: ['partial', new ProviderError('server', 'groq: stream reset', 'groq')] },
+        {
+          textThenError: [
+            'partial',
+            new ProviderError('bad_request', 'groq 400: bad', 'groq', 400),
+          ],
+        },
       ],
       backup: [{ text: ['should not be used'] }],
     });
@@ -607,5 +623,124 @@ describe('NVIDIA rate limits', () => {
     const events = await collect(router.stream(req()));
     expect(events.some((e) => e.type === 'fallback')).toBe(true);
     expect(events).toContainEqual({ type: 'text', text: 'b' });
+  });
+});
+
+describe('Router recovery from a reply that broke off', () => {
+  // what NVIDIA's vLLM servers send mid-stream: an SSE error event, no HTTP status
+  const broke = () => new ProviderError('server', 'NVIDIA: list index out of range', 'groq');
+
+  it('restarts and retries the same model once, with backoff', async () => {
+    const { router, sleeps, providers } = setup({
+      main: [{ textThenError: ['partial', broke()] }, { text: ['whole answer'] }],
+    });
+    const events = await collect(router.stream(req()));
+    expect(summarize(events)).toEqual([
+      'attempt groq:main',
+      'text partial',
+      'restart groq:main',
+      'retry groq:main in 75ms',
+      'attempt groq:main',
+      'text whole answer',
+      'done groq:main',
+    ]);
+    expect(sleeps).toEqual([75]);
+    expect((providers.get('groq') as FakeProvider).calls).toEqual(['main', 'main']);
+  });
+
+  it('switches the model to the text tool protocol after a second break', async () => {
+    const { router } = setup({
+      main: [
+        { textThenError: ['one', broke()] },
+        { textThenError: ['two', broke()] },
+        { text: ['three'] },
+      ],
+    });
+    const switched: string[] = [];
+    const events = await collect(
+      router.stream(
+        req({
+          onToolFormatError: (ref, why) => {
+            switched.push(`${formatModelRef(ref)} ${why ?? ''}`);
+            return true;
+          },
+        }),
+      ),
+    );
+    expect(switched).toEqual(['groq:main interrupted']);
+    expect(summarize(events)).toEqual([
+      'attempt groq:main',
+      'text one',
+      'restart groq:main',
+      'retry groq:main in 75ms',
+      'attempt groq:main',
+      'text two',
+      'restart groq:main',
+      'retry groq:main in 0ms',
+      'attempt groq:main',
+      'text three',
+      'done groq:main',
+    ]);
+  });
+
+  it('falls back to the next model (and sets the broken one aside) after a third break', async () => {
+    const { router } = setup({
+      main: [
+        { textThenError: ['one', broke()] },
+        { textThenError: ['two', broke()] },
+        { textThenError: ['three', broke()] },
+      ],
+      backup: [{ text: ['from backup'] }],
+    });
+    const events = await collect(router.stream(req({ onToolFormatError: () => true })));
+    expect(summarize(events).slice(-5)).toEqual([
+      'restart groq:main',
+      'fallback groq:main → groq:backup',
+      'attempt groq:backup',
+      'text from backup',
+      'done groq:backup',
+    ]);
+    const fallback = events.find((e) => e.type === 'fallback');
+    expect(fallback).toMatchObject({ cooldownMs: MODEL_COOLDOWN_MS });
+    expect(router.chain().map(formatModelRef)[0]).toBe('groq:backup');
+  });
+
+  it('falls back after the second break when the model cannot switch protocols', async () => {
+    const { router } = setup({
+      main: [{ textThenError: ['one', broke()] }, { textThenError: ['two', broke()] }],
+      backup: [{ text: ['ok'] }],
+    });
+    const events = await collect(router.stream(req({ onToolFormatError: () => false })));
+    expect(summarize(events)).toContain('fallback groq:main → groq:backup');
+    expect(summarize(events).at(-1)).toBe('done groq:backup');
+  });
+
+  it('reports a cut-off reply only when every option is used up', async () => {
+    const { router } = setup(
+      {
+        main: [{ textThenError: ['a', broke()] }, { textThenError: ['b', broke()] }],
+        backup: [{ error: new ProviderError('not_found', 'groq 404: gone', 'groq', 404) }],
+      },
+      { 'free-a:free': [{ textThenError: ['c', broke()] }, { textThenError: ['d', broke()] }] },
+    );
+    const err = await collect(router.stream(req())).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StreamInterruptedError);
+    const cut = err as StreamInterruptedError;
+    expect(formatModelRef(cut.ref)).toBe('openrouter:free-a:free');
+    expect(cut.failures.map((f) => formatModelRef(f.ref))).toEqual([
+      'groq:main',
+      'groq:backup',
+      'openrouter:free-a:free',
+    ]);
+  });
+
+  it('stops at once when the user aborts during the retry wait', async () => {
+    const ac = new AbortController();
+    const { router } = setup({ main: [{ textThenError: ['partial', broke()] }] });
+    await expect(async () => {
+      for await (const e of router.stream(req({ signal: ac.signal }))) {
+        if (e.type === 'restart') ac.abort();
+      }
+    }).rejects.toBeInstanceOf(AbortError);
   });
 });

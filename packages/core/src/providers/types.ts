@@ -95,7 +95,7 @@ export interface ModelInfo {
   free: boolean;
   /** Accepts images, when the catalog says so (OpenRouter's `input_modalities`). */
   vision?: boolean;
-  /** Accepts video input (`video_url`). */
+  /** Understands video (screen recordings); sent inline as `video_url`. */
   video?: boolean;
   /** US dollars per token, only when the provider's catalog publishes a fixed price. */
   pricing?: { prompt: number; completion: number };
